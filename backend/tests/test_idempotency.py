@@ -17,9 +17,7 @@ pytestmark = pytest.mark.skipif(
 
 async def _challenge_count(tid: uuid.UUID) -> int:
     async with tenant_session(factory(), tid) as session:
-        count = (
-            await session.execute(text("SELECT count(*) FROM otp_challenges"))
-        ).scalar_one()
+        count = (await session.execute(text("SELECT count(*) FROM otp_challenges"))).scalar_one()
     return int(count)
 
 
@@ -30,9 +28,7 @@ def test_replay_returns_stored_response_with_one_effect() -> None:
         headers = {"x-tenant-id": str(tid), "idempotency-key": uuid.uuid4().hex}
         async with api_client() as client:
             first = await client.post("/auth/otp/request", json={"email": email}, headers=headers)
-            second = await client.post(
-                "/auth/otp/request", json={"email": email}, headers=headers
-            )
+            second = await client.post("/auth/otp/request", json={"email": email}, headers=headers)
         assert first.status_code == 202
         assert second.status_code == 202
         assert second.headers.get("idempotency-replayed") == "true"

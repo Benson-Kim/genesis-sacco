@@ -94,9 +94,7 @@ class IdempotencyMiddleware:
         body = await _read_body(receive)
         method: str = scope["method"]
         path: str = scope["path"]
-        request_hash = hashlib.sha256(
-            b"|".join([method.encode(), path.encode(), body])
-        ).hexdigest()
+        request_hash = hashlib.sha256(b"|".join([method.encode(), path.encode(), body])).hexdigest()
         factory = get_sessionmaker(settings.database_url)
 
         stored: tuple[Any, Any, Any] | None = None
@@ -204,8 +202,7 @@ async def _release(
     async with tenant_session(factory, tenant_id) as session:
         await session.execute(
             text(
-                "DELETE FROM idempotency_keys "
-                "WHERE tenant_id = CAST(:tid AS uuid) AND key = :key"
+                "DELETE FROM idempotency_keys WHERE tenant_id = CAST(:tid AS uuid) AND key = :key"
             ),
             {"tid": str(tenant_id), "key": key},
         )

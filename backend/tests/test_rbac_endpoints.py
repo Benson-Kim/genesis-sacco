@@ -56,9 +56,7 @@ def test_every_endpoint_for_every_role() -> None:
                 res = await client.get("/access/roles", headers=headers)
                 assert res.status_code == (200 if can_view else 403), role_name
 
-                res = await client.get(
-                    f"/access/roles/{role_id}/permissions", headers=headers
-                )
+                res = await client.get(f"/access/roles/{role_id}/permissions", headers=headers)
                 assert res.status_code == (200 if can_view else 403), role_name
 
                 res = await client.put(
@@ -129,9 +127,7 @@ def test_seed_is_idempotent() -> None:
             first = await seed_permissions(session, tid)
         async with tenant_session(factory(), tid) as session:
             second = await seed_permissions(session, tid)
-            count = (
-                await session.execute(text("SELECT count(*) FROM permissions"))
-            ).scalar_one()
+            count = (await session.execute(text("SELECT count(*) FROM permissions"))).scalar_one()
         assert first == second
         assert int(count) == 49
 

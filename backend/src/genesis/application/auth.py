@@ -161,10 +161,7 @@ async def verify_otp(
     )
     if result is OtpResult.MISMATCH:
         await session.execute(
-            text(
-                "UPDATE otp_challenges SET attempts = attempts + 1 "
-                "WHERE id = CAST(:id AS uuid)"
-            ),
+            text("UPDATE otp_challenges SET attempts = attempts + 1 WHERE id = CAST(:id AS uuid)"),
             {"id": str(challenge_id)},
         )
     if result is not OtpResult.OK:

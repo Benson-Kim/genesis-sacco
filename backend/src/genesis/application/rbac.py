@@ -31,16 +31,13 @@ class RoleInfo:
 
 _ACTION_QUERIES: dict[Action, TextClause] = {
     Action.VIEW: text(
-        "SELECT can_view FROM permissions "
-        "WHERE role_id = CAST(:rid AS uuid) AND module = :module"
+        "SELECT can_view FROM permissions WHERE role_id = CAST(:rid AS uuid) AND module = :module"
     ),
     Action.CREATE: text(
-        "SELECT can_create FROM permissions "
-        "WHERE role_id = CAST(:rid AS uuid) AND module = :module"
+        "SELECT can_create FROM permissions WHERE role_id = CAST(:rid AS uuid) AND module = :module"
     ),
     Action.EDIT: text(
-        "SELECT can_edit FROM permissions "
-        "WHERE role_id = CAST(:rid AS uuid) AND module = :module"
+        "SELECT can_edit FROM permissions WHERE role_id = CAST(:rid AS uuid) AND module = :module"
     ),
     Action.APPROVE: text(
         "SELECT can_approve FROM permissions "
@@ -133,9 +130,7 @@ async def list_roles(session: AsyncSession) -> list[RoleInfo]:
     rows = (
         await session.execute(text("SELECT id, name, is_system FROM roles ORDER BY name"))
     ).all()
-    return [
-        RoleInfo(id=uuid.UUID(str(r[0])), name=str(r[1]), is_system=bool(r[2])) for r in rows
-    ]
+    return [RoleInfo(id=uuid.UUID(str(r[0])), name=str(r[1]), is_system=bool(r[2])) for r in rows]
 
 
 async def update_permission(

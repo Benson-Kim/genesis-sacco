@@ -56,9 +56,7 @@ def test_rollback_removes_event_atomically() -> None:
                 await enqueue_event(session, tid, event_type="t.atomic", payload={"k": "v"})
                 raise RuntimeError("force rollback")
         async with tenant_session(factory(), tid) as session:
-            count = (
-                await session.execute(text("SELECT count(*) FROM outbox_events"))
-            ).scalar_one()
+            count = (await session.execute(text("SELECT count(*) FROM outbox_events"))).scalar_one()
         assert int(count) == 0
 
     asyncio.run(run())
