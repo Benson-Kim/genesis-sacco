@@ -54,6 +54,7 @@ backend:lint:
     - ruff check .
     - ruff format --check .
     - mypy --strict src
+    - lint-imports
 
 backend:test:
   extends: .backend
