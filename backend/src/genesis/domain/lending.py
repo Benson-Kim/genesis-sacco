@@ -22,9 +22,7 @@ def monthly_rate(annual_rate_pct: Decimal) -> Decimal:
     return annual_rate_pct / Decimal(100) / Decimal(12)
 
 
-def installment_amount(
-    principal: Decimal, annual_rate_pct: Decimal, months: int
-) -> Decimal:
+def installment_amount(principal: Decimal, annual_rate_pct: Decimal, months: int) -> Decimal:
     """Reducing-balance annuity installment, rounded to cents."""
     if months <= 0:
         raise ValueError("months must be positive")
@@ -129,15 +127,9 @@ class InvalidTransitionError(Exception):
 
 
 _ALLOWED: dict[ApplicationStage, frozenset[ApplicationStage]] = {
-    ApplicationStage.SUBMITTED: frozenset(
-        {ApplicationStage.APPRAISAL, ApplicationStage.REJECTED}
-    ),
-    ApplicationStage.APPRAISAL: frozenset(
-        {ApplicationStage.COMMITTEE, ApplicationStage.REJECTED}
-    ),
-    ApplicationStage.COMMITTEE: frozenset(
-        {ApplicationStage.APPROVED, ApplicationStage.REJECTED}
-    ),
+    ApplicationStage.SUBMITTED: frozenset({ApplicationStage.APPRAISAL, ApplicationStage.REJECTED}),
+    ApplicationStage.APPRAISAL: frozenset({ApplicationStage.COMMITTEE, ApplicationStage.REJECTED}),
+    ApplicationStage.COMMITTEE: frozenset({ApplicationStage.APPROVED, ApplicationStage.REJECTED}),
     ApplicationStage.APPROVED: frozenset({ApplicationStage.DISBURSED}),
     ApplicationStage.REJECTED: frozenset(),
     ApplicationStage.DISBURSED: frozenset(),
@@ -148,9 +140,7 @@ def allowed_transitions(current: ApplicationStage) -> frozenset[ApplicationStage
     return _ALLOWED[current]
 
 
-def transition(
-    current: ApplicationStage, target: ApplicationStage
-) -> ApplicationStage:
+def transition(current: ApplicationStage, target: ApplicationStage) -> ApplicationStage:
     """The single gatekeeper for application stage changes."""
     if target not in _ALLOWED[current]:
         raise InvalidTransitionError(f"{current.value} -> {target.value}")

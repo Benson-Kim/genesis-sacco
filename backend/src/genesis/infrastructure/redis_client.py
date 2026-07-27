@@ -11,7 +11,7 @@ async def ping_redis(redis_url: str) -> bool:
     client = Redis.from_url(redis_url)
     try:
         await client.ping()
-    except Exception:  # noqa: BLE001 - readiness probe: log the category, never raise (gate 1.2)
+    except Exception:
         logger.exception("redis ping failed")
         return False
     finally:

@@ -73,9 +73,7 @@ def test_zero_rate_is_straight_line() -> None:
         (9999, LoanClass.LOSS, "100", True),
     ],
 )
-def test_classification_boundaries(
-    days: int, label: LoanClass, provision: str, npl: bool
-) -> None:
+def test_classification_boundaries(days: int, label: LoanClass, provision: str, npl: bool) -> None:
     result = classify(days)
     assert result.label == label
     assert result.provision_pct == Decimal(provision)
