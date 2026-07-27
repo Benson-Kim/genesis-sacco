@@ -31,7 +31,7 @@ async def ping_db(database_url: str) -> bool:
     try:
         async with get_engine(database_url).connect() as conn:
             await conn.execute(text("SELECT 1"))
-    except Exception:  # noqa: BLE001 - readiness probe: log the category, never raise (gate 1.2)
+    except Exception:
         logger.exception("database ping failed")
         return False
     return True
