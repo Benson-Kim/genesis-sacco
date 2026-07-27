@@ -9,6 +9,7 @@ class ErrorCategory(StrEnum):
     CONFLICT = "conflict"
     UNAUTHENTICATED = "unauthenticated"
     FORBIDDEN = "forbidden"
+    RATE_LIMITED = "rate_limited"
     INTERNAL = "internal_error"
 
 
@@ -39,3 +40,10 @@ class ForbiddenError(AppError):
 class UnauthenticatedError(AppError):
     status_code = 401
     category = ErrorCategory.UNAUTHENTICATED
+
+
+class RateLimitedError(AppError):
+    """Raised when an auth-sensitive endpoint is called too often (gate 1.6)."""
+
+    status_code = 429
+    category = ErrorCategory.RATE_LIMITED
