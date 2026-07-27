@@ -7,9 +7,11 @@ from collections.abc import Awaitable, Callable
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
+from genesis.api.access import router as access_router
 from genesis.api.auth import router as auth_router
 from genesis.api.health import router as health_router
 from genesis.api.idempotency import IdempotencyMiddleware
+from genesis.api.me import router as me_router
 from genesis.errors import AppError, ErrorCategory
 from genesis.logging import configure_logging, correlation_id_var
 
@@ -25,6 +27,8 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Genesis Prestige API", version="0.1.0")
     app.include_router(health_router)
     app.include_router(auth_router)
+    app.include_router(me_router)
+    app.include_router(access_router)
     app.add_middleware(IdempotencyMiddleware)
 
     @app.middleware("http")
