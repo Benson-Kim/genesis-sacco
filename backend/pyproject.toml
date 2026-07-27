@@ -68,3 +68,12 @@ name = "Application layer independent of delivery and adapters"
 type = "forbidden"
 source_modules = ["genesis.application"]
 forbidden_modules = ["genesis.api", "genesis.infrastructure"]
+
+[[tool.importlinter.contracts]]
+name = "Request handlers never call providers directly (MASTER_PROMPT 1.2)"
+type = "forbidden"
+source_modules = ["genesis.api"]
+forbidden_modules = [
+    "genesis.infrastructure.providers",
+    "genesis.infrastructure.outbox_worker",
+]
