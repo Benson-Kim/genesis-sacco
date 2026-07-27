@@ -1,0 +1,191 @@
+# =============================================================================
+# Genesis Prestige — GitLab CI/CD (governed by docs/MASTER_PROMPT.md section 3)
+# Jobs are gated with `rules:exists` so they activate automatically as each
+# codebase (backend/, web/, mobile/) lands. Pipeline stays green until then.
+# =============================================================================
+
+stages:
+  - lint
+  - test
+  - security
+  - build
+  - migrate-check
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+default:
+  interruptible: true
+
+include:
+  - template: Jobs/SAST.gitlab-ci.yml
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
+  - template: Jobs/Dependency-Scanning.gitlab-ci.yml
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  npm_config_cache: "$CI_PROJECT_DIR/.cache/npm"
+
+# -----------------------------------------------------------------------------
+# Backend — Python 3.12 / FastAPI
+# -----------------------------------------------------------------------------
+.backend:
+  image: python:3.12-slim
+  before_script:
+    - cd backend
+    - pip install --upgrade pip
+    - pip install -e ".[dev]"
+  cache:
+    key:
+      files:
+        - backend/pyproject.toml
+    paths:
+      - .cache/pip
+
+backend:lint:
+  extends: .backend
+  stage: lint
+  rules:
+    - exists: ["backend/pyproject.toml"]
+  script:
+    - ruff check .
+    - ruff format --check .
+    - mypy --strict src
+
+backend:test:
+  extends: .backend
+  stage: test
+  needs: ["backend:lint"]
+  rules:
+    - exists: ["backend/pyproject.toml"]
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    POSTGRES_DB: genesis_test
+    POSTGRES_USER: genesis
+    POSTGRES_HOST_AUTH_METHOD: trust
+    DATABASE_URL: "postgresql+psycopg://genesis@postgres:5432/genesis_test"
+  script:
+    - pytest --cov=src --cov-fail-under=85 --junitxml=report.xml
+  coverage: '/TOTAL.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
+  artifacts:
+    when: always
+    reports:
+      junit: backend/report.xml
+
+backend:migrate-check:
+  extends: .backend
+  stage: migrate-check
+  needs: ["backend:test"]
+  rules:
+    - exists: ["backend/alembic.ini"]
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    POSTGRES_DB: genesis_migrate
+    POSTGRES_USER: genesis
+    POSTGRES_HOST_AUTH_METHOD: trust
+    DATABASE_URL: "postgresql+psycopg://genesis@postgres:5432/genesis_migrate"
+  script:
+    - alembic upgrade head
+    - alembic downgrade -1
+    - alembic upgrade head
+
+backend:build:
+  stage: build
+  needs: ["backend:test"]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      exists: ["backend/Dockerfile"]
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  script:
+    - /kaniko/executor
+      --context "$CI_PROJECT_DIR/backend"
+      --dockerfile "$CI_PROJECT_DIR/backend/Dockerfile"
+      --destination "$CI_REGISTRY_IMAGE/backend:$CI_COMMIT_SHORT_SHA"
+
+# -----------------------------------------------------------------------------
+# Web — Next.js / TypeScript
+# -----------------------------------------------------------------------------
+.web:
+  image: node:22-alpine
+  before_script:
+    - cd web
+    - npm ci
+  cache:
+    key:
+      files:
+        - web/package-lock.json
+    paths:
+      - .cache/npm
+
+web:lint:
+  extends: .web
+  stage: lint
+  rules:
+    - exists: ["web/package.json"]
+  script:
+    - npm run lint
+    - npx tsc --noEmit
+
+web:test:
+  extends: .web
+  stage: test
+  needs: ["web:lint"]
+  rules:
+    - exists: ["web/package.json"]
+  script:
+    - npm test -- --ci
+
+web:build:
+  extends: .web
+  stage: build
+  needs: ["web:test"]
+  rules:
+    - exists: ["web/package.json"]
+  script:
+    - npm run build
+  artifacts:
+    paths:
+      - web/.next
+    expire_in: 1 week
+
+# -----------------------------------------------------------------------------
+# Mobile — Flutter (member_app, admin_app, shared packages)
+# -----------------------------------------------------------------------------
+.mobile:
+  image: ghcr.io/cirruslabs/flutter:stable
+
+mobile:lint:
+  extends: .mobile
+  stage: lint
+  rules:
+    - exists: ["mobile/**/pubspec.yaml"]
+  script:
+    - |
+      for app in mobile/*/; do
+        if [ -f "${app}pubspec.yaml" ]; then
+          (cd "$app" && flutter pub get && dart format --output=none --set-exit-if-changed . && flutter analyze)
+        fi
+      done
+
+mobile:test:
+  extends: .mobile
+  stage: test
+  needs: ["mobile:lint"]
+  rules:
+    - exists: ["mobile/**/pubspec.yaml"]
+  script:
+    - |
+      for app in mobile/*/; do
+        if [ -f "${app}pubspec.yaml" ] && [ -d "${app}test" ]; then
+          (cd "$app" && flutter pub get && flutter test)
+        fi
+      done
