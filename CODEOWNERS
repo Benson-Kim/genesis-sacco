@@ -1,0 +1,16 @@
+# Genesis Prestige — code ownership (P0 repo hygiene)
+# Paths below require review by the listed owners before merge.
+# Update owners as the team grows; keep the architect on all three sections.
+
+# Governance: constitution, ADRs, build prompts
+/docs/ @oliviasar
+
+# CI/CD pipeline definition (MASTER_PROMPT section 3)
+/.gitlab-ci.yml @oliviasar
+
+# Domain layer — pure business logic, single source of truth
+/backend/src/domain/ @oliviasar
+
+# Repo hygiene files themselves
+/CODEOWNERS @oliviasar
+/.gitlab/merge_request_templates/ @oliviasar
