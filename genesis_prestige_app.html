@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Genesis Prestige — SACCO Portal</title>
+<style>
+  :root{
+    --navy:#0F2C6B;--navyMid:#1E4FB0;--steel:#3E6FD0;--navySoft:#E6EDFB;
+    --gold:#2E90FA;--goldSoft:#DCEBFF;--ink:#131A2B;--sub:#5C6579;
+    --line:#E1E4EC;--bg:#F3F4F7;--panel:#EBEEF3;--card:#fff;
+    --emerald:#1B7A54;--emeraldSoft:#DCEFE6;--brick:#B23A2E;--brickSoft:#F6E1DD;
+    --orange:#C2691C;--orangeSoft:#F7E7D4;--loss:#6E241B;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,'Segoe UI',Roboto,system-ui,sans-serif;color:var(--ink);background:var(--bg)}
+  .tnum{font-variant-numeric:tabular-nums}
+  .app{display:flex;height:100vh;overflow:hidden}
+  /* sidebar */
+  aside{width:234px;background:var(--navy);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+  .brand{padding:20px 18px;display:flex;align-items:center;gap:11px}
+  .mark{width:38px;height:38px;border-radius:10px;background:var(--gold);color:var(--navy);display:grid;place-items:center;font-family:Georgia,serif;font-weight:800;font-size:20px}
+  .brand .n{color:#fff;font-family:Georgia,serif;font-weight:700;font-size:15px;line-height:1.1}
+  .brand .t{color:var(--goldSoft);font-size:10px;font-weight:600;letter-spacing:1px}
+  nav{padding:4px 12px;flex:1}
+  .sec{font-size:10px;font-weight:800;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.7px;padding:10px 12px 6px}
+  .nav-item{width:100%;display:flex;align-items:center;gap:10px;padding:9px 12px;margin-bottom:2px;border-radius:10px;border:none;cursor:pointer;background:transparent;color:rgba(255,255,255,.72);font-weight:600;font-size:13px;font-family:inherit;text-align:left}
+  .nav-item.on{background:rgba(255,255,255,.12);color:#fff;font-weight:800}
+  .nav-item .badge{margin-left:auto;background:var(--gold);color:var(--navy);font-size:10px;font-weight:800;border-radius:999px;padding:1px 6px}
+  .who{padding:12px;border-top:1px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:10px}
+  .who .av{width:32px;height:32px;border-radius:999px;background:var(--gold);color:var(--navy);display:grid;place-items:center;font-weight:800;font-size:12px}
+  .who .nm{color:#fff;font-size:12px;font-weight:700}.who .rl{color:var(--goldSoft);font-size:10px}
+  /* main */
+  .main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+  header{height:62px;background:var(--card);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 28px;flex-shrink:0}
+  header .ttl{font-size:17px;font-weight:800}header .sub{font-size:11.5px;color:var(--sub)}
+  header .pil{display:flex;align-items:center;gap:8px;background:var(--panel);border-radius:10px;padding:6px 12px;font-size:12.5px;font-weight:700}
+  header .pil .av{width:24px;height:24px;border-radius:999px;background:var(--navy);color:#fff;display:grid;place-items:center;font-weight:800;font-size:10px}
+  main{flex:1;overflow-y:auto;padding:28px}
+  /* atoms */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px}
+  .pad{padding:20px}
+  .grid{display:grid;gap:16px}
+  h2.sec-t{font-size:15px;font-weight:800;margin-bottom:14px}
+  .kes{font-size:.6em;color:var(--sub);font-weight:600;margin-right:3px}
+  .pill{display:inline-block;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap}
+  .stat .l{font-size:11.5px;color:var(--sub);font-weight:700}.stat .v{font-weight:800;margin-top:6px}
+  table{width:100%;border-collapse:collapse}
+  thead tr{background:var(--panel)}
+  th{text-align:left;padding:10px 16px;font-size:10.5px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.4px}
+  th.r,td.r{text-align:right}
+  td{padding:11px 16px;font-size:13px;border-bottom:1px solid var(--panel)}
+  tbody tr{border-bottom:1px solid var(--panel)}
+  .av{width:36px;height:36px;border-radius:10px;background:var(--navySoft);display:grid;place-items:center;flex-shrink:0;color:var(--navy);font-weight:800;font-size:12px}
+  .mrow{display:flex;align-items:center;gap:12px}
+  .btn{border:1.5px solid var(--line);background:#fff;color:var(--sub);border-radius:10px;padding:9px 16px;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit}
+  .btn.p{border:none;background:var(--navy);color:#fff}
+  .btn.g{border:none;background:var(--emerald);color:#fff}
+  .btn:disabled{background:var(--line);color:var(--sub);cursor:not-allowed}
+  .chip{padding:7px 12px;border-radius:999px;border:none;cursor:pointer;font-size:12px;font-weight:700;background:var(--panel);color:var(--sub);font-family:inherit}
+  .chip.on{background:var(--navy);color:#fff}
+  label{font-size:11.5px;font-weight:700;color:var(--sub);display:block;margin-bottom:5px}
+  input,select,textarea{width:100%;padding:9px 12px;border-radius:9px;border:1.5px solid var(--line);font-size:13px;font-family:inherit;outline:none;background:#fff}
+  input:focus,select:focus{border-color:var(--navy)}
+  .field{margin-bottom:12px}
+  .hero{background:var(--navy);border-radius:14px;padding:16px;color:#fff}
+  .hero .l{font-size:11.5px;color:var(--goldSoft);font-weight:700}.hero .v{font-size:22px;font-weight:800}
+  .row{display:flex;justify-content:space-between;padding:7px 0;font-size:13px;border-bottom:1px solid var(--panel)}
+  .row .k{color:var(--sub);font-weight:600}.row .val{font-weight:700}
+  .banner{padding:12px 14px;border-radius:12px;font-size:12.5px;font-weight:700}
+  .link{background:none;border:none;color:var(--sub);font-weight:700;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:inherit;margin-bottom:14px}
+  .bars{display:flex;align-items:flex-end;gap:18px;height:200px;padding:10px 0 0}
+  .barpair{flex:1;display:flex;gap:5px;align-items:flex-end;justify-content:center;height:100%}
+  .bar{width:22px;border-radius:4px 4px 0 0}
+  .barlbl{text-align:center;font-size:12px;color:var(--sub);margin-top:6px}
+  .subhead{font-size:12px;font-weight:800;color:var(--navyMid);text-transform:uppercase;letter-spacing:.5px;margin:0 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  .modal{position:fixed;inset:0;background:rgba(19,26,43,.4);display:flex;justify-content:flex-end;z-index:50}
+  .drawer{width:380px;background:#fff;height:100%;padding:24px;overflow-y:auto}
+  .toggle{width:38px;height:22px;border-radius:999px;border:none;cursor:pointer;position:relative}
+  .toggle .k{position:absolute;top:2px;width:18px;height:18px;border-radius:999px;background:#fff}
+  .cbx{width:24px;height:24px;border-radius:7px;cursor:pointer;display:grid;place-items:center;background:#fff}
+  #gate{position:fixed;inset:0;z-index:600;background:linear-gradient(140deg,var(--navy),var(--navyMid));display:none;place-items:center;padding:20px}
+  .gatecard{width:404px;max-width:100%;background:#fff;border-radius:20px;padding:30px;box-shadow:0 30px 90px rgba(0,0,0,.45)}
+  .otpbox{display:flex;gap:8px;justify-content:center;margin:6px 0 4px}
+  .otpbox input{width:44px;height:52px;text-align:center;font-size:22px;font-weight:800;border:1.5px solid var(--line);border-radius:10px;outline:none}
+  .otpbox input:focus{border-color:var(--navy)}
+</style>
+</head>
+<body>
+<div id="gate"></div>
+<div class="app">
+  <aside>
+    <div class="brand"><div class="mark">G</div><div><div class="n">Genesis Prestige</div><div class="t">ZURI GENESIS · SACCO</div></div></div>
+    <nav id="nav"></nav>
+    <div class="who"><div class="av">AM</div><div style="flex:1"><div class="nm">Antony Maina</div><div class="rl">Loan officer</div></div></div>
+  </aside>
+  <div class="main">
+    <header><div><div class="ttl" id="h-title">Portfolio overview</div><div class="sub">Genesis Prestige Sacco · FY2026</div></div>
+      <div class="pil" title="Sign out" style="cursor:pointer" onclick="signOut()"><div class="av">AM</div>Maina</div></header>
+    <main id="main"></main>
+  </div>
+</div>
+
+<script>
+/* ===================== engine + helpers ===================== */
+const r2=n=>Math.round(n*100)/100, fmt=n=>Math.round(n).toLocaleString('en-KE');
+const money=(v,cls='')=>`<span class="tnum ${cls}"><span class="kes">KES</span>${fmt(v)}</span>`;
+const inst=(p,a,m)=>{const r=a/100/12;if(!r)return p/m;const f=Math.pow(1+r,m);return r2(p*r*f/(f-1));};
+function classify(d){
+  if(d<=30)return{l:'Normal',pct:1,npl:false,fg:'--emerald',bg:'--emeraldSoft'};
+  if(d<=90)return{l:'Watch',pct:5,npl:false,fg:'--gold',bg:'--goldSoft'};
+  if(d<=180)return{l:'Substandard',pct:25,npl:true,fg:'--orange',bg:'--orangeSoft'};
+  if(d<=360)return{l:'Doubtful',pct:50,npl:true,fg:'--brick',bg:'--brickSoft'};
+  return{l:'Loss',pct:100,npl:true,fg:'--loss',bg:'--brickSoft'};
+}
+const pill=(t,bg,fg)=>`<span class="pill" style="background:var(${bg});color:var(${fg})">${t}</span>`;
+const TYPEI={Person:'👤',Company:'🏢',Group:'👥',Vehicle:'🚐'};
+const avatar=(name,type)=>`<div class="av">${type?TYPEI[type]:name.split(' ').map(x=>x[0]).join('').slice(0,2)}</div>`;
+
+/* ===================== data ===================== */
+const members=[
+  {name:'Grace Wanjiru',no:'GP-0912',type:'Person',dep:92000,shares:15000,loan:40000,st:'Active'},
+  {name:'Kifaru Logistics Ltd',no:'GP-1130',type:'Company',dep:960000,shares:200000,loan:0,st:'Active'},
+  {name:'Mwangaza Chama',no:'GP-0455',type:'Group',dep:410000,shares:80000,loan:180000,st:'Active'},
+  {name:'KDU 573T · Matatu',no:'GP-0447',type:'Vehicle',dep:185000,shares:30000,loan:120000,st:'Active'},
+  {name:'Mary Achieng',no:'GP-1401',type:'Person',dep:210000,shares:30000,loan:260000,st:'Active'},
+  {name:'Peter Otieno',no:'GP-0221',type:'Person',dep:96000,shares:20000,loan:0,st:'Active'},
+  {name:'KDQ 886R · Minibus',no:'GP-0333',type:'Vehicle',dep:54000,shares:10000,loan:90000,st:'Arrears'},
+];
+const monthly=[['Feb',18.2,12.1],['Mar',19.6,14.8],['Apr',21.1,11.2],['May',22.4,16.9],['Jun',23.8,13.5],['Jul',25.1,18.2]];
+const loans=[
+  {name:'Mary Achieng',no:'GP-1401',prod:'Development',bal:260000,rate:12,term:36,paid:6,days:0},
+  {name:'KDU 573T',no:'GP-0447',prod:'Asset Finance',bal:120000,rate:14,term:24,paid:8,days:0},
+  {name:'Grace Wanjiru',no:'GP-0912',prod:'Emergency',bal:40000,rate:12,term:12,paid:4,days:0},
+  {name:'Mwangaza Chama',no:'GP-0455',prod:'Group Loan',bal:180000,rate:13,term:24,paid:5,days:22},
+  {name:'KDQ 886R',no:'GP-0333',prod:'Asset Finance',bal:90000,rate:14,term:24,paid:9,days:68},
+  {name:'James Kariuki',no:'GP-0640',prod:'Development',bal:140000,rate:12,term:36,paid:14,days:120},
+  {name:'Lucy Wambui',no:'GP-0517',prod:'Asset Finance',bal:220000,rate:14,term:48,paid:10,days:210},
+];
+const apps=[
+  {id:1,name:'Grace Wanjiru',no:'GP-0912',type:'Person',prod:'Development',amt:250000,term:36,rate:12,dep:92000,cover:118,stage:'Committee',purpose:'Business expansion'},
+  {id:2,name:'Peter Otieno',no:'GP-0221',type:'Person',prod:'Emergency',amt:80000,term:12,rate:12,dep:96000,cover:100,stage:'Appraisal',purpose:'Medical'},
+  {id:3,name:'KDU 573T',no:'GP-0447',type:'Vehicle',prod:'Asset Finance',amt:400000,term:48,rate:14,dep:110000,cover:88,stage:'Submitted',purpose:'Vehicle body rebuild'},
+  {id:4,name:'Kifaru Logistics Ltd',no:'GP-1130',type:'Company',prod:'Asset Finance',amt:300000,term:36,rate:14,dep:960000,cover:130,stage:'Approved',purpose:'Fleet expansion'},
+  {id:5,name:'Lucy Wambui',no:'GP-0517',type:'Person',prod:'Development',amt:150000,term:24,rate:12,dep:60000,cover:92,stage:'Rejected',purpose:'Personal'},
+];
+const STAGES=['Submitted','Appraisal','Committee','Approved','Disbursed'];
+const products=[{name:'Development Loan',rate:12,mult:3,maxTerm:48},{name:'Emergency Loan',rate:12,mult:1,maxTerm:12},{name:'Group Loan',rate:13,mult:2,maxTerm:24},{name:'Asset Finance',rate:14,mult:4,maxTerm:60}];
+const ledger=[
+  {d:'20 Jul',ref:'MP-5501',member:'Grace Wanjiru',type:'Deposit',dr:0,cr:15000,ch:'M-Pesa'},
+  {d:'20 Jul',ref:'LN-1130',member:'Kifaru Logistics',type:'Disbursement',dr:300000,cr:0,ch:'Bank'},
+  {d:'19 Jul',ref:'RP-1401',member:'Mary Achieng',type:'Loan repayment',dr:0,cr:12180,ch:'M-Pesa'},
+  {d:'19 Jul',ref:'SH-0447',member:'KDU 573T',type:'Share top-up',dr:0,cr:5000,ch:'M-Pesa'},
+  {d:'18 Jul',ref:'WD-0221',member:'Peter Otieno',type:'Withdrawal',dr:8000,cr:0,ch:'Bank'},
+  {d:'18 Jul',ref:'INT-Q2',member:'All members',type:'Interest posting',dr:0,cr:6240,ch:'Accrual'},
+  {d:'17 Jul',ref:'MP-5480',member:'Mwangaza Chama',type:'Deposit',dr:0,cr:25000,ch:'M-Pesa'},
+];
+const exitMembers=[
+  {name:'KDU 573T · Matatu',no:'GP-0447',type:'Vehicle',shares:30000,deposits:185000,loan:120000,guarantees:[]},
+  {name:'Peter Otieno',no:'GP-0221',type:'Person',shares:20000,deposits:96000,loan:0,guarantees:[{who:'Grace Wanjiru',amt:80000}]},
+  {name:'KDQ 886R · Minibus',no:'GP-0333',type:'Vehicle',shares:10000,deposits:54000,loan:90000,guarantees:[]},
+];
+const guarantees=[
+  {id:1,gtorNo:'GP-1130',gtor:'Kifaru Logistics Ltd',borNo:'GP-0455',bor:'Mwangaza Chama',ref:'LN-0455',amt:100000,st:'Active'},
+  {id:2,gtorNo:'GP-1130',gtor:'Kifaru Logistics Ltd',borNo:'GP-0447',bor:'KDU 573T · Matatu',ref:'LN-0447',amt:150000,st:'Active'},
+  {id:3,gtorNo:'GP-0912',gtor:'Grace Wanjiru',borNo:'GP-1401',bor:'Mary Achieng',ref:'LN-1401',amt:30000,st:'Active'},
+  {id:4,gtorNo:'GP-0221',gtor:'Peter Otieno',borNo:'GP-0912',bor:'Grace Wanjiru',ref:'LN-0912',amt:80000,st:'Active'},
+];
+const roleNames=['System Admin','Branch Manager','Loan Officer','Teller','Credit Committee','Accountant','Auditor'];
+const modulesRB=['Members','Applications','Loan book','Transactions','Reports','Settings','Access control'];
+function seedPerms(){const b={};roleNames.forEach(r=>{b[r]={};modulesRB.forEach(m=>{let p={view:false,create:false,edit:false,approve:false};
+  if(r==='System Admin')p={view:1,create:1,edit:1,approve:1};
+  else if(r==='Branch Manager')p={view:1,create:1,edit:1,approve:!['Settings','Access control'].includes(m)};
+  else if(r==='Loan Officer')p={view:!['Settings','Access control'].includes(m),create:['Members','Applications'].includes(m),edit:m==='Applications',approve:false};
+  else if(r==='Teller')p={view:['Members','Transactions'].includes(m),create:m==='Transactions',edit:false,approve:false};
+  else if(r==='Credit Committee')p={view:['Applications','Loan book','Reports'].includes(m),create:false,edit:false,approve:m==='Applications'};
+  else if(r==='Accountant')p={view:['Loan book','Transactions','Reports','Members'].includes(m),create:m==='Transactions',edit:m==='Transactions',approve:false};
+  else if(r==='Auditor')p={view:1,create:false,edit:false,approve:false};
+  b[r][m]=p;});});return b;}
+const users=[['Antony Maina','Loan Officer','Nairobi CBD','Active','2m ago'],['Francis Karingi','Branch Manager','Nairobi CBD','Active','1h ago'],['Jane Muthoni','Teller','Thika','Active','20m ago'],['Board Member A','Credit Committee','HQ','Active','3d ago'],['Ruth Achieng','Accountant','HQ','Active','5h ago'],['Sam Kiptoo','Auditor','HQ','Suspended','12d ago']];
+const memberStatement=[['01 Jan 2026','Opening balance',0,0,145000],['05 Jan 2026','Monthly deposit (M-Pesa)',0,15000,160000],['05 Jan 2026','Share capital top-up',0,5000,165000],['05 Feb 2026','Monthly deposit',0,15000,180000],['18 Feb 2026','Loan repayment — Development',9412,0,170588],['05 Mar 2026','Monthly deposit',0,15000,185588],['30 Jun 2026','Interest on deposits (9% p.a.)',0,6240,191828]];
+
+/* ===================== state ===================== */
+const S={active:'dash',mType:'All',addStep:0,addType:null,appFilter:'All',appView:'list',appSel:null,book:'All',bookSel:null,cmtSel:1,exitSel:'GP-0447',setTab:'Interest',setProd:0,rbacTab:'Roles & permissions',rbacRole:'Loan Officer',perms:seedPerms(),rep:null,repMem:members[0].name,txnOpen:0,votes:{},addOpen:0,draft:{},authed:false,otpStage:'request',otpCode:null,otpContact:'',role:'Loan Officer',guarOpen:0,exitConfirm:null};
+
+/* ===================== nav ===================== */
+const NAV=[
+  {sec:'Operations',items:[['dash','Dashboard','Portfolio overview'],['members','Members','Members'],['apps','Applications','Loan applications'],['book','Loan book','Loan book'],['guar','Guarantors','Guarantorship & pledges'],['txn','Transactions','Transactions ledger']]},
+  {sec:'Governance',items:[['committee','Credit committee','Credit committee review',1],['exit','Member exit','Member exit & settlement']]},
+  {sec:'Insights',items:[['reports','Reports','Statements & reports']]},
+  {sec:'Administration',items:[['settings','Settings','Settings'],['rbac','Access control','Access control (RBAC)']]},
+];
+function renderNav(){
+  document.getElementById('nav').innerHTML=NAV.map(g=>`<div class="sec">${g.sec}</div>`+g.items.map(([id,l,,badge])=>
+    `<button class="nav-item ${S.active===id?'on':''}" onclick="go('${id}')">${l}${badge?`<span class="badge">${badge}</span>`:''}</button>`).join('')).join('');
+}
+function go(id){S.active=id;S.appView='list';S.rep=null;const t=NAV.flatMap(g=>g.items).find(i=>i[0]===id);document.getElementById('h-title').textContent=t?t[2]:'';renderNav();render();}
+
+/* ===================== modules ===================== */
+function render(){
+  document.getElementById('main').innerHTML=({
+    dash:vDash,members:vMembers,apps:vApps,book:vBook,guar:vGuar,txn:vTxn,committee:vCommittee,exit:vExit,reports:vReports,settings:vSettings,rbac:vRbac
+  })[S.active]();
+  let host=document.getElementById('modal-host');
+  if(!host){host=document.createElement('div');host.id='modal-host';document.body.appendChild(host);}
+  host.innerHTML=S.txnOpen?txnModal():S.guarOpen?guarModal():S.exitConfirm?exitConfirmModal():'';
+  if(S.guarOpen)guarPreview();
+  if(S.active==='apps'&&S.appView==='new')updateNewApp();
+}
+
+function vDash(){
+  const active=members.filter(m=>m.st!=='Exited');
+  const totalDep=active.reduce((s,m)=>s+m.dep,0);
+  const totalShares=active.reduce((s,m)=>s+m.shares,0);
+  const en=loans.map(l=>({...l,cls:classify(l.days)}));
+  const book=en.reduce((s,l)=>s+l.bal,0);
+  const npl=en.filter(l=>l.cls.npl).reduce((s,l)=>s+l.bal,0);
+  const perf=book-npl;
+  const par30=en.filter(l=>l.days>30).reduce((s,l)=>s+l.bal,0);
+  const parPct=book?par30/book*100:0;
+  const prov=en.reduce((s,l)=>s+l.bal*l.cls.pct/100,0);
+  const perfPct=book?perf/book*100:0;
+
+  const spark=(vals,color)=>{const w=120,h=28,mx=Math.max(...vals),mn=Math.min(...vals);const pts=vals.map((v,i)=>`${i/(vals.length-1)*w},${h-((v-mn)/((mx-mn)||1))*h}`).join(' ');return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:28px"><polyline points="${pts}" fill="none" stroke="var(${color})" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;};
+  const depTrend=monthly.map(m=>m[1]), disTrend=monthly.map(m=>m[2]);
+  const kpis=[
+    {l:'Total deposits',v:totalDep,c:'--gold',d:'+4.2% vs last month',up:1,ic:'💰',sp:depTrend},
+    {l:'Loan book',v:book,c:'--navy',d:'+2.8% vs last month',up:1,ic:'🏦',sp:disTrend},
+    {l:'PAR > 30 days',v:parPct,pct:1,c:parPct>10?'--brick':'--orange',d:(parPct>10?'above':'within')+' threshold',up:0,ic:'⚠️',sp:disTrend},
+    {l:'Active members',v:active.length,plain:1,c:'--emerald',d:'+'+Math.max(0,active.length-6)+' this session',up:1,ic:'👥',sp:depTrend},
+  ];
+  const kpiCard=k=>`<div class="card" style="padding:16px;overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px"><span style="font-size:12.5px;color:var(--sub);font-weight:700">${k.l}</span><span style="width:30px;height:30px;border-radius:8px;background:var(--panel);display:grid;place-items:center;font-size:15px">${k.ic}</span></div>
+    <div style="font-size:${k.plain?24:20}px;font-weight:800;color:var(${k.c})">${k.pct?k.v.toFixed(1)+'%':k.plain?fmt(k.v):money(k.v)}</div>
+    <div style="font-size:11px;font-weight:700;color:var(${k.up?'--emerald':'--orange'});margin-top:5px">${k.up?'▲ ':'• '}${k.d}</div>
+    <div style="margin-top:6px;opacity:.85">${spark(k.sp,k.c)}</div>
+  </div>`;
+
+  const W=680,H=230,padL=34,padR=10,padT=14,padB=26;
+  const cw=W-padL-padR, ch=H-padT-padB;
+  const maxv=Math.max(5,Math.ceil(Math.max(...monthly.flatMap(m=>[m[1],m[2]]))/5)*5);
+  const yTicks=[0,maxv/2,maxv];
+  const bw=cw/monthly.length; const bh=v=>v/maxv*ch;
+  const grid=yTicks.map(t=>{const y=padT+ch-(t/maxv*ch);return `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="var(--line)"/><text x="${padL-6}" y="${y+3}" text-anchor="end" font-size="9" fill="var(--sub)">${t}</text>`;}).join('');
+  const bars=monthly.map((m,i)=>{const x=padL+i*bw;const gw=bw*0.26;const gap=bw*0.09;const midx=x+bw/2;const d=bh(m[1]),x2=bh(m[2]);return `<rect x="${midx-gw-gap/2}" y="${padT+ch-d}" width="${gw}" height="${d}" rx="3" fill="var(--gold)"/><rect x="${midx+gap/2}" y="${padT+ch-x2}" width="${gw}" height="${x2}" rx="3" fill="var(--navy)"/><text x="${midx}" y="${H-8}" text-anchor="middle" font-size="10" fill="var(--sub)">${m[0]}</text>`;}).join('');
+  const chart=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${grid}${bars}</svg>`;
+
+  const dcx=70,dcy=70,dR=52,circ=2*Math.PI*dR,perfLen=circ*(perfPct/100);
+  const donut=`<svg viewBox="0 0 140 140" style="width:150px;height:150px">
+    <circle cx="${dcx}" cy="${dcy}" r="${dR}" fill="none" stroke="var(--brickSoft)" stroke-width="16"/>
+    <circle cx="${dcx}" cy="${dcy}" r="${dR}" fill="none" stroke="var(--gold)" stroke-width="16" stroke-dasharray="${perfLen} ${circ}" stroke-linecap="round" transform="rotate(-90 ${dcx} ${dcy})"/>
+    <text x="${dcx}" y="${dcy-2}" text-anchor="middle" font-size="23" font-weight="800" fill="var(--navy)">${Math.round(perfPct)}%</text>
+    <text x="${dcx}" y="${dcy+16}" text-anchor="middle" font-size="10" fill="var(--sub)">performing</text>
+  </svg>`;
+
+  const order=['Normal','Watch','Substandard','Doubtful','Loss'];
+  const clsRows=order.map(name=>{const inC=en.filter(l=>l.cls.l===name);const bal=inC.reduce((s,l)=>s+l.bal,0);const c=classify(name==='Normal'?0:name==='Watch'?45:name==='Substandard'?120:name==='Doubtful'?210:400);return {name,count:inC.length,bal,fg:c.fg,pct:book?bal/book*100:0};});
+  const pipe=STAGES.map(s=>[s,apps.filter(a=>a.stage===s).length]);
+  const pending=apps.filter(a=>a.stage==='Appraisal'||a.stage==='Committee').length;
+  const types=['Person','Company','Group','Vehicle'];
+  const byType=types.map(t=>[t,active.filter(m=>m.type===t).length]);
+  const maxType=Math.max(1,...byType.map(x=>x[1]));
+  const recent=ledger.slice(0,6);
+  const kc=t=>['Disbursement','Withdrawal'].includes(t)?'--brick':'--emerald';
+
+  return `
+  <div class="grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">${kpis.map(kpiCard).join('')}</div>
+  <div class="grid" style="grid-template-columns:2fr 1fr;margin-bottom:16px">
+    <div class="card pad">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><h2 class="sec-t" style="margin:0">Deposits vs disbursements</h2><span style="font-size:11.5px;color:var(--sub)">KES millions · 6 months</span></div>
+      ${chart}
+      <div style="display:flex;gap:18px;margin-top:4px;font-size:12px;color:var(--sub)"><span><span style="display:inline-block;width:10px;height:10px;background:var(--gold);border-radius:2px"></span> Deposits</span><span><span style="display:inline-block;width:10px;height:10px;background:var(--navy);border-radius:2px"></span> Disbursed</span></div>
+    </div>
+    <div class="card pad">
+      <h2 class="sec-t">Portfolio quality</h2>
+      <div style="display:flex;justify-content:center">${donut}</div>
+      <div style="margin-top:6px">
+        <div class="row"><span class="k">Performing</span><span class="val tnum" style="color:var(--emerald)">KES ${fmt(perf)}</span></div>
+        <div class="row"><span class="k">Non-performing</span><span class="val tnum" style="color:var(--brick)">KES ${fmt(npl)}</span></div>
+        <div class="row"><span class="k">PAR &gt; 30</span><span class="val tnum">${parPct.toFixed(1)}%</span></div>
+        <div class="row" style="border:none"><span class="k">Provisions held</span><span class="val tnum" style="color:var(--sub)">KES ${fmt(prov)}</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">
+    <div class="card pad"><h2 class="sec-t">Loan classification</h2>
+      ${clsRows.map(r=>`<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="font-weight:700;color:var(${r.fg})">${r.name}</span><span class="tnum" style="color:var(--sub)">${r.count} · KES ${fmt(r.bal)}</span></div><div style="height:6px;background:var(--panel);border-radius:999px;overflow:hidden"><div style="width:${Math.max(2,r.pct)}%;height:100%;background:var(${r.fg})"></div></div></div>`).join('')}
+    </div>
+    <div class="card pad"><h2 class="sec-t">Applications pipeline</h2>
+      ${pipe.map(([s,n])=>`<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><span style="font-size:12.5px;font-weight:600;flex:1">${s}</span><div style="flex:2;height:8px;background:var(--panel);border-radius:999px;overflow:hidden"><div style="width:${apps.length?n/apps.length*100:0}%;height:100%;background:var(--gold)"></div></div><span class="tnum" style="font-size:12.5px;font-weight:800;width:18px;text-align:right">${n}</span></div>`).join('')}
+      <div style="margin-top:8px;padding:10px 12px;background:var(--goldSoft);border-radius:10px;font-size:12px;font-weight:700;color:var(--navy);cursor:pointer" onclick="go('committee')">${pending} awaiting review →</div>
+    </div>
+    <div class="card pad"><h2 class="sec-t">Members by type</h2>
+      ${byType.map(([t,n])=>`<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><span style="width:30px;height:30px;border-radius:8px;background:var(--navySoft);display:grid;place-items:center">${TYPEI[t]}</span><span style="font-size:12.5px;font-weight:700;flex:1">${t}</span><div style="flex:1.5;height:8px;background:var(--panel);border-radius:999px;overflow:hidden"><div style="width:${n/maxType*100}%;height:100%;background:var(--navyMid)"></div></div><span class="tnum" style="font-weight:800;font-size:13px;width:20px;text-align:right">${n}</span></div>`).join('')}
+      <div class="row" style="border:none;margin-top:4px"><span class="k">Total share capital</span><span class="val tnum" style="color:var(--gold)">KES ${fmt(totalShares)}</span></div>
+    </div>
+  </div>
+  <div class="card" style="overflow:hidden">
+    <div style="padding:14px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center"><h2 class="sec-t" style="margin:0">Recent activity</h2><span style="font-size:11.5px;color:var(--navy);font-weight:700;cursor:pointer" onclick="go('txn')">View ledger ›</span></div>
+    <table><thead><tr><th>Date</th><th>Member</th><th>Type</th><th>Channel</th><th class="r">Amount</th></tr></thead><tbody>
+    ${recent.map(t=>`<tr><td style="color:var(--sub)">${t.d}</td><td style="font-weight:700">${t.member}</td><td>${pill(t.type,'--navySoft',kc(t.type))}</td><td style="color:var(--sub)">${t.ch}</td><td class="r tnum" style="font-weight:700;color:var(${t.dr?'--brick':'--emerald'})">${t.dr?'-'+fmt(t.dr):'+'+fmt(t.cr)}</td></tr>`).join('')}
+    </tbody></table>
+  </div>`;
+}
+
+function vMembers(){
+  if(S.addStep>0||S.addType!==null&&S.addOpen) {}
+  if(S.addOpen) return vAdd();
+  const rows=members.filter(m=>(S.mType==='All'||m.type===S.mType));
+  const sc={Active:['--emeraldSoft','--emerald'],Dormant:['--line','--sub'],Arrears:['--brickSoft','--brick'],Exited:['--panel','--sub']};
+  return `<div class="card" style="overflow:hidden">
+    <div style="padding:16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);gap:12px">
+      <div style="display:flex;gap:4px;margin-right:auto">${['All','Person','Company','Group','Vehicle'].map(t=>`<button class="chip ${S.mType===t?'on':''}" onclick="S.mType='${t}';render()">${t}</button>`).join('')}</div>
+      <button class="btn p" onclick="S.addOpen=1;S.addStep=0;S.addType=null;S.draft={};render()">+ Add member</button>
+    </div>
+    <table><thead><tr><th>Member</th><th>Type</th><th class="r">Deposits</th><th class="r">Shares</th><th class="r">Loan</th><th class="r">Status</th></tr></thead><tbody>
+    ${rows.map(m=>`<tr><td><div class="mrow">${avatar(m.name,m.type)}<div><div style="font-weight:700">${m.name}</div><div style="font-size:11px;color:var(--sub)">${m.no}</div></div></div></td>
+      <td>${pill(m.type,'--navySoft','--navy')}</td><td class="r tnum" style="font-weight:600">${fmt(m.dep)}</td>
+      <td class="r tnum" style="font-weight:600;color:var(--gold)">${fmt(m.shares)}</td><td class="r tnum" style="font-weight:600">${m.loan?fmt(m.loan):'—'}</td>
+      <td class="r">${pill(m.st,sc[m.st][0],sc[m.st][1])}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
+
+const forms={
+  Person:[['Bio data',['First name','Surname','Gender','Date of birth','ID number','KRA PIN']],['Contact',['Phone (M-Pesa)','Email','County','Physical address']],['Employment',['Employment status','Occupation','Monthly income']],['Next of kin',['Name','Relationship','Phone']]],
+  Company:[['Company',['Registered name','Reg number','KRA PIN','Incorporated on','Industry','Nature of business']],['Office',['Address','Town','County']],['Contact',['Contact name','Role','Phone','Email']],['Signatory',['Director name','ID number','Role']]],
+  Group:[['Group',['Group name','Group type','Reg number','Date formed','County','Members count']],['Chairperson',['Name','ID number','Phone']],['Secretary',['Name','ID number','Phone']],['Treasurer',['Name','ID number','Phone']]],
+  Vehicle:[['Vehicle',['Registration number','Make','Model','Year','Body type','Passenger capacity']],['Compliance',['Route / SACCO route','TLB / PSV licence','NTSA inspection expiry','Insurance provider','Insurance expiry']],['Ownership',['Registered owner','Ownership type','Financier']]],
+};
+const docsFor={Person:['National ID copy','KRA PIN','Passport photo','Signature','NOK ID'],Company:['Cert of incorporation','CR12','KRA PIN','Board resolution','Signatory IDs'],Group:['Registration cert','Constitution','Members list','Resolution','Officials IDs'],Vehicle:['Logbook','Insurance cert','NTSA inspection','PSV/TLB licence','SACCO agreement']};
+function vAdd(){
+  const steps=['Member type','Details','Membership','Documents & review'],st=S.addStep,ty=S.addType;
+  const rail=steps.map((s,i)=>`<div style="display:flex;gap:12px;margin-bottom:20px;opacity:${i>st?.5:1}"><div style="width:28px;height:28px;border-radius:999px;display:grid;place-items:center;background:var(${i<st?'--emerald':i===st?'--navy':'--panel'});color:${i<=st?'#fff':'var(--sub)'};font-weight:800;font-size:12px">${i<st?'✓':i+1}</div><div style="font-size:13px;font-weight:700;color:${i===st?'var(--ink)':'var(--sub)'}">${s}</div></div>`).join('');
+  let content='';
+  if(st===0){content=`<div style="font-size:13px;color:var(--sub);margin-bottom:16px">Select the type of member you are registering.</div><div class="grid" style="grid-template-columns:1fr 1fr">
+    ${Object.keys(TYPEI).map(t=>{const on=ty===t;const b={Person:'Individual saver / borrower',Company:'Registered corporate entity',Group:'Chama, welfare or investment group',Vehicle:'PSV / matatu unit account'}[t];
+    return `<div onclick="S.addType='${t}';render()" style="padding:18px;border-radius:14px;border:2px solid var(${on?'--navy':'--line'});cursor:pointer;background:${on?'var(--navySoft)':'#fff'};display:flex;gap:14px;align-items:center"><div style="width:46px;height:46px;border-radius:12px;background:var(${on?'--navy':'--panel'});display:grid;place-items:center;font-size:22px">${TYPEI[t]}</div><div><div style="font-size:15px;font-weight:800">${t}</div><div style="font-size:12px;color:var(--sub)">${b}</div></div>${on?'<span style="margin-left:auto;color:var(--navy);font-weight:800">✓</span>':''}</div>`;}).join('')}</div>`;}
+  else if(st===1&&ty){content=forms[ty].map(([sec,fs])=>`<div style="margin-bottom:18px"><div class="subhead">${sec}</div><div class="grid" style="grid-template-columns:1fr 1fr 1fr">${fs.map(f=>{const k='f_'+f.replace(/[^A-Za-z0-9]/g,'_');return `<div class="field"><label>${f}</label><input id="${k}" value="${S.draft[k]||''}" oninput="S.draft['${k}']=this.value"></div>`;}).join('')}</div></div>`).join('');}
+  else if(st===2){content=`<div class="subhead">Membership & contributions</div><div class="grid" style="grid-template-columns:1fr 1fr 1fr">
+    ${['Member category','Home branch','Recruited by','Registration fee','Share capital',ty==='Vehicle'?'Daily contribution':'Monthly contribution','Contribution method','Dividend payout'].map(f=>{const k=f==='Share capital'?'m_share':f.includes('contribution')?'m_contrib':'';return `<div class="field"><label>${f}</label><input ${k?`id="${k}" value="${S.draft[k]||''}" oninput="S.draft['${k}']=this.value"`:''}></div>`;}).join('')}</div>
+    <div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--panel);border-radius:12px"><span style="font-size:12.5px;font-weight:600">✓ Data Protection Act 2019 consent captured</span></div>`;}
+  else if(st===3&&ty){content=`<div class="grid" style="grid-template-columns:1fr 1fr">
+    <div><div class="subhead">Required documents</div>${docsFor[ty].map((d,i)=>`<div class="row"><span>${i<docsFor[ty].length-1?'✅':'⬜'} ${d}</span><button class="btn" style="padding:4px 10px;font-size:11.5px" onclick="toast('Upload (demo)')">Upload</button></div>`).join('')}</div>
+    <div><div class="subhead">Summary</div><div class="card pad" style="background:var(--panel);border-color:var(--panel)"><div class="mrow" style="margin-bottom:12px">${avatar('New',ty)}<div><div style="font-size:14px;font-weight:800">${ty} member</div><div style="font-size:11.5px;color:var(--sub)">Member no. auto-assigned</div></div></div>
+    ${[['Type',ty],['Category','Ordinary'],['Branch','Nairobi CBD'],['Consent','Captured ✓']].map(([k,v])=>`<div class="row"><span class="k">${k}</span><span class="val">${v}</span></div>`).join('')}</div></div></div>`;}
+  const canNext=!(st===0&&!ty);
+  return `<div class="card pad"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><h2 class="sec-t" style="margin:0">New member registration</h2><button class="btn" onclick="S.addOpen=0;render()">Cancel</button></div>
+    <div style="display:flex;gap:28px"><div style="width:210px;flex-shrink:0">${rail}</div><div style="flex:1;min-width:0">${content}
+    <div style="display:flex;justify-content:space-between;margin-top:24px;padding-top:18px;border-top:1px solid var(--line)">
+      <button class="btn" onclick="${st===0?'S.addOpen=0':'S.addStep--'};render()">‹ Back</button>
+      ${st<3?`<button class="btn p" ${canNext?'':'disabled'} onclick="S.addStep++;render()">Continue ›</button>`:`<button class="btn g" onclick="registerMember()">✓ Register member</button>`}
+    </div></div></div></div>`;
+}
+
+function vApps(){
+  if(S.appView==='new')return vNewApp();
+  if(S.appView==='detail')return vAppDetail(apps.find(a=>a.id===S.appSel));
+  const counts=STAGES.map(s=>[s,apps.filter(a=>a.stage===s).length]);
+  const shown=S.appFilter==='All'?apps:apps.filter(a=>a.stage===S.appFilter);
+  const sc=s=>s==='Rejected'?['--brickSoft','--brick']:s==='Approved'||s==='Disbursed'?['--emeraldSoft','--emerald']:s==='Committee'?['--goldSoft','--gold']:['--panel','--sub'];
+  return `<div style="display:flex;gap:10px;margin-bottom:16px">${counts.map(([s,n],i)=>`<div class="card pad" style="flex:1;cursor:pointer;border-color:var(${S.appFilter===s?'--navy':'--line'})" onclick="S.appFilter='${S.appFilter===s?'All':s}';render()"><div style="font-size:11.5px;color:var(--sub);font-weight:700">${s}</div><div class="tnum" style="font-size:24px;font-weight:800;margin-top:4px">${n}</div></div>${i<4?'<div style="display:grid;place-items:center;color:var(--line)">›</div>':''}`).join('')}</div>
+  <div class="card" style="overflow:hidden"><div style="padding:16px;display:flex;justify-content:space-between;border-bottom:1px solid var(--line)"><h2 class="sec-t" style="margin:0">${S.appFilter==='All'?'All applications':S.appFilter+' stage'}</h2><button class="btn p" onclick="S.appView='new';render()">+ New application</button></div>
+  <table><thead><tr><th>Applicant</th><th>Product</th><th>Purpose</th><th class="r">Amount</th><th class="r">Cover</th><th class="r">Stage</th><th></th></tr></thead><tbody>
+  ${shown.map(a=>`<tr style="cursor:pointer" onclick="S.appSel=${a.id};S.appView='detail';render()"><td><div class="mrow">${avatar(a.name,a.type)}<div><div style="font-weight:700">${a.name}</div><div style="font-size:11px;color:var(--sub)">${a.no}</div></div></div></td>
+    <td style="color:var(--sub);font-weight:600">${a.prod}</td><td style="color:var(--sub)">${a.purpose}</td><td class="r tnum" style="font-weight:700">${fmt(a.amt)}</td>
+    <td class="r">${pill(a.cover+'%',a.cover>=100?'--emeraldSoft':'--brickSoft',a.cover>=100?'--emerald':'--brick')}</td><td class="r">${pill(a.stage,sc(a.stage)[0],sc(a.stage)[1])}</td><td class="r">›</td></tr>`).join('')}
+  </tbody></table></div>`;
+}
+function vNewApp(){
+  return `<button class="link" onclick="S.appView='list';render()">‹ Back</button>
+  <div class="grid" style="grid-template-columns:1fr 300px"><div class="card pad"><h2 class="sec-t">New loan application</h2>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div class="field"><label>Member</label><select id="na_member" onchange="updateNewApp()">${members.map(m=>`<option>${m.name}</option>`).join('')}</select></div>
+    <div class="field"><label>Product</label><select id="na_prod" onchange="updateNewApp()">${products.map(p=>`<option>${p.name}</option>`).join('')}</select></div>
+    <div class="field"><label>Amount</label><input id="na_amt" type="number" value="250000" oninput="updateNewApp()"></div>
+    <div class="field"><label>Term (months)</label><input id="na_term" type="number" value="36" oninput="updateNewApp()"></div>
+    <div class="field" style="grid-column:1/-1"><label>Purpose</label><input id="na_purpose" placeholder="e.g. business expansion"></div>
+    <div class="field"><label>Repayment source</label><select><option>Salary check-off</option><option>Business income</option></select></div>
+    <div class="field"><label>Disbursement channel</label><select><option>M-Pesa (B2C)</option><option>Bank transfer</option></select></div>
+    </div><button class="btn p" onclick="submitApp()">Submit for appraisal</button></div>
+    <div class="card pad" style="align-self:flex-start"><div style="font-size:13px;font-weight:800;margin-bottom:14px">Live eligibility</div>
+    <div class="hero" style="margin-bottom:14px"><div class="l">Borrowing power (× deposits − loans)</div><div class="v" id="na_power"></div></div>
+    ${[['Requested','na_req'],['Installment/mo','na_inst'],['Total interest','na_int']].map(([k,id])=>`<div class="row"><span class="k">${k}</span><span class="val tnum" id="${id}"></span></div>`).join('')}
+    <div id="na_warn" class="banner" style="display:none;margin-top:12px;background:var(--brickSoft);color:var(--brick)">Requested amount exceeds borrowing power — it will be capped.</div></div></div>`;
+}
+function vAppDetail(a){
+  const idx=STAGES.indexOf(a.stage),rej=a.stage==='Rejected',m=inst(a.amt,a.rate,a.term);
+  return `<button class="link" onclick="S.appView='list';render()">‹ Back to applications</button>
+  <div class="card pad" style="margin-bottom:16px"><h2 class="sec-t">Application workflow</h2>
+  <div style="display:flex;align-items:center">${STAGES.map((s,i)=>{const done=!rej&&i<idx,cur=!rej&&i===idx;return `<div style="display:flex;flex-direction:column;align-items:center;gap:6px"><div style="width:34px;height:34px;border-radius:999px;display:grid;place-items:center;background:var(${done?'--emerald':cur?'--navy':'--panel'});color:${done||cur?'#fff':'var(--sub)'}">${done?'✓':cur?'●':'○'}</div><span style="font-size:11px;font-weight:${cur?800:600};color:${cur?'var(--ink)':'var(--sub)'}">${s}</span></div>${i<4?`<div style="flex:1;height:2px;background:var(${done?'--emerald':'--line'});margin:0 6px 20px"></div>`:''}`;}).join('')}</div>
+  ${rej?'<div class="banner" style="margin-top:8px;background:var(--brickSoft);color:var(--brick)">Application rejected at appraisal — insufficient guarantor cover.</div>':''}</div>
+  <div class="grid" style="grid-template-columns:1fr 1fr"><div class="card pad"><div class="mrow" style="margin-bottom:16px">${avatar(a.name,a.type)}<div><div style="font-size:15px;font-weight:800">${a.name}</div><div style="font-size:12px;color:var(--sub)">${a.no} · ${a.purpose}</div></div></div>
+  ${[['Product',a.prod],['Amount','KES '+fmt(a.amt)],['Term',a.term+' months'],['Rate',a.rate+'% reducing'],['Installment','KES '+fmt(m)+'/mo'],['Own deposits','KES '+fmt(a.dep)],['Security cover',a.cover+'%']].map(([k,v])=>`<div class="row"><span class="k">${k}</span><span class="val tnum">${v}</span></div>`).join('')}</div>
+  <div class="card pad"><div style="font-size:13px;font-weight:800;margin-bottom:14px">Officer action</div><div class="field"><label>Appraisal notes</label><textarea style="height:90px" placeholder="Recommendation…"></textarea></div>
+  ${rej?'':`<div style="display:flex;gap:10px"><button class="btn" style="flex:1;color:var(--brick)" onclick="rejectApp(${a.id})">Reject</button><button class="btn p" style="flex:1.5" onclick="advanceApp(${a.id})">${idx<2?'Recommend to committee':idx===2?'Send to disbursement':idx===3?'Disburse via M-Pesa':'Advance'}</button></div>`}</div></div>`;
+}
+
+function vBook(){
+  const en=loans.map(l=>({...l,cls:classify(l.days)}));
+  const book=en.reduce((s,l)=>s+l.bal,0),npl=en.filter(l=>l.cls.npl).reduce((s,l)=>s+l.bal,0),prov=en.reduce((s,l)=>s+l.bal*l.cls.pct/100,0),par=en.filter(l=>l.days>30).reduce((s,l)=>s+l.bal,0);
+  const shown=en.filter(l=>S.book==='All'||(S.book==='Performing'?!l.cls.npl:l.cls.npl));
+  const stats=[['Gross book',book,'--navy'],['Performing',book-npl,'--emerald'],['Non-performing',npl,'--brick'],['PAR > 30',par,'--orange'],['Provisions',prov,'--sub']];
+  const sel=S.bookSel!=null?en.find(l=>l.no===S.bookSel):null;
+  return `<div class="grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:16px">${stats.map(([l,v,c])=>`<div class="card pad stat"><div class="l">${l}</div><div class="v" style="font-size:15px;color:var(${c})">${money(v)}</div></div>`).join('')}</div>
+  <div class="card" style="overflow:hidden"><div style="display:flex;gap:4px;padding:12px;border-bottom:1px solid var(--line)">${['All','Performing','Non-performing'].map(t=>`<button class="chip ${S.book===t?'on':''}" onclick="S.book='${t}';render()">${t}</button>`).join('')}</div>
+  <table><thead><tr><th>Member</th><th>Product</th><th class="r">Balance</th><th class="r">Arrears</th><th class="r">Class</th><th class="r">Provision</th><th></th></tr></thead><tbody>
+  ${shown.map(l=>`<tr style="cursor:pointer" onclick="S.bookSel='${l.no}';render()"><td><div class="mrow">${avatar(l.name)}<div><div style="font-weight:700">${l.name}</div><div style="font-size:11px;color:var(--sub)">${l.no}</div></div></div></td>
+    <td style="color:var(--sub);font-weight:600">${l.prod}</td><td class="r tnum" style="font-weight:700">${fmt(l.bal)}</td><td class="r tnum" style="color:${l.days>30?'var(--brick)':'var(--sub)'}">${l.days}d</td>
+    <td class="r">${pill(l.cls.l,l.cls.bg,l.cls.fg)}</td><td class="r tnum" style="color:var(--sub)">${fmt(l.bal*l.cls.pct/100)}</td><td class="r">›</td></tr>`).join('')}
+  </tbody></table></div>
+  ${sel?`<div class="modal" onclick="S.bookSel=null;render()"><div class="drawer" onclick="event.stopPropagation()">
+    <div style="display:flex;justify-content:space-between;margin-bottom:18px"><span style="font-size:16px;font-weight:800">Loan detail</span><button class="btn" style="padding:6px 10px" onclick="S.bookSel=null;render()">✕</button></div>
+    <div class="mrow" style="margin-bottom:16px">${avatar(sel.name)}<div><div style="font-size:15px;font-weight:800">${sel.name}</div><div style="font-size:12px;color:var(--sub)">${sel.no} · ${sel.prod}</div></div></div>
+    <div class="banner" style="background:var(${sel.cls.bg});color:var(${sel.cls.fg});margin-bottom:16px">${sel.cls.l} · ${sel.days} days in arrears — provision ${sel.cls.pct}% = KES ${fmt(sel.bal*sel.cls.pct/100)}</div>
+    ${[['Outstanding','KES '+fmt(sel.bal)],['Instalment','KES '+fmt(inst(sel.bal,sel.rate,Math.max(1,sel.term-sel.paid)))+'/mo'],['Rate',sel.rate+'% reducing'],['Term / paid',sel.term+' mo · '+sel.paid+' paid']].map(([k,v])=>`<div class="row"><span class="k">${k}</span><span class="val tnum">${v}</span></div>`).join('')}
+    ${sel.cls.npl?'<button class="btn" style="width:100%;margin-top:18px;background:var(--brick);color:#fff;border:none" onclick="toast(\'Recovery workflow initiated (demo)\')">Initiate recovery</button>':''}
+  </div></div>`:''}`;
+}
+
+function vTxn(){
+  const totDr=ledger.reduce((s,t)=>s+t.dr,0),totCr=ledger.reduce((s,t)=>s+t.cr,0);
+  const kc=t=>t==='Disbursement'||t==='Withdrawal'?'--brick':'--emerald';
+  return `<div class="card" style="overflow:hidden"><div style="padding:16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line)"><h2 class="sec-t" style="margin:0">Transactions ledger</h2><div style="display:flex;gap:8px"><button class="btn" onclick="toast('Ledger exported (demo)')">Export</button><button class="btn p" onclick="S.txnOpen=1;render()">+ Post transaction</button></div></div>
+  <table><thead><tr><th>Date</th><th>Ref</th><th>Member</th><th>Type</th><th>Channel</th><th class="r">Debit</th><th class="r">Credit</th></tr></thead><tbody>
+  ${ledger.map(t=>`<tr><td style="color:var(--sub)">${t.d}</td><td class="tnum" style="color:var(--sub)">${t.ref}</td><td style="font-weight:700">${t.member}</td><td>${pill(t.type,'--navySoft',kc(t.type))}</td><td style="color:var(--sub)">${t.ch}</td><td class="r tnum" style="color:${t.dr?'var(--brick)':'var(--line)'};font-weight:600">${t.dr?fmt(t.dr):'—'}</td><td class="r tnum" style="color:${t.cr?'var(--emerald)':'var(--line)'};font-weight:600">${t.cr?fmt(t.cr):'—'}</td></tr>`).join('')}
+  <tr style="border-top:2px solid var(--navy);background:var(--panel)"><td></td><td></td><td></td><td></td><td class="r" style="font-weight:800">Totals</td><td class="r tnum" style="font-weight:800">${fmt(totDr)}</td><td class="r tnum" style="font-weight:800">${fmt(totCr)}</td></tr>
+  </tbody></table></div>`;
+}
+
+function vCommittee(){
+  const queue=apps.filter(a=>a.stage==='Committee');const a=queue.find(x=>x.id===S.cmtSel)||queue[0];
+  if(!a)return `<div class="card pad" style="text-align:center;color:var(--sub)">No applications at committee stage.</div>`;
+  const voterNames=['Chair · Board Member A','Member · Ruth Achieng','Member · Francis Karingi','Member · Jane Muthoni'];const vstate=votesFor(a.id);
+  const quorum=3,ap=vstate.filter(v=>v==='approve').length;
+  const auth=a.amt<=100000?'Loan Officer':a.amt<=500000?'Branch Manager':a.amt<=2000000?'Credit Committee':'Board';
+  return `<div class="grid" style="grid-template-columns:300px 1fr"><div class="card" style="overflow:hidden;align-self:flex-start"><div style="padding:14px;border-bottom:1px solid var(--line);font-size:13px;font-weight:800">Committee agenda · ${queue.length}</div>
+  ${queue.map(q=>`<div onclick="S.cmtSel=${q.id};render()" style="padding:14px;display:flex;gap:10px;align-items:center;cursor:pointer;background:${S.cmtSel===q.id?'var(--navySoft)':'#fff'};border-bottom:1px solid var(--panel)">${avatar(q.name,q.type)}<div style="flex:1"><div style="font-size:13px;font-weight:700">${q.name}</div><div class="tnum" style="font-size:11.5px;color:var(--sub)">KES ${fmt(q.amt)}</div></div></div>`).join('')}</div>
+  <div class="card pad"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><span style="font-size:15px;font-weight:800">Loan review — ${a.name}</span>${pill('Authority: '+auth,'--goldSoft','--gold')}</div>
+  <div class="grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:18px">${[['Amount','KES '+fmt(a.amt)],['Installment','KES '+fmt(inst(a.amt,a.rate,a.term))],['Term',a.term+' mo'],['Cover',a.cover+'%']].map(([k,v])=>`<div style="background:var(--panel);border-radius:12px;padding:12px"><div style="font-size:11px;color:var(--sub);font-weight:700">${k}</div><div class="tnum" style="font-size:14px;font-weight:800;margin-top:3px">${v}</div></div>`).join('')}</div>
+  <div style="font-size:13px;font-weight:800;margin-bottom:10px">Committee votes</div>
+  ${voterNames.map((n,i)=>{const v=vstate[i];const c=v==='pending';return `<div class="row"><span style="font-weight:600">${n}</span><span ${c?`onclick="castVote(${a.id},${i})" style="cursor:pointer"`:''}>${pill(v==='approve'?'Approved':'Tap to approve',v==='approve'?'--emeraldSoft':'--goldSoft',v==='approve'?'--emerald':'--gold')}</span></div>`;}).join('')}
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding:12px 14px;border-radius:12px;background:var(${ap>=quorum?'--emeraldSoft':'--goldSoft'})"><span style="font-size:12.5px;font-weight:700;color:var(${ap>=quorum?'--emerald':'--gold'})">Quorum ${ap}/${quorum} approvals ${ap>=quorum?'met ✓':'— awaiting votes'}</span><button class="btn p" ${ap>=quorum?'':'disabled'} onclick="ratify(${a.id})">Ratify decision</button></div></div></div>`;
+}
+
+function vExit(){
+  const m=exitMembers.find(x=>x.no===S.exitSel)||exitMembers[0];
+  if(!m)return `<div class="card pad" style="text-align:center;color:var(--sub)">No members pending exit.</div>`;
+  const asGtor=guarantees.filter(g=>g.gtorNo===m.no&&g.st==='Active');
+  const equity=m.shares+m.deposits,net=equity-m.loan,blocked=asGtor.length>0,short=net<0;
+  const crit=[[!blocked,'No active guarantor obligations',blocked?'Still guaranteeing '+asGtor.map(g=>g.bor).join(', ')+' — release in Guarantorship first':'Member is not securing any active loans'],[true,'Notice period served','60-day written notice on record'],[!short,'Savings cover outstanding loan',short?'Loan exceeds savings by KES '+fmt(Math.abs(net))+' — shortfall recovered from guarantors':'Loan fully recoverable from deposits & shares'],[true,'No pending disputes / charges','Account in good standing']];
+  return `<div class="grid" style="grid-template-columns:300px 1fr"><div class="card pad" style="align-self:flex-start">
+  <div class="field"><label>Select member to exit</label><select onchange="S.exitSel=this.value;render()">${exitMembers.map(x=>`<option value="${x.no}" ${x.no===S.exitSel?'selected':''}>${x.name}</option>`).join('')}</select></div>
+  <div class="field"><label>Reason for exit</label><select><option>Resignation</option><option>Retirement</option><option>Transfer</option><option>Death (estate)</option><option>Expulsion</option></select></div>
+  <div style="display:flex;align-items:center;gap:10px;margin-top:8px;padding:10px 12px;background:var(--panel);border-radius:12px">${avatar(m.name,m.type)}<div><div style="font-size:13.5px;font-weight:800">${m.name}</div><div style="font-size:11px;color:var(--sub)">${m.no}</div></div></div>
+  ${blocked?`<button class="btn" style="width:100%;margin-top:12px" onclick="go('guar')">Release ${asGtor.length} guarantee${asGtor.length>1?'s':''} first →</button>`:''}</div>
+  <div><div class="card pad" style="margin-bottom:16px"><h2 class="sec-t">Exit eligibility criteria</h2>
+  ${crit.map(([ok,t,d])=>`<div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--panel)"><span style="font-size:18px">${ok?'✅':'⚠️'}</span><div><div style="font-size:13.5px;font-weight:700;color:${ok?'var(--ink)':'var(--brick)'}">${t}</div><div style="font-size:12px;color:var(--sub)">${d}</div></div></div>`).join('')}</div>
+  <div class="card pad"><h2 class="sec-t">Savings set-off & final settlement</h2>
+  <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px"><div style="background:var(--emeraldSoft);border-radius:12px;padding:14px"><div style="font-size:11.5px;color:var(--emerald);font-weight:700">Deposits</div>${money(m.deposits,'')}</div><div style="background:var(--goldSoft);border-radius:12px;padding:14px"><div style="font-size:11.5px;color:var(--gold);font-weight:700">Share capital</div>${money(m.shares)}</div></div>
+  <div class="row"><span class="k">Total member equity</span><span class="val tnum">KES ${fmt(equity)}</span></div>
+  <div class="row"><span class="k">Less: outstanding loan</span><span class="val tnum" style="color:var(--brick)">- KES ${fmt(m.loan)}</span></div>
+  <div class="banner" style="margin-top:14px;background:var(${short?'--brickSoft':'--navy'});color:${short?'var(--brick)':'#fff'};display:flex;justify-content:space-between;align-items:center"><span>${short?'Net shortfall (recover from guarantors)':'Net refund to member'}</span><span class="tnum" style="font-size:19px">KES ${fmt(Math.abs(net))}</span></div>
+  <button class="btn" ${blocked?'disabled':''} onclick="${blocked?'':`S.exitConfirm='`+`${m.no}`+`';render()`}" style="width:100%;margin-top:16px;border:none;color:#fff;background:var(${blocked?'--line':short?'--brick':'--navy'});${blocked?'color:var(--sub)':''}">${blocked?'Blocked - release guarantor obligations first':short?'Set off savings & call guarantors':'Process exit & release refund'}</button>
+  <div style="font-size:11px;color:var(--sub);margin-top:10px">Share capital may be transferable rather than refundable per by-laws. Deposits set off against loan before refund.</div></div></div></div>`;
+}
+
+function vReports(){
+  if(S.rep==='Loan portfolio report')return repPortfolio();
+  if(S.rep==='Portfolio at risk (aging)')return repAging();
+  if(S.rep==='Member statement')return repStatement();
+  if(S.rep)return repGeneric(S.rep);
+  const groups=[['Portfolio',['Loan portfolio report','Portfolio at risk (aging)','Disbursement report','Collections report']],['Member',['Member statement','Membership register','Dividend & rebate schedule']],['Financial & regulatory',['Trial balance','Income statement','SASRA return']]];
+  return groups.map(([g,items])=>`<div style="margin-bottom:22px"><div style="font-size:12px;font-weight:800;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">${g}</div>
+  <div class="grid" style="grid-template-columns:repeat(4,1fr)">${items.map(t=>`<div class="card pad" style="cursor:pointer" onclick="S.rep='${t}';render()"><div style="width:38px;height:38px;border-radius:10px;background:var(--navySoft);display:grid;place-items:center;margin-bottom:12px">📄</div><div style="font-size:13.5px;font-weight:700">${t}</div><div style="font-size:11.5px;color:var(--navy);font-weight:700;margin-top:8px">Generate ›</div></div>`).join('')}</div></div>`).join('');
+}
+const repShell=(title,meta,body)=>`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><button class="link" onclick="S.rep=null;render()">‹ Back to reports</button><button class="btn p" onclick="window.print()">Export PDF</button></div>
+  <div class="card pad" style="padding:28px"><div style="display:flex;justify-content:space-between;border-bottom:2px solid var(--navy);padding-bottom:14px;margin-bottom:18px"><div><div style="font-family:Georgia,serif;font-size:20px;font-weight:700;color:var(--navy)">Genesis Prestige Sacco</div><div style="font-size:12px;color:var(--sub)">${title}</div></div><div style="text-align:right;font-size:11.5px;color:var(--sub)">${meta}</div></div>${body}</div>`;
+function repPortfolio(){
+  const buckets=[['Normal',0],['Watch',45],['Substandard',120],['Doubtful',210],['Loss',400]];
+  const rows=buckets.map(([name,d])=>{const c=classify(d);const inC=loans.filter(l=>classify(l.days).l===name);const bal=inC.reduce((s,l)=>s+l.bal,0);return[name,inC.length,bal,c.pct,bal*c.pct/100,c.fg];});
+  const tot=rows.reduce((a,r)=>[a[0]+r[1],a[1]+r[2],a[2]+r[4]],[0,0,0]);
+  return repShell('Loan portfolio classification report','As at 20 Jul 2026',`<table><thead><tr><th>Classification</th><th class="r">Accounts</th><th class="r">Outstanding</th><th class="r">Prov %</th><th class="r">Provision</th></tr></thead><tbody>
+  ${rows.map(r=>`<tr><td>${pill(r[0],'--panel',r[5])}</td><td class="r tnum">${r[1]}</td><td class="r tnum" style="font-weight:700">${fmt(r[2])}</td><td class="r tnum" style="color:var(--sub)">${r[3]}%</td><td class="r tnum" style="color:var(--sub)">${fmt(r[4])}</td></tr>`).join('')}
+  <tr style="border-top:2px solid var(--navy);background:var(--panel)"><td style="font-weight:800">Total</td><td class="r tnum" style="font-weight:800">${tot[0]}</td><td class="r tnum" style="font-weight:800">${fmt(tot[1])}</td><td></td><td class="r tnum" style="font-weight:800">${fmt(tot[2])}</td></tr></tbody></table>`);
+}
+function repAging(){
+  const b=[['Current (0–30)','--emerald'],['31–90 days','--gold'],['91–180 days','--orange'],['181–360 days','--brick'],['Over 360 days','--loss']];const vals=[520000,180000,140000,0,220000];const tot=vals.reduce((a,x)=>a+x,0);
+  return repShell('Portfolio at risk — aging analysis','As at 20 Jul 2026',b.map(([l,c],i)=>`<div style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px"><span style="font-weight:700;color:var(${c})">${l}</span><span class="tnum" style="font-weight:700">KES ${fmt(vals[i])} · ${(vals[i]/tot*100).toFixed(1)}%</span></div><div style="height:12px;background:var(--panel);border-radius:999px;overflow:hidden"><div style="width:${vals[i]/tot*100}%;height:100%;background:var(${c})"></div></div></div>`).join('')+`<div class="banner" style="margin-top:18px;background:var(--brickSoft);color:var(--brick)">PAR&gt;30 = KES ${fmt(tot-vals[0])} (${((tot-vals[0])/tot*100).toFixed(1)}% of portfolio)</div>`);
+}
+function repStatement(){
+  const m=members.find(x=>x.name===S.repMem);
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><button class="link" onclick="S.rep=null;render()">‹ Back to reports</button><div style="display:flex;gap:10px"><select style="width:220px" onchange="S.repMem=this.value;render()">${members.map(x=>`<option ${x.name===S.repMem?'selected':''}>${x.name}</option>`).join('')}</select><button class="btn p" onclick="window.print()">Export PDF</button></div></div>
+  <div class="card pad" style="padding:28px"><div style="display:flex;justify-content:space-between;border-bottom:2px solid var(--navy);padding-bottom:14px;margin-bottom:16px"><div><div style="font-family:Georgia,serif;font-size:20px;font-weight:700;color:var(--navy)">Genesis Prestige Sacco</div><div style="font-size:12px;color:var(--sub)">Member statement · 01 Jan – 20 Jul 2026</div></div><div style="text-align:right;font-size:12px"><div style="font-weight:800">${m.name}</div><div style="color:var(--sub)">${m.no} · ${m.type}</div></div></div>
+  <table><thead><tr><th>Date</th><th>Particulars</th><th class="r">Debit</th><th class="r">Credit</th><th class="r">Balance</th></tr></thead><tbody>
+  ${memberStatement.map(r=>`<tr><td style="color:var(--sub)">${r[0]}</td><td>${r[1]}</td><td class="r tnum" style="color:${r[2]?'var(--brick)':'var(--line)'}">${r[2]?fmt(r[2]):'—'}</td><td class="r tnum" style="color:${r[3]?'var(--emerald)':'var(--line)'}">${r[3]?fmt(r[3]):'—'}</td><td class="r tnum" style="font-weight:700">${fmt(r[4])}</td></tr>`).join('')}</tbody></table>
+  <div style="display:flex;justify-content:flex-end;gap:40px;margin-top:18px;padding-top:14px;border-top:2px solid var(--navy)"><div><div style="font-size:11.5px;color:var(--sub);font-weight:700">Deposits</div>${money(m.dep)}</div><div><div style="font-size:11.5px;color:var(--sub);font-weight:700">Shares</div>${money(m.shares)}</div><div><div style="font-size:11.5px;color:var(--sub);font-weight:700">Loan</div>${money(m.loan)}</div></div></div>`;
+}
+function repGeneric(t){
+  const rows=[['Share capital',41200000],['Members\' deposits',214600000],['Loans to members',168900000],['Cash & bank',62400000],['Interest income',18240000],['Operating expenses',7120000],['Surplus for period',11120000]];
+  return repShell(t,'Period to 20 Jul 2026',`<table><tbody>${rows.map(([l,v])=>`<tr><td style="font-weight:600">${l}</td><td class="r tnum" style="font-weight:700">${fmt(v)}</td></tr>`).join('')}</tbody></table><div style="font-size:11.5px;color:var(--sub);margin-top:14px">Illustrative figures. Wire to the general ledger for live balances.</div>`);
+}
+
+function vSettings(){
+  const tabs=['Interest','Loan products','Parameters','Approval matrix'];
+  const tabbar=`<div style="display:flex;gap:4px;margin-bottom:16px">${tabs.map(t=>`<button class="chip ${S.setTab===t?'on':''}" style="border-radius:10px;padding:9px 16px" onclick="S.setTab='${t}';render()">${t}</button>`).join('')}</div>`;
+  let body='';
+  if(S.setTab==='Interest'){body=`<div class="grid" style="grid-template-columns:1fr 1fr"><div class="card pad"><h2 class="sec-t">Loan interest</h2>
+    <div class="grid" style="grid-template-columns:1fr 1fr">${[['Base annual rate (%)','12'],['Calculation method',''],['Interest basis',''],['Grace period (months)','0']].map(([l,v],i)=>`<div class="field"><label>${l}</label>${i===1?'<select><option>Reducing balance</option><option>Flat rate</option></select>':i===2?'<select><option>30/360</option><option>Actual/365</option></select>':`<input value="${v}">`}</div>`).join('')}</div>
+    <div class="subhead">Penalty on arrears</div><div class="grid" style="grid-template-columns:1fr 1fr">${[['Penalty rate (%/mo)','1'],['Penalty grace (days)','5']].map(([l,v])=>`<div class="field"><label>${l}</label><input value="${v}"></div>`).join('')}<div class="field" style="grid-column:1/-1"><label>Charged on</label><select><option>Instalment in arrears</option><option>Full outstanding balance</option></select></div></div>
+    <button class="btn p" onclick="toast('✓ Interest rules saved')">Save interest rules</button></div>
+    <div><div class="card pad" style="margin-bottom:16px"><h2 class="sec-t">Tiered rates (by amount)</h2><table><thead><tr><th>Amount band (KES)</th><th class="r">Rate %</th></tr></thead><tbody>${[['0 – 100,000',12],['100,001 – 500,000',13],['500,001 – 2,000,000',14],['Above 2,000,000',15]].map(([b,r])=>`<tr><td style="font-weight:600">${b}</td><td class="r"><input style="width:64px;text-align:right;padding:6px 8px" value="${r}"></td></tr>`).join('')}</tbody></table></div>
+    <div class="card pad"><h2 class="sec-t">Deposits & shares</h2><div class="grid" style="grid-template-columns:1fr 1fr">${[['Interest on deposits (% p.a.)','9'],['Dividend on shares (% p.a.)','14']].map(([l,v])=>`<div class="field"><label>${l}</label><input value="${v}"></div>`).join('')}</div><button class="btn p" onclick="toast('✓ Saved')">Save</button></div></div></div>`;}
+  else if(S.setTab==='Loan products'){const p=products[S.setProd];const ids=['p_name','','p_rate','p_mult','p_term','p_guar'];body=`<div class="grid" style="grid-template-columns:240px 1fr"><div class="card" style="overflow:hidden;align-self:flex-start">${products.map((lp,i)=>`<div onclick="S.setProd=${i};render()" style="padding:14px;cursor:pointer;border-bottom:1px solid var(--panel);background:${S.setProd===i?'var(--navySoft)':'#fff'}"><div style="font-size:13.5px;font-weight:700">${lp.name}</div><div style="font-size:11.5px;color:var(--sub);margin-top:2px">${lp.rate}% · ${lp.mult}× · ${lp.maxTerm}mo</div></div>`).join('')}<button class="btn" style="width:100%;border:none;color:var(--navy)" onclick="addProduct()">+ Add product</button></div>
+    <div class="card pad"><h2 class="sec-t">Edit — ${p.name}</h2><div class="grid" style="grid-template-columns:1fr 1fr">${[['Name',p.name],['Method',''],['Rate (%)',p.rate],['Multiplier',p.mult],['Max term (months)',p.maxTerm],['Guarantors required',2]].map(([l,v],i)=>`<div class="field"><label>${l}</label>${i===1?'<select><option>Reducing</option><option>Flat</option></select>':`<input ${ids[i]?`id="${ids[i]}"`:''} value="${v}">`}</div>`).join('')}</div><button class="btn p" onclick="saveProduct()">Save product</button></div></div>`;}
+  else if(S.setTab==='Parameters'){body=`<div class="card pad" style="max-width:640px"><h2 class="sec-t">Global parameters</h2><div class="grid" style="grid-template-columns:1fr 1fr">${[['Minimum share capital','15,000'],['Registration fee','1,000'],['Min. monthly deposit','2,000'],['Max member exposure','2,000,000'],['Dormancy period (months)','6'],['Financial year end','']].map(([l,v],i)=>`<div class="field"><label>${l}</label>${i===5?'<select><option>31 December</option><option>30 June</option></select>':`<input value="${v}">`}</div>`).join('')}</div><button class="btn p" onclick="toast('✓ Parameters saved')">Save parameters</button></div>`;}
+  else{body=`<div class="card pad" style="max-width:560px"><h2 class="sec-t">Approval authority & committee</h2><table style="margin-bottom:16px"><thead><tr><th>Authority</th><th class="r">Approves up to (KES)</th></tr></thead><tbody>${[['Loan Officer','100,000'],['Branch Manager','500,000'],['Credit Committee','2,000,000'],['Board','No limit']].map(([a,v])=>`<tr><td style="font-weight:700">${a}</td><td class="r"><input style="width:150px;text-align:right;padding:6px 8px" value="${v}"></td></tr>`).join('')}</tbody></table><div class="grid" style="grid-template-columns:1fr 1fr">${[['Committee size','5'],['Quorum (approvals)','3']].map(([l,v])=>`<div class="field"><label>${l}</label><input value="${v}"></div>`).join('')}</div><button class="btn p" onclick="toast('✓ Approval matrix saved')">Save matrix</button></div>`;}
+  return tabbar+body;
+}
+
+function vRbac(){
+  const tabbar=`<div style="display:flex;gap:4px;margin-bottom:16px">${['Users','Roles & permissions'].map(t=>`<button class="chip ${S.rbacTab===t?'on':''}" style="border-radius:10px;padding:9px 16px" onclick="S.rbacTab='${t}';render()">${t}</button>`).join('')}</div>`;
+  if(S.rbacTab==='Users'){return tabbar+`<div class="card" style="overflow:hidden"><div style="padding:14px;display:flex;justify-content:flex-end;border-bottom:1px solid var(--line)"><button class="btn p" onclick="addUser()">+ Add user</button></div>
+    <table><thead><tr><th>User</th><th>Role</th><th>Branch</th><th class="r">Last active</th><th class="r">Status</th></tr></thead><tbody>
+    ${users.map(u=>`<tr><td><div class="mrow">${avatar(u[0])}<span style="font-weight:700">${u[0]}</span></div></td><td>${pill(u[1],'--navySoft','--navy')}</td><td style="color:var(--sub)">${u[2]}</td><td class="r" style="color:var(--sub)">${u[4]}</td><td class="r">${pill(u[3],u[3]==='Active'?'--emeraldSoft':'--brickSoft',u[3]==='Active'?'--emerald':'--brick')}</td></tr>`).join('')}</tbody></table></div>`;}
+  const role=S.rbacRole,perms=S.perms;
+  return tabbar+`<div class="grid" style="grid-template-columns:220px 1fr"><div class="card" style="overflow:hidden;align-self:flex-start">${roleNames.map(r=>`<div onclick="S.rbacRole='${r}';render()" style="padding:13px 16px;cursor:pointer;border-bottom:1px solid var(--panel);background:${role===r?'var(--navySoft)':'#fff'};display:flex;align-items:center;gap:8px"><span style="color:${role===r?'var(--navy)':'var(--sub)'}">🛡</span><span style="font-size:13px;font-weight:${role===r?800:600};color:${role===r?'var(--navy)':'var(--ink)'}">${r}</span></div>`).join('')}</div>
+  <div class="card pad"><h2 class="sec-t">Permissions — ${role}</h2><table><thead><tr><th>Module</th>${['View','Create','Edit / Post','Approve'].map(h=>`<th style="text-align:center">${h}</th>`).join('')}</tr></thead><tbody>
+  ${modulesRB.map(mod=>`<tr><td style="font-weight:700">${mod}</td>${['view','create','edit','approve'].map(act=>{const on=perms[role][mod][act];return `<td style="text-align:center"><button class="cbx" style="border:1.5px solid var(${on?'--navy':'--line'});background:var(${on?'--navy':'--card'});color:#fff" onclick="S.perms['${role}']['${mod}']['${act}']=!S.perms['${role}']['${mod}']['${act}'];render()">${on?'✓':''}</button></td>`;}).join('')}</tr>`).join('')}
+  </tbody></table><button class="btn p" style="margin-top:16px" onclick="toast('✓ Permissions saved for '+S.rbacRole)">Save role</button></div></div>`;
+}
+
+/* ===================== actions ===================== */
+function toast(msg){let t=document.getElementById('toast');if(!t){t=document.createElement('div');t.id='toast';t.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:12px 22px;border-radius:10px;font-size:13px;font-weight:700;z-index:300;box-shadow:0 10px 30px rgba(19,26,43,.25);transition:opacity .25s';document.body.appendChild(t);}t.textContent=msg;t.style.opacity='1';clearTimeout(window._tt);window._tt=setTimeout(()=>t.style.opacity='0',2400);}
+const today=()=>new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
+const gv=id=>{const e=document.getElementById(id);return e?String(e.value).trim():'';};
+const gnum=id=>Number((gv(id)||'0').replace(/[^0-9.]/g,''))||0;
+const genNo=()=>'GP-'+String(Math.floor(1000+Math.random()*8999));
+
+/* ---- members ---- */
+function registerMember(){
+  const ty=S.addType,dr=S.draft||{},g=k=>String(dr[k]||'').trim();let name='';
+  if(ty==='Person')name=(g('f_First_name')+' '+g('f_Surname')).trim();
+  else if(ty==='Company')name=g('f_Registered_name');
+  else if(ty==='Group')name=g('f_Group_name');
+  else if(ty==='Vehicle'){const r=g('f_Registration_number');name=r?r+' · '+(g('f_Body_type')||'PSV'):'';}
+  if(!name)name=ty+' member';
+  const no=genNo();
+  const shares=Number((g('m_share')||'0').replace(/[^0-9.]/g,''))||(ty==='Company'?200000:ty==='Group'?80000:15000);
+  members.unshift({name,no,type:ty,dep:0,shares,loan:0,st:'Active'});
+  ledger.unshift({d:today(),ref:'REG-'+no.slice(3),member:name,type:'Fee',dr:0,cr:1000,ch:'M-Pesa'});
+  S.addOpen=0;S.draft={};S.active='members';document.getElementById('h-title').textContent='Members';
+  toast('✓ '+name+' registered · '+no);renderNav();render();
+}
+
+/* ---- loan applications ---- */
+function updateNewApp(){
+  const mem=members.find(m=>m.name===gv('na_member'))||members[0];
+  const prod=products.find(p=>p.name===gv('na_prod'))||products[0];
+  const amt=gnum('na_amt'),term=gnum('na_term')||1;
+  const power=Math.max(0,mem.dep*prod.mult-mem.loan);
+  const capped=Math.min(amt,power||amt);
+  const m=inst(capped,prod.rate,term);
+  const set=(id,v)=>{const e=document.getElementById(id);if(e)e.innerHTML=v;};
+  set('na_power','<span class="kes">KES</span>'+fmt(power));
+  set('na_req','<span class="kes">KES</span>'+fmt(amt));
+  set('na_inst','<span class="kes">KES</span>'+fmt(m));
+  set('na_int','<span class="kes">KES</span>'+fmt(Math.max(0,m*term-capped)));
+  const warn=document.getElementById('na_warn');
+  if(warn)warn.style.display=amt>power?'block':'none';
+}
+function submitApp(){
+  const mem=members.find(m=>m.name===gv('na_member'))||members[0];
+  const prod=products.find(p=>p.name===gv('na_prod'))||products[0];
+  const amt=gnum('na_amt'),term=gnum('na_term')||prod.maxTerm;
+  const power=Math.max(0,mem.dep*prod.mult-mem.loan);
+  if(amt>power){toast('Blocked — exceeds borrowing power: KES '+fmt(power)+' at '+prod.mult+'× deposits');return;}
+  const id=Math.max(0,...apps.map(a=>a.id))+1;
+  const cover=Math.round((mem.dep/Math.max(1,amt))*100);
+  apps.unshift({id,name:mem.name,no:mem.no,type:mem.type,prod:prod.name,amt,term,rate:prod.rate,dep:mem.dep,cover,stage:'Submitted',purpose:gv('na_purpose')||'—'});
+  S.appView='list';S.appFilter='All';toast('✓ Application submitted for '+mem.name);render();
+}
+function advanceApp(id){
+  const a=apps.find(x=>x.id===id);if(!a)return;
+  let i=STAGES.indexOf(a.stage);
+  if(i<STAGES.length-1){i++;a.stage=STAGES[i];}
+  if(a.stage==='Disbursed')createLoan(a);
+  else toast('Moved to '+a.stage);
+  render();
+}
+function rejectApp(id){const a=apps.find(x=>x.id===id);if(a){a.stage='Rejected';toast('Application rejected');render();}}
+function createLoan(a){
+  if(!loans.some(l=>l.no===a.no&&l.bal===a.amt)){
+    loans.unshift({name:a.name,no:a.no,prod:a.prod,bal:a.amt,rate:a.rate,term:a.term,paid:0,days:0});
+    ledger.unshift({d:today(),ref:'LN-'+a.no.slice(3),member:a.name,type:'Disbursement',dr:a.amt,cr:0,ch:'M-Pesa B2C'});
+    const mm=members.find(x=>x.name===a.name);if(mm)mm.loan+=a.amt;
+  }
+  toast('✓ Loan disbursed to '+a.name+' — now in loan book');
+}
+
+/* ---- committee ---- */
+function votesFor(id){if(!S.votes[id])S.votes[id]=['approve','approve','pending','pending'];return S.votes[id];}
+function castVote(id,i){const v=votesFor(id);if(v[i]==='pending'){v[i]='approve';toast('Vote recorded');render();}}
+function ratify(id){const a=apps.find(x=>x.id===id);if(a){a.stage='Approved';toast('✓ Approved by committee — ready for disbursement');const nxt=apps.find(x=>x.stage==='Committee');S.cmtSel=nxt?nxt.id:null;render();}}
+
+/* ---- transactions ---- */
+function txnModal(){
+  return `<div class="modal" onclick="S.txnOpen=0;render()"><div class="drawer" style="width:420px" onclick="event.stopPropagation()">
+    <div style="display:flex;justify-content:space-between;margin-bottom:18px"><span style="font-size:16px;font-weight:800">Post transaction</span><button class="btn" style="padding:6px 10px" onclick="S.txnOpen=0;render()">✕</button></div>
+    <div class="field"><label>Member</label><select id="tx_member">${members.map(m=>`<option>${m.name}</option>`).join('')}</select></div>
+    <div class="field"><label>Type</label><select id="tx_type"><option>Deposit</option><option>Loan repayment</option><option>Share top-up</option><option>Withdrawal</option><option>Fee</option></select></div>
+    <div class="field"><label>Amount (KES)</label><input id="tx_amt" type="number" value="10000"></div>
+    <div class="field"><label>Channel</label><select id="tx_ch"><option>M-Pesa</option><option>Bank</option><option>Cash</option></select></div>
+    <button class="btn p" style="width:100%;margin-top:6px" onclick="saveTxn()">Post to ledger</button>
+  </div></div>`;
+}
+function saveTxn(){
+  const member=gv('tx_member'),type=gv('tx_type'),amt=gnum('tx_amt'),ch=gv('tx_ch');
+  const debit=['Withdrawal','Disbursement'].includes(type);
+  const pfx=({Deposit:'MP',['Loan repayment']:'RP',['Share top-up']:'SH',Withdrawal:'WD',Fee:'FE'})[type]||'TX';
+  ledger.unshift({d:today(),ref:pfx+'-'+String(Math.floor(1000+Math.random()*8999)),member,type,dr:debit?amt:0,cr:debit?0:amt,ch});
+  const mm=members.find(m=>m.name===member);
+  if(mm){if(type==='Deposit')mm.dep+=amt;else if(type==='Withdrawal')mm.dep=Math.max(0,mm.dep-amt);else if(type==='Share top-up')mm.shares+=amt;else if(type==='Loan repayment')mm.loan=Math.max(0,mm.loan-amt);}
+  S.txnOpen=0;toast('✓ '+type+' posted · KES '+fmt(amt));render();
+}
+
+/* ---- member exit ---- */
+function processExit(no){
+  const i=exitMembers.findIndex(x=>x.no===no);if(i<0)return;
+  const m=exitMembers[i];const mem=members.find(x=>x.no===no);
+  if(mem){mem.loan=0;mem.st='Exited';}
+  const net=m.shares+m.deposits-m.loan;
+  ledger.unshift({d:today(),ref:'EX-'+no.slice(3),member:m.name,type:net>=0?'Withdrawal':'Fee',dr:net>=0?net:0,cr:net<0?Math.abs(net):0,ch:'Exit set-off'});
+  exitMembers.splice(i,1);
+  S.exitSel=exitMembers[0]?exitMembers[0].no:null;
+  toast('✓ Exit processed for '+m.name);render();
+}
+
+/* ---- settings ---- */
+function saveProduct(){const p=products[S.setProd];p.name=gv('p_name')||p.name;p.rate=gnum('p_rate')||p.rate;p.mult=gnum('p_mult')||p.mult;p.maxTerm=gnum('p_term')||p.maxTerm;toast('✓ '+p.name+' saved');render();}
+function addProduct(){products.push({name:'New Product',rate:12,mult:2,maxTerm:24});S.setProd=products.length-1;toast('Product added — edit details');render();}
+
+/* ---- rbac ---- */
+function addUser(){const n=prompt('New user full name:');if(!n)return;users.unshift([n,'Teller','Nairobi CBD','Active','just now']);toast('✓ '+n+' added');render();}
+
+/* ===================== guarantorship ===================== */
+const activePledged=no=>guarantees.filter(g=>g.gtorNo===no&&g.st==='Active').reduce((s,g)=>s+g.amt,0);
+const freeCap=no=>{const m=members.find(x=>x.no===no)||{dep:0,loan:0};return Math.max(0,(m.dep||0)-(m.loan||0)-activePledged(no));};
+function vGuar(){
+  const act=guarantees.filter(g=>g.st==='Active');
+  const totalPledged=act.reduce((s,g)=>s+g.amt,0);
+  const gtorNos=[...new Set(act.map(g=>g.gtorNo))];
+  const stats=[['Active guarantees',act.length,'--navy',1],['Total pledged',totalPledged,'--gold',0],['Guarantors',gtorNos.length,'--emerald',1],['Avg free capacity',gtorNos.length?gtorNos.reduce((a,no)=>a+freeCap(no),0)/gtorNos.length:0,'--steel',0]];
+  return `<div class="grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">${stats.map(([l,v,c,plain])=>`<div class="card pad stat"><div class="l">${l}</div><div class="v" style="font-size:${plain?22:15}px;color:var(${c})">${plain?fmt(v):money(v)}</div></div>`).join('')}</div>
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+   <div class="card pad"><h2 class="sec-t">Guarantor capacity</h2>
+   ${gtorNos.length?gtorNos.map(no=>{const m=members.find(x=>x.no===no);const pledged=activePledged(no);const free=freeCap(no);const base=Math.max(1,m.dep-m.loan);const util=Math.min(100,Math.round(pledged/base*100));return `<div style="padding:10px 0;border-bottom:1px solid var(--panel)"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px"><span style="font-weight:700">${m.name}</span><span class="tnum" style="color:var(--sub)">Free: <b style="color:${free>0?'var(--emerald)':'var(--brick)'}">KES ${fmt(free)}</b></span></div><div style="height:8px;background:var(--panel);border-radius:999px;overflow:hidden"><div style="width:${util}%;height:100%;background:var(${util>=90?'--brick':util>=70?'--orange':'--emerald'})"></div></div><div style="display:flex;justify-content:space-between;font-size:11px;color:var(--sub);margin-top:4px"><span>Pledged KES ${fmt(pledged)}</span><span>${util}% of free deposits (KES ${fmt(base)})</span></div></div>`;}).join(''):'<div style="color:var(--sub);font-size:13px">No active guarantors.</div>'}
+   </div>
+   <div class="card" style="overflow:hidden;align-self:flex-start"><div style="padding:16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line)"><h2 class="sec-t" style="margin:0">Active guarantees</h2><button class="btn p" onclick="S.guarOpen=1;render()">+ Add guarantee</button></div>
+   <table><thead><tr><th>Guarantor</th><th>Borrower</th><th class="r">Pledge</th><th></th></tr></thead><tbody>
+   ${act.length?act.map(g=>`<tr><td style="font-weight:700">${g.gtor}</td><td style="color:var(--sub)">${g.bor}</td><td class="r tnum" style="font-weight:700">${fmt(g.amt)}</td><td class="r"><button class="btn" style="padding:4px 10px;font-size:11.5px;color:var(--brick)" onclick="releaseGuarantee(${g.id})">Release</button></td></tr>`).join(''):'<tr><td colspan="4" style="text-align:center;color:var(--sub);padding:20px">No active guarantees.</td></tr>'}
+   </tbody></table></div>
+  </div>`;
+}
+function guarModal(){
+  const opts=members.filter(m=>m.st!=='Exited').map(m=>`<option value="${m.no}">${m.name} — free KES ${fmt(freeCap(m.no))}</option>`).join('');
+  const bopts=members.filter(m=>m.st!=='Exited').map(m=>`<option value="${m.no}">${m.name}</option>`).join('');
+  return `<div class="modal" onclick="S.guarOpen=0;render()"><div class="drawer" style="width:448px" onclick="event.stopPropagation()">
+   <div style="display:flex;justify-content:space-between;margin-bottom:18px"><span style="font-size:16px;font-weight:800">Add guarantee</span><button class="btn" style="padding:6px 10px" onclick="S.guarOpen=0;render()">X</button></div>
+   <div class="field"><label>Guarantor</label><select id="g_gtor" onchange="guarPreview()">${opts}</select></div>
+   <div class="field"><label>Borrower</label><select id="g_bor">${bopts}</select></div>
+   <div class="field"><label>Pledge amount (KES)</label><input id="g_amt" type="number" value="50000" oninput="guarPreview()"></div>
+   <div id="g_prev" class="banner" style="background:var(--panel);color:var(--sub)"></div>
+   <button class="btn p" style="width:100%;margin-top:12px" onclick="guarSave()">Add guarantee</button>
+  </div></div>`;
+}
+function guarPreview(){const e=document.getElementById('g_prev');if(!e)return;const no=gv('g_gtor'),amt=gnum('g_amt'),free=freeCap(no);if(amt>free){e.style.background='var(--brickSoft)';e.style.color='var(--brick)';e.innerHTML='Over-guarantee: KES '+fmt(amt)+' exceeds free capacity KES '+fmt(free);}else{e.style.background='var(--emeraldSoft)';e.style.color='var(--emerald)';e.innerHTML='Within capacity - remaining after pledge: KES '+fmt(free-amt);}}
+function guarSave(){const gno=gv('g_gtor'),bno=gv('g_bor'),amt=gnum('g_amt');if(gno===bno){toast('Guarantor and borrower must differ');return;}const free=freeCap(gno);if(amt>free){toast('Blocked - over-guarantee: exceeds free capacity KES '+fmt(free));return;}const g=members.find(m=>m.no===gno),b=members.find(m=>m.no===bno);guarantees.unshift({id:Date.now(),gtorNo:gno,gtor:g.name,borNo:bno,bor:b.name,ref:'LN-'+bno.slice(3),amt,st:'Active'});S.guarOpen=0;toast('Guarantee added - '+g.name+' guarantees '+b.name);render();}
+function releaseGuarantee(id){const g=guarantees.find(x=>x.id===id);if(g){g.st='Released';toast('Guarantee released');render();}}
+
+/* ===================== exit finalize ===================== */
+function exitConfirmModal(){const m=exitMembers.find(x=>x.no===S.exitConfirm);if(!m)return '';const equity=m.shares+m.deposits,net=equity-m.loan,short=net<0;
+  return `<div class="modal" onclick="S.exitConfirm=null;render()"><div class="drawer" style="width:420px" onclick="event.stopPropagation()">
+   <div style="display:flex;justify-content:space-between;margin-bottom:16px"><span style="font-size:16px;font-weight:800">Confirm member exit</span><button class="btn" style="padding:6px 10px" onclick="S.exitConfirm=null;render()">X</button></div>
+   <div class="mrow" style="margin-bottom:14px">${avatar(m.name,m.type)}<div><div style="font-weight:800">${m.name}</div><div style="font-size:12px;color:var(--sub)">${m.no}</div></div></div>
+   ${[['Deposits refunded','KES '+fmt(m.deposits)],['Share capital','KES '+fmt(m.shares)],['Loan set-off','KES '+fmt(m.loan)],[short?'Net shortfall':'Net refund','KES '+fmt(Math.abs(net))]].map(([k,v])=>`<div class="row"><span class="k">${k}</span><span class="val tnum">${v}</span></div>`).join('')}
+   <div class="banner" style="margin-top:12px;background:var(--brickSoft);color:var(--brick)">Finalising closes all accounts, releases guarantors on this member's loan, and marks the member Exited. This cannot be undone.</div>
+   <button class="btn p" style="width:100%;margin-top:8px;background:var(--brick)" onclick="finalizeExit('${m.no}')">Confirm & process exit</button>
+  </div></div>`;}
+function finalizeExit(no){const i=exitMembers.findIndex(x=>x.no===no);if(i<0)return;const m=exitMembers[i];const mem=members.find(x=>x.no===no);
+  guarantees.forEach(g=>{if((g.borNo===no||g.gtorNo===no)&&g.st==='Active')g.st='Released';});
+  if(mem){mem.loan=0;mem.dep=0;mem.shares=0;mem.st='Exited';}
+  const net=m.shares+m.deposits-m.loan;
+  ledger.unshift({d:today(),ref:'EX-'+no.slice(3),member:m.name,type:net>=0?'Withdrawal':'Fee',dr:net>=0?net:0,cr:net<0?Math.abs(net):0,ch:'Exit set-off'});
+  exitMembers.splice(i,1);S.exitConfirm=null;S.exitSel=exitMembers[0]?exitMembers[0].no:null;
+  toast('Exit finalised for '+m.name);render();}
+
+/* ===================== login (OTP) ===================== */
+function renderGate(){const g=document.getElementById('gate');g.style.display=S.authed?'none':'grid';g.innerHTML=S.authed?'':vLogin();if(!S.authed&&S.otpStage==='verify')setTimeout(()=>{const a=document.getElementById('otp0');if(a)a.focus();},30);}
+function vLogin(){
+  const head=`<div style="display:flex;align-items:center;gap:11px;margin-bottom:20px"><div class="mark">G</div><div><div style="font-family:Georgia,serif;font-weight:700;font-size:16px;color:var(--navy)">Genesis Prestige</div><div style="font-size:10px;letter-spacing:1px;color:var(--gold);font-weight:700">ZURI GENESIS · SACCO</div></div></div>`;
+  if(S.otpStage==='verify'){
+   return `<div class="gatecard">${head}
+    <div style="font-size:19px;font-weight:800;margin-bottom:6px">Verify OTP</div>
+    <div style="font-size:13px;color:var(--sub);margin-bottom:16px">Enter the 6-digit code sent to <b>${S.otpContact}</b></div>
+    <div class="otpbox">${[0,1,2,3,4,5].map(i=>`<input id="otp${i}" inputmode="numeric" maxlength="1" oninput="if(this.value&&this.nextElementSibling)this.nextElementSibling.focus()" onkeydown="if(event.key==='Enter')verifyOtp()">`).join('')}</div>
+    <div style="background:var(--goldSoft);color:var(--navy);border-radius:8px;padding:8px 12px;font-size:12px;text-align:center;margin:6px 0 16px">Demo code: <b style="letter-spacing:2px">${S.otpCode}</b></div>
+    <button class="btn p" style="width:100%" onclick="verifyOtp()">Verify & sign in</button>
+    <div style="text-align:center;margin-top:12px;font-size:12.5px;color:var(--sub)">Didn't get it? <span style="color:var(--navy);font-weight:700;cursor:pointer" onclick="requestOtp()">Resend</span> · <span style="color:var(--sub);cursor:pointer" onclick="S.otpStage='request';renderGate()">Change number</span></div>
+   </div>`;}
+  return `<div class="gatecard">${head}
+   <div style="font-size:20px;font-weight:800;margin-bottom:4px">Staff sign in</div>
+   <div style="font-size:13px;color:var(--sub);margin-bottom:18px">We'll send a one-time password to your registered phone or email.</div>
+   <div class="field"><label>Phone or email</label><input id="lg_contact" value="0712 084 210" onkeydown="if(event.key==='Enter')requestOtp()"></div>
+   <div class="field"><label>Sign in as</label><select id="lg_role">${roleNames.map(r=>`<option ${r==='Loan Officer'?'selected':''}>${r}</option>`).join('')}</select></div>
+   <button class="btn p" style="width:100%;margin-top:4px" onclick="requestOtp()">Send OTP</button>
+   <div style="text-align:center;margin-top:14px;font-size:11.5px;color:var(--sub)">Protected by OTP · Kenya DPA 2019 compliant</div>
+  </div>`;
+}
+function requestOtp(){const c=gv('lg_contact')||S.otpContact||'0712 084 210';const r=gv('lg_role');if(r)S.role=r;S.otpContact=c;S.otpCode=String(Math.floor(100000+Math.random()*900000));S.otpStage='verify';renderGate();toast('OTP sent to '+c);}
+function verifyOtp(){let code='';for(let i=0;i<6;i++)code+=gv('otp'+i);if(code.length<6){toast('Enter all 6 digits');return;}if(code===S.otpCode){S.authed=true;S.otpStage='request';document.getElementById('gate').style.display='none';const rl=document.querySelector('.who .rl');if(rl)rl.textContent=S.role;renderNav();render();toast('Signed in as '+S.role);}else toast('Incorrect code - check the demo code shown');}
+function signOut(){S.authed=false;S.otpStage='request';S.otpCode=null;document.getElementById('gate').style.display='grid';renderGate();}
+
+/* ===================== boot ===================== */
+renderGate();
+</script>
+</body>
+</html>
