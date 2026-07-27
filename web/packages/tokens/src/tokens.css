@@ -1,0 +1,80 @@
+/*
+ * Source of truth: genesis_prestige_app.html, `:root { ... }` block.
+ * These CSS custom properties are extracted VERBATIM (same names, same hex
+ * values) from the HTML/CSS prototype so the web app matches it exactly.
+ * Gate 1.1 (reuse-first): no view may declare an ad-hoc color or hard-code
+ * one of these hex values directly — consume the variable or the `colors`
+ * export in `index.ts` instead.
+ */
+:root {
+  /* Brand / navigation */
+  --navy: #0f2c6b;
+  --navy-mid: #1e4fb0;
+  --steel: #3e6fd0;
+  --navy-soft: #e6edfb;
+
+  /* Accent */
+  --gold: #2e90fa;
+  --gold-soft: #dcebff;
+
+  /* Text */
+  --ink: #131a2b;
+  --sub: #5c6579;
+
+  /* Surfaces */
+  --line: #e1e4ec;
+  --bg: #f3f4f7;
+  --panel: #ebeef3;
+  --card: #ffffff;
+
+  /* Status: performing / good */
+  --emerald: #1b7a54;
+  --emerald-soft: #dcefe6;
+
+  /* Status: bad / rejected / brick */
+  --brick: #b23a2e;
+  --brick-soft: #f6e1dd;
+
+  /* Status: watch / warning */
+  --orange: #c2691c;
+  --orange-soft: #f7e7d4;
+
+  /* Status: loss (worst classification tier) */
+  --loss: #6e241b;
+
+  /* Radii (observed prototype scale) */
+  --radius-xs: 2px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-pill: 999px;
+
+  /* Spacing scale (observed prototype paddings/gaps) */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 9px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 14px;
+  --space-7: 16px;
+  --space-8: 20px;
+  --space-9: 28px;
+
+  /* Type scale (observed prototype font-sizes) */
+  --font-size-2xs: 10px;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-base: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 15px;
+  --font-size-xl: 16px;
+  --font-size-2xl: 20px;
+  --font-size-3xl: 22px;
+
+  --font-sans: -apple-system, 'Segoe UI', Roboto, system-ui, sans-serif;
+  --font-display: Georgia, serif;
+
+  --shadow-md: 0 10px 30px rgba(19, 26, 43, 0.25);
+  --shadow-lg: 0 30px 90px rgba(0, 0, 0, 0.45);
+}

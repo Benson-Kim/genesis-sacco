@@ -1,0 +1,33 @@
+{
+  "name": "@genesis/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Genesis Prestige admin web workspace (MASTER_PROMPT §2.3 / build prompt P14). npm workspaces: apps/admin + packages/{tokens,ui,api-client}.",
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "generate:client": "npm run generate:client --workspace=@genesis/api-client",
+    "check:client-drift": "npm run generate:client && git diff --exit-code -- packages/api-client/src/generated"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.12.0",
+    "eslint": "^9.12.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "typescript-eslint": "^8.8.1"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true,
+    "sharp@0.34.5": true,
+    "unrs-resolver@1.12.2": true
+  }
+}

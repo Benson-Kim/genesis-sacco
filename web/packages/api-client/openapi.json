@@ -1,0 +1,222 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Genesis Prestige API", "version": "0.1.0" },
+  "paths": {
+    "/auth/otp/request": {
+      "post": {
+        "operationId": "requestOtp",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OtpRequestBody" } } }
+        },
+        "responses": {
+          "202": {
+            "description": "OTP dispatched via outbox",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StatusOut" } } }
+          }
+        }
+      }
+    },
+    "/auth/otp/verify": {
+      "post": {
+        "operationId": "verifyOtp",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OtpVerifyBody" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Token pair",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TokenResponse" } } }
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "operationId": "refresh",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RefreshBody" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Rotated token pair",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TokenResponse" } } }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RefreshBody" } } }
+        },
+        "responses": { "204": { "description": "Refresh token revoked" } }
+      }
+    },
+    "/me/permissions": {
+      "get": {
+        "operationId": "myPermissions",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Effective permissions for the caller's role, drives client route guards",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MyPermissionsResponse" } } }
+          }
+        }
+      }
+    },
+    "/access/roles": {
+      "get": {
+        "operationId": "getRoles",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Tenant roles",
+            "content": {
+              "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/RoleOut" } } }
+            }
+          }
+        }
+      }
+    },
+    "/access/roles/{role_id}/permissions": {
+      "get": {
+        "operationId": "getRolePermissions",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "role_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Module permission grants for a role",
+            "content": {
+              "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/PermissionOut" } } }
+            }
+          }
+        }
+      }
+    },
+    "/access/roles/{role_id}/permissions/{module}": {
+      "put": {
+        "operationId": "putRolePermission",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "role_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "module", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Module" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PermissionUpdateBody" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated grant (audit-logged in-transaction)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PermissionOut" } } }
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "healthz",
+        "responses": { "200": { "description": "Liveness", "content": { "application/json": { "schema": { "type": "object" } } } } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" }
+    },
+    "schemas": {
+      "Module": {
+        "type": "string",
+        "enum": ["members", "applications", "loan_book", "transactions", "reports", "settings", "access_control"]
+      },
+      "OtpRequestBody": {
+        "type": "object",
+        "required": ["email"],
+        "properties": { "email": { "type": "string", "minLength": 3, "maxLength": 254 } }
+      },
+      "OtpVerifyBody": {
+        "type": "object",
+        "required": ["email", "code"],
+        "properties": {
+          "email": { "type": "string", "minLength": 3, "maxLength": 254 },
+          "code": { "type": "string", "pattern": "^\\d{6}$" }
+        }
+      },
+      "RefreshBody": {
+        "type": "object",
+        "required": ["refresh_token"],
+        "properties": { "refresh_token": { "type": "string", "minLength": 16, "maxLength": 512 } }
+      },
+      "TokenResponse": {
+        "type": "object",
+        "required": ["access_token", "refresh_token", "expires_in"],
+        "properties": {
+          "access_token": { "type": "string" },
+          "refresh_token": { "type": "string" },
+          "expires_in": { "type": "integer" }
+        }
+      },
+      "StatusOut": {
+        "type": "object",
+        "required": ["status"],
+        "properties": { "status": { "type": "string" } }
+      },
+      "ModulePermissionsOut": {
+        "type": "object",
+        "required": ["module", "can_view", "can_create", "can_edit", "can_approve"],
+        "properties": {
+          "module": { "type": "string" },
+          "can_view": { "type": "boolean" },
+          "can_create": { "type": "boolean" },
+          "can_edit": { "type": "boolean" },
+          "can_approve": { "type": "boolean" }
+        }
+      },
+      "MyPermissionsResponse": {
+        "type": "object",
+        "required": ["role_id", "permissions"],
+        "properties": {
+          "role_id": { "type": "string" },
+          "permissions": { "type": "array", "items": { "$ref": "#/components/schemas/ModulePermissionsOut" } }
+        }
+      },
+      "RoleOut": {
+        "type": "object",
+        "required": ["id", "name", "is_system"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "is_system": { "type": "boolean" }
+        }
+      },
+      "PermissionOut": {
+        "type": "object",
+        "required": ["module", "can_view", "can_create", "can_edit", "can_approve"],
+        "properties": {
+          "module": { "type": "string" },
+          "can_view": { "type": "boolean" },
+          "can_create": { "type": "boolean" },
+          "can_edit": { "type": "boolean" },
+          "can_approve": { "type": "boolean" }
+        }
+      },
+      "PermissionUpdateBody": {
+        "type": "object",
+        "required": ["can_view", "can_create", "can_edit", "can_approve"],
+        "properties": {
+          "can_view": { "type": "boolean" },
+          "can_create": { "type": "boolean" },
+          "can_edit": { "type": "boolean" },
+          "can_approve": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}
