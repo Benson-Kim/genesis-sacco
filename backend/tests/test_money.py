@@ -21,8 +21,8 @@ def test_rounds_half_up() -> None:
 
 
 def test_constants() -> None:
-    assert CENT == Decimal("0.01")
-    assert ZERO == Decimal("0.00")
+    assert Decimal("0.01") == CENT
+    assert Decimal("0.00") == ZERO
 
 
 @given(value=amounts)
