@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     database_url: str = ""
     redis_url: str = ""
     environment: str = "development"
+    jwt_signing_key: str = ""
+    otp_pepper: str = ""
+    auth_rate_limit_per_minute: int = 60
 
 
 @lru_cache

@@ -36,6 +36,7 @@ TENANT_TABLES = [
     "audit_log",
     "idempotency_keys",
     "otp_challenges",
+    "refresh_tokens",
 ]
 
 
