@@ -71,6 +71,7 @@ backend:test:
     POSTGRES_HOST_AUTH_METHOD: trust
     DATABASE_URL: "postgresql+psycopg://genesis@postgres:5432/genesis_test"
   script:
+    - alembic upgrade head
     - pytest --cov=src --cov-fail-under=85 --junitxml=report.xml
   coverage: '/TOTAL.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
   artifacts:
