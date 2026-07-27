@@ -1,0 +1,50 @@
+"""Application factory: middleware, error envelope, router wiring."""
+
+import logging
+import uuid
+from collections.abc import Awaitable, Callable
+
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
+
+from genesis.api.health import router as health_router
+from genesis.errors import AppError, ErrorCategory
+from genesis.logging import configure_logging, correlation_id_var
+
+logger = logging.getLogger("genesis.api")
+
+
+def _envelope(category: ErrorCategory) -> dict[str, str]:
+    return {"category": category.value, "correlation_id": correlation_id_var.get()}
+
+
+def create_app() -> FastAPI:
+    configure_logging()
+    app = FastAPI(title="Genesis Prestige API", version="0.1.0")
+    app.include_router(health_router)
+
+    @app.middleware("http")
+    async def correlation(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        cid = request.headers.get("x-request-id") or uuid.uuid4().hex
+        token = correlation_id_var.set(cid)
+        try:
+            response = await call_next(request)
+        finally:
+            correlation_id_var.reset(token)
+        response.headers["x-request-id"] = cid
+        return response
+
+    @app.exception_handler(AppError)
+    async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+        logger.warning("handled error: %s", exc.category.value)
+        return JSONResponse(status_code=exc.status_code, content=_envelope(exc.category))
+
+    @app.exception_handler(Exception)
+    async def unhandled_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.error("unhandled error", exc_info=exc)
+        return JSONResponse(status_code=500, content=_envelope(ErrorCategory.INTERNAL))
+
+    return app
