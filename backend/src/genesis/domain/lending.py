@@ -1,25 +1,17 @@
 """Lending engine: single source of truth for loan math (MASTER_PROMPT 2.1).
 
 Pure functions only: no I/O, no imports from other layers. Mirrors the
-canonical prototype `inst()` and `classify()` semantics exactly.
+canonical prototype `inst()` and `classify()` semantics exactly. Money
+rounding comes from `genesis.domain.money` (gate 1.1: reuse-first).
 """
 
 from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
-CENT = Decimal("0.01")
-
-
-def _to_cents(value: Decimal) -> Decimal:
-    """Round to 2 decimal places, half up. The only rounding used in lending."""
-    return value.quantize(CENT, rounding=ROUND_HALF_UP)
-
-
-def monthly_rate(annual_rate_pct: Decimal) -> Decimal:
-    return annual_rate_pct / Decimal(100) / Decimal(12)
+from genesis.domain.money import ZERO, monthly_rate, to_cents
 
 
 def installment_amount(principal: Decimal, annual_rate_pct: Decimal, months: int) -> Decimal:
@@ -32,9 +24,9 @@ def installment_amount(principal: Decimal, annual_rate_pct: Decimal, months: int
         raise ValueError("rate must not be negative")
     rate = monthly_rate(annual_rate_pct)
     if rate == 0:
-        return _to_cents(principal / months)
+        return to_cents(principal / months)
     factor = (1 + rate) ** months
-    return _to_cents(principal * rate * factor / (factor - 1))
+    return to_cents(principal * rate * factor / (factor - 1))
 
 
 @dataclass(frozen=True)
@@ -58,19 +50,19 @@ def build_schedule(
     """
     payment = installment_amount(principal, annual_rate_pct, months)
     rate = monthly_rate(annual_rate_pct)
-    balance = _to_cents(principal)
+    balance = to_cents(principal)
     schedule: list[ScheduledInstallment] = []
     for number in range(1, months + 1):
-        interest = _to_cents(balance * rate)
+        interest = to_cents(balance * rate)
         if number == months:
             principal_part = balance
         else:
-            principal_part = _to_cents(payment - interest)
+            principal_part = to_cents(payment - interest)
             if principal_part < 0:
-                principal_part = Decimal("0.00")
+                principal_part = ZERO
             if principal_part > balance:
                 principal_part = balance
-        total = _to_cents(principal_part + interest)
+        total = to_cents(principal_part + interest)
         balance -= principal_part
         schedule.append(
             ScheduledInstallment(
