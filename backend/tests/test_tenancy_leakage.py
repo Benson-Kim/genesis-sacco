@@ -47,10 +47,7 @@ async def _create_tenant(name: str) -> uuid.UUID:
     tid = uuid.uuid4()
     async with tenant_session(_factory(), tid) as session:
         await session.execute(
-            text(
-                "INSERT INTO tenants (id, name, slug) "
-                "VALUES (CAST(:id AS uuid), :name, :slug)"
-            ),
+            text("INSERT INTO tenants (id, name, slug) VALUES (CAST(:id AS uuid), :name, :slug)"),
             {"id": str(tid), "name": name, "slug": f"{name}-{tid.hex[:8]}"},
         )
     return tid
@@ -84,9 +81,7 @@ def test_rls_enabled_forced_and_policied_on_every_tenant_table() -> None:
             "WHERE c.relname IN :tables GROUP BY 1, 2, 3"
         ).bindparams(bindparam("tables", expanding=True))
         async with tenant_session(_factory(), tid) as session:
-            rows = (
-                await session.execute(stmt, {"tables": [*TENANT_TABLES, "tenants"]})
-            ).all()
+            rows = (await session.execute(stmt, {"tables": [*TENANT_TABLES, "tenants"]})).all()
         found = {row[0]: row for row in rows}
         for table in [*TENANT_TABLES, "tenants"]:
             assert table in found, f"table missing: {table}"
@@ -105,21 +100,15 @@ def test_cross_tenant_rows_are_invisible_and_immutable() -> None:
         await _insert_member(tid_a, tid_a)
 
         async with tenant_session(_factory(), tid_b) as session:
-            count = (
-                await session.execute(text("SELECT count(*) FROM members"))
-            ).scalar_one()
+            count = (await session.execute(text("SELECT count(*) FROM members"))).scalar_one()
             assert count == 0, "tenant B can see tenant A rows"
-            updated = await session.execute(
-                text("UPDATE members SET name = 'hijack'")
-            )
+            updated = await session.execute(text("UPDATE members SET name = 'hijack'"))
             assert updated.rowcount == 0, "tenant B can update tenant A rows"
             deleted = await session.execute(text("DELETE FROM members"))
             assert deleted.rowcount == 0, "tenant B can delete tenant A rows"
 
         async with tenant_session(_factory(), tid_a) as session:
-            count = (
-                await session.execute(text("SELECT count(*) FROM members"))
-            ).scalar_one()
+            count = (await session.execute(text("SELECT count(*) FROM members"))).scalar_one()
             assert count == 1, "tenant A cannot see its own row"
 
     asyncio.run(run())
