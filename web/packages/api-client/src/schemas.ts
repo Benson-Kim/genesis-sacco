@@ -58,5 +58,17 @@ export const permissionOutSchema = z.object({
 });
 export type PermissionOut = z.infer<typeof permissionOutSchema>;
 
+export const userOutSchema = z.object({
+  id: z.string(),
+  full_name: z.string(),
+  email: z.string(),
+  branch: z.string().nullable(),
+  role_name: z.string(),
+  status: z.string(),
+  last_active: z.string().nullable(),
+});
+export type UserOut = z.infer<typeof userOutSchema>;
+
 export const rolesListSchema = z.array(roleOutSchema);
 export const permissionsListSchema = z.array(permissionOutSchema);
+export const usersListSchema = z.array(userOutSchema);

@@ -120,6 +120,20 @@
         }
       }
     },
+    "/access/users": {
+      "get": {
+        "operationId": "getUsers",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Staff users for the tenant",
+            "content": {
+              "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/UserOut" } } }
+            }
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "operationId": "healthz",
@@ -215,6 +229,19 @@
           "can_create": { "type": "boolean" },
           "can_edit": { "type": "boolean" },
           "can_approve": { "type": "boolean" }
+        }
+      },
+      "UserOut": {
+        "type": "object",
+        "required": ["id", "full_name", "email", "role_name", "status"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "full_name": { "type": "string" },
+          "email": { "type": "string" },
+          "branch": { "type": "string", "nullable": true },
+          "role_name": { "type": "string" },
+          "status": { "type": "string" },
+          "last_active": { "type": "string", "format": "date-time", "nullable": true }
         }
       }
     }

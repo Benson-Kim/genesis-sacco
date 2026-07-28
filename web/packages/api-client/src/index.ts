@@ -8,14 +8,16 @@ import {
   rolesListSchema,
   permissionsListSchema,
   permissionOutSchema,
+  usersListSchema,
   type ModuleName,
   type MyPermissionsResponse,
   type RoleOut,
   type PermissionOut,
+  type UserOut,
 } from './schemas';
 
 export { configureHttpClient, ApiError, VersionConflictError };
-export type { AuthTokens, HttpClientConfig, MyPermissionsResponse, RoleOut, PermissionOut, ModuleName };
+export type { AuthTokens, HttpClientConfig, MyPermissionsResponse, RoleOut, PermissionOut, UserOut, ModuleName };
 export type { CursorPage } from './pagination-contract';
 
 export const auth = {
@@ -54,6 +56,8 @@ export const me = {
 
 export const access = {
   listRoles: () => apiRequest('/access/roles', rolesListSchema),
+
+  listUsers: () => apiRequest('/access/users', usersListSchema),
 
   getRolePermissions: (roleId: string) =>
     apiRequest(`/access/roles/${roleId}/permissions`, permissionsListSchema),
