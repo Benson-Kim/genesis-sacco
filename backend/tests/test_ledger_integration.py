@@ -121,9 +121,7 @@ def test_trigger_blocks_unbalanced_ledger_insert() -> None:
 
         async with tenant_session(factory(), tid) as session:
             # Post a valid deposit first to get a transaction id.
-            result = await post_deposit(
-                session, tid, mid, Decimal("1000"), Channel.MPESA
-            )
+            result = await post_deposit(session, tid, mid, Decimal("1000"), Channel.MPESA)
             txn_id = result.txn_id
 
         # Now try to insert an extra unbalanced line directly.
@@ -154,9 +152,7 @@ def test_trigger_blocks_update_on_ledger_entries() -> None:
         mid = await _seed_member(tid)
 
         async with tenant_session(factory(), tid) as session:
-            result = await post_deposit(
-                session, tid, mid, Decimal("500"), Channel.MPESA
-            )
+            result = await post_deposit(session, tid, mid, Decimal("500"), Channel.MPESA)
             txn_id = result.txn_id
 
         with pytest.raises(Exception, match="append-only"):
@@ -180,9 +176,7 @@ def test_trigger_blocks_delete_on_ledger_entries() -> None:
         mid = await _seed_member(tid)
 
         async with tenant_session(factory(), tid) as session:
-            result = await post_deposit(
-                session, tid, mid, Decimal("500"), Channel.MPESA
-            )
+            result = await post_deposit(session, tid, mid, Decimal("500"), Channel.MPESA)
             txn_id = result.txn_id
 
         with pytest.raises(Exception, match="append-only"):
@@ -206,9 +200,7 @@ def test_trigger_blocks_update_on_transactions() -> None:
         mid = await _seed_member(tid)
 
         async with tenant_session(factory(), tid) as session:
-            result = await post_deposit(
-                session, tid, mid, Decimal("500"), Channel.MPESA
-            )
+            result = await post_deposit(session, tid, mid, Decimal("500"), Channel.MPESA)
             txn_id = result.txn_id
 
         with pytest.raises(Exception, match="append-only"):
@@ -232,17 +224,13 @@ def test_trigger_blocks_delete_on_transactions() -> None:
         mid = await _seed_member(tid)
 
         async with tenant_session(factory(), tid) as session:
-            result = await post_deposit(
-                session, tid, mid, Decimal("500"), Channel.MPESA
-            )
+            result = await post_deposit(session, tid, mid, Decimal("500"), Channel.MPESA)
             txn_id = result.txn_id
 
         with pytest.raises(Exception, match="append-only"):
             async with tenant_session(factory(), tid) as session:
                 await session.execute(
-                    text(
-                        "DELETE FROM transactions WHERE id = CAST(:id AS uuid)"
-                    ),
+                    text("DELETE FROM transactions WHERE id = CAST(:id AS uuid)"),
                     {"id": str(txn_id)},
                 )
 
@@ -260,9 +248,7 @@ def test_deposit_creates_balanced_ledger_entries() -> None:
         mid = await _seed_member(tid)
 
         async with tenant_session(factory(), tid) as session:
-            result = await post_deposit(
-                session, tid, mid, Decimal("2500.00"), Channel.MPESA
-            )
+            result = await post_deposit(session, tid, mid, Decimal("2500.00"), Channel.MPESA)
 
         assert result.txn_ref.startswith("MP-")
 
@@ -288,9 +274,7 @@ def test_withdrawal_creates_balanced_ledger_entries() -> None:
         mid = await _seed_member(tid)
 
         async with tenant_session(factory(), tid) as session:
-            result = await post_withdrawal(
-                session, tid, mid, Decimal("1000.00"), Channel.BANK
-            )
+            result = await post_withdrawal(session, tid, mid, Decimal("1000.00"), Channel.BANK)
 
         assert result.txn_ref.startswith("WD-")
 
@@ -316,9 +300,7 @@ def test_share_topup_ref_prefix() -> None:
         mid = await _seed_member(tid)
 
         async with tenant_session(factory(), tid) as session:
-            result = await post_share_topup(
-                session, tid, mid, Decimal("500.00"), Channel.MPESA
-            )
+            result = await post_share_topup(session, tid, mid, Decimal("500.00"), Channel.MPESA)
 
         assert result.txn_ref.startswith("SH-")
 
@@ -345,10 +327,7 @@ def test_repayment_ref_prefix_and_repayments_row() -> None:
         async with tenant_session(factory(), tid) as session:
             count = (
                 await session.execute(
-                    text(
-                        "SELECT count(*) FROM repayments "
-                        "WHERE transaction_id = CAST(:id AS uuid)"
-                    ),
+                    text("SELECT count(*) FROM repayments WHERE transaction_id = CAST(:id AS uuid)"),
                     {"id": str(result.txn_id)},
                 )
             ).scalar_one()
@@ -363,9 +342,7 @@ def test_interest_posting_ref_prefix() -> None:
         mid = await _seed_member(tid)
 
         async with tenant_session(factory(), tid) as session:
-            result = await post_interest(
-                session, tid, mid, Decimal("125.50")
-            )
+            result = await post_interest(session, tid, mid, Decimal("125.50"))
 
         assert result.txn_ref.startswith("INT-")
 
@@ -383,9 +360,7 @@ def test_reversal_creates_mirror_entry_and_leaves_original_intact() -> None:
         mid = await _seed_member(tid)
 
         async with tenant_session(factory(), tid) as session:
-            original = await post_deposit(
-                session, tid, mid, Decimal("3000.00"), Channel.MPESA
-            )
+            original = await post_deposit(session, tid, mid, Decimal("3000.00"), Channel.MPESA)
 
         async with tenant_session(factory(), tid) as session:
             reversal = await post_reversal(session, tid, original.txn_id)
@@ -474,10 +449,7 @@ def test_disbursement_is_atomic_and_creates_schedule() -> None:
         async with tenant_session(factory(), tid) as session:
             loan_row = (
                 await session.execute(
-                    text(
-                        "SELECT principal, balance, status FROM loans "
-                        "WHERE id = CAST(:id AS uuid)"
-                    ),
+                    text("SELECT principal, balance, status FROM loans WHERE id = CAST(:id AS uuid)"),
                     {"id": str(result.loan_id)},
                 )
             ).first()
@@ -489,10 +461,7 @@ def test_disbursement_is_atomic_and_creates_schedule() -> None:
         async with tenant_session(factory(), tid) as session:
             sched_count = (
                 await session.execute(
-                    text(
-                        "SELECT count(*) FROM loan_schedules "
-                        "WHERE loan_id = CAST(:id AS uuid)"
-                    ),
+                    text("SELECT count(*) FROM loan_schedules WHERE loan_id = CAST(:id AS uuid)"),
                     {"id": str(result.loan_id)},
                 )
             ).scalar_one()
@@ -566,10 +535,7 @@ def test_disbursement_rollback_leaves_no_partial_state() -> None:
         async with tenant_session(factory(), tid) as session:
             stage = (
                 await session.execute(
-                    text(
-                        "SELECT stage FROM loan_applications "
-                        "WHERE id = CAST(:id AS uuid)"
-                    ),
+                    text("SELECT stage FROM loan_applications WHERE id = CAST(:id AS uuid)"),
                     {"id": str(app_id)},
                 )
             ).scalar_one()
@@ -579,10 +545,7 @@ def test_disbursement_rollback_leaves_no_partial_state() -> None:
         async with tenant_session(factory(), tid) as session:
             loan_count = (
                 await session.execute(
-                    text(
-                        "SELECT count(*) FROM loans "
-                        "WHERE application_id = CAST(:id AS uuid)"
-                    ),
+                    text("SELECT count(*) FROM loans WHERE application_id = CAST(:id AS uuid)"),
                     {"id": str(app_id)},
                 )
             ).scalar_one()
@@ -602,9 +565,7 @@ def test_posting_writes_audit_log_entry() -> None:
         mid = await _seed_member(tid)
 
         async with tenant_session(factory(), tid) as session:
-            result = await post_deposit(
-                session, tid, mid, Decimal("750.00"), Channel.MPESA
-            )
+            result = await post_deposit(session, tid, mid, Decimal("750.00"), Channel.MPESA)
 
         async with tenant_session(factory(), tid) as session:
             audit_count = (
@@ -634,9 +595,7 @@ def test_cross_tenant_cannot_read_ledger_entries() -> None:
         mid_a = await _seed_member(tid_a)
 
         async with tenant_session(factory(), tid_a) as session:
-            result = await post_deposit(
-                session, tid_a, mid_a, Decimal("1000"), Channel.MPESA
-            )
+            result = await post_deposit(session, tid_a, mid_a, Decimal("1000"), Channel.MPESA)
 
         # Tenant B should see zero rows for tenant A's transaction.
         async with tenant_session(factory(), tid_b) as session:
@@ -668,9 +627,7 @@ def test_50_parallel_deposits_zero_gaps_or_duplicates() -> None:
 
         async def one_deposit() -> PostingResult:
             async with tenant_session(factory(), tid) as session:
-                return await post_deposit(
-                    session, tid, mid, Decimal("100.00"), Channel.MPESA
-                )
+                return await post_deposit(session, tid, mid, Decimal("100.00"), Channel.MPESA)
 
         results = await asyncio.gather(*[one_deposit() for _ in range(50)])
 
@@ -699,15 +656,11 @@ def test_50_parallel_mixed_postings_zero_duplicates() -> None:
 
         async def deposit() -> PostingResult:
             async with tenant_session(factory(), tid) as session:
-                return await post_deposit(
-                    session, tid, mid, Decimal("100.00"), Channel.MPESA
-                )
+                return await post_deposit(session, tid, mid, Decimal("100.00"), Channel.MPESA)
 
         async def share_topup() -> PostingResult:
             async with tenant_session(factory(), tid) as session:
-                return await post_share_topup(
-                    session, tid, mid, Decimal("50.00"), Channel.MPESA
-                )
+                return await post_share_topup(session, tid, mid, Decimal("50.00"), Channel.MPESA)
 
         tasks = [deposit() for _ in range(25)] + [share_topup() for _ in range(25)]
         results = await asyncio.gather(*tasks)

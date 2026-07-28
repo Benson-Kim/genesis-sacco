@@ -117,9 +117,7 @@ class PostingSpec:
         dr = sum((ln.amount for ln in self.lines if ln.side is Side.DEBIT), ZERO)
         cr = sum((ln.amount for ln in self.lines if ln.side is Side.CREDIT), ZERO)
         if dr != cr:
-            raise ValueError(
-                f"Unbalanced posting: DR={dr} CR={cr} diff={dr - cr}"
-            )
+            raise ValueError(f"Unbalanced posting: DR={dr} CR={cr} diff={dr - cr}")
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +125,7 @@ class PostingSpec:
 # ---------------------------------------------------------------------------
 
 REF_PREFIX: dict[TxnType, str] = {
-    TxnType.DEPOSIT: "MP-",          # M-Pesa deposit (also used for bank via channel)
+    TxnType.DEPOSIT: "MP-",  # M-Pesa deposit (also used for bank via channel)
     TxnType.WITHDRAWAL: "WD-",
     TxnType.SHARE_TOPUP: "SH-",
     TxnType.LOAN_DISBURSEMENT: "LN-",
@@ -139,7 +137,7 @@ REF_PREFIX: dict[TxnType, str] = {
 # Channel-specific prefix override for deposits
 _DEPOSIT_CHANNEL_PREFIX: dict[Channel, str] = {
     Channel.MPESA: "MP-",
-    Channel.BANK: "WD-",   # bank deposit uses WD- per spec (bank channel)
+    Channel.BANK: "WD-",  # bank deposit uses WD- per spec (bank channel)
     Channel.ACCRUAL: "INT-",
     Channel.INTERNAL: "WD-",
 }

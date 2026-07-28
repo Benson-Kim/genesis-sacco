@@ -264,9 +264,7 @@ async def post_deposit(
 ) -> PostingResult:
     """Post a member deposit and enqueue a notification event."""
     spec = build_deposit_posting(amount, channel)
-    result = await _post(
-        session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at
-    )
+    result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
     await enqueue_event(
         session,
         tenant_id,
@@ -293,9 +291,7 @@ async def post_withdrawal(
 ) -> PostingResult:
     """Post a member withdrawal."""
     spec = build_withdrawal_posting(amount, channel)
-    result = await _post(
-        session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at
-    )
+    result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
     await enqueue_event(
         session,
         tenant_id,
@@ -322,9 +318,7 @@ async def post_share_topup(
 ) -> PostingResult:
     """Post a share top-up."""
     spec = build_share_topup_posting(amount, channel)
-    result = await _post(
-        session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at
-    )
+    result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
     await enqueue_event(
         session,
         tenant_id,
@@ -352,9 +346,7 @@ async def post_repayment(
 ) -> PostingResult:
     """Post a loan repayment and record in the repayments table."""
     spec = build_repayment_posting(amount, channel)
-    result = await _post(
-        session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at
-    )
+    result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
     # Record in repayments table.
     await session.execute(
         text(
@@ -396,9 +388,7 @@ async def post_interest(
 ) -> PostingResult:
     """Post an interest accrual entry."""
     spec = build_interest_posting(amount)
-    result = await _post(
-        session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at
-    )
+    result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
     await enqueue_event(
         session,
         tenant_id,
@@ -568,9 +558,7 @@ async def disburse_loan(
     try:
         transition(ApplicationStage(stage_str), ApplicationStage.DISBURSED)
     except InvalidTransitionError as exc:
-        raise ConflictError(
-            f"cannot disburse application in stage '{stage_str}'"
-        ) from exc
+        raise ConflictError(f"cannot disburse application in stage '{stage_str}'") from exc
 
     await session.execute(
         text(
