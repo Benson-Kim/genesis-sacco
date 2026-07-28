@@ -21,8 +21,9 @@ import zlib
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Any, cast
 
-from sqlalchemy import text
+from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application.outbox import enqueue_event
@@ -746,3 +747,4 @@ def _add_months(d: date, months: int) -> date:
     month = month % 12 + 1
     last_day = calendar.monthrange(year, month)[1]
     return d.replace(year=year, month=month, day=min(d.day, last_day))
+month, day=min(d.day, last_day))
