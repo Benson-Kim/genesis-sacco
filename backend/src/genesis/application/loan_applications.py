@@ -131,6 +131,14 @@ async def create_application(
         raise InvalidInputError(
             f"term {term_months} outside product limit of {product.max_term_months} months"
         )
+    member_exists = (
+        await session.execute(
+            text("SELECT 1 FROM members WHERE id = CAST(:m AS uuid)"),
+            {"m": str(member_id)},
+        )
+    ).first()
+    if member_exists is None:
+        raise NotFoundError(f"member {member_id} not found")
     deposits = await _deposit_balance(session, member_id)
     cover = _cover_pct(deposits, ZERO, amount)
     application_id = uuid.uuid4()

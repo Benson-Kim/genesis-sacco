@@ -515,3 +515,24 @@ def test_loans_rbac_enforced() -> None:
         assert res.status_code == 403
 
     asyncio.run(run())
+
+
+def test_application_for_unknown_member_returns_404() -> None:
+    async def run() -> None:
+        _, _, token = await _seed_actor()
+        headers = _headers(token)
+        product_id = await _make_product(headers, "Ghost Member Product")
+        async with api_client() as client:
+            res = await client.post(
+                "/applications",
+                json={
+                    "member_id": str(uuid.uuid4()),
+                    "product_id": product_id,
+                    "amount": "1000.00",
+                    "term_months": 6,
+                },
+                headers=headers,
+            )
+        assert res.status_code == 404
+
+    asyncio.run(run())
