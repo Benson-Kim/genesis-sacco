@@ -9,12 +9,19 @@ Corrections are reversing entries only — UPDATE/DELETE are forbidden by
 DB trigger (gate 1.5).
 
 Reference prefixes (gate 1.4):
-  MP-  M-Pesa deposit / withdrawal
+  MP-  M-Pesa deposit
+  BK-  Bank-channel deposit (addition to the MASTER_PROMPT base set: bank
+       deposits are cash inflows, so reusing WD-/INT- would misclassify
+       them; BK- keeps deposit references channel-distinguishable)
   LN-  Loan disbursement
   RP-  Loan repayment
   SH-  Share top-up
-  WD-  Withdrawal (bank)
-  INT- Interest accrual posting
+  WD-  Withdrawal (any channel) / exit settlement
+  INT- Interest posting (loan accrual and deposit interest)
+
+Deposits are only valid on the MPESA and BANK channels; ACCRUAL/INTERNAL
+deposits raise ValueError (interest is posted via the dedicated interest
+factories, never as a deposit).
 """
 
 from __future__ import annotations
@@ -63,6 +70,7 @@ class Account(enum.StrEnum):
     CASH_MPESA = "cash.mpesa"
     CASH_BANK = "cash.bank"
     LOANS_RECEIVABLE = "loans.receivable"
+    INTEREST_RECEIVABLE = "interest.receivable"
 
     # Liability accounts
     MEMBER_DEPOSITS = "member.deposits"
@@ -70,8 +78,12 @@ class Account(enum.StrEnum):
 
     # Income accounts
     INTEREST_INCOME = "income.interest"
+    PENALTY_INCOME = "income.penalties"
 
-    # Suspense / clearing
+    # Expense accounts
+    INTEREST_EXPENSE = "interest.expense"
+
+    # Suspense / clearing (exceptional items only — never a structural leg)
     SUSPENSE = "suspense"
 
 
@@ -125,7 +137,7 @@ class PostingSpec:
 # ---------------------------------------------------------------------------
 
 REF_PREFIX: dict[TxnType, str] = {
-    TxnType.DEPOSIT: "MP-",  # M-Pesa deposit (also used for bank via channel)
+    TxnType.DEPOSIT: "MP-",  # channel-resolved via _DEPOSIT_CHANNEL_PREFIX
     TxnType.WITHDRAWAL: "WD-",
     TxnType.SHARE_TOPUP: "SH-",
     TxnType.LOAN_DISBURSEMENT: "LN-",
@@ -134,19 +146,24 @@ REF_PREFIX: dict[TxnType, str] = {
     TxnType.EXIT_SETTLEMENT: "WD-",  # exit settlement is a withdrawal variant
 }
 
-# Channel-specific prefix override for deposits
+# Channel-specific prefix for deposits. Deposits only arrive via M-Pesa or
+# bank; ACCRUAL/INTERNAL deposits are invalid (interest uses the dedicated
+# interest factories with the INT- prefix).
 _DEPOSIT_CHANNEL_PREFIX: dict[Channel, str] = {
     Channel.MPESA: "MP-",
-    Channel.BANK: "WD-",  # bank deposit uses WD- per spec (bank channel)
-    Channel.ACCRUAL: "INT-",
-    Channel.INTERNAL: "WD-",
+    Channel.BANK: "BK-",
 }
 
 
 def ref_prefix(txn_type: TxnType, channel: Channel) -> str:
     """Return the reference prefix for a given transaction type and channel."""
     if txn_type is TxnType.DEPOSIT:
-        return _DEPOSIT_CHANNEL_PREFIX.get(channel, "MP-")
+        try:
+            return _DEPOSIT_CHANNEL_PREFIX[channel]
+        except KeyError:
+            raise ValueError(
+                f"deposits are only valid on MPESA or BANK channels, got {channel!r}"
+            ) from None
     return REF_PREFIX[txn_type]
 
 
@@ -165,7 +182,13 @@ def _cash_account(channel: Channel) -> Account:
 
 
 def build_deposit_posting(amount: Decimal, channel: Channel) -> PostingSpec:
-    """DR cash / CR member deposits."""
+    """DR cash / CR member deposits.
+
+    Only MPESA and BANK channels are valid — interest is never posted as a
+    deposit (use the interest factories instead).
+    """
+    if channel not in _DEPOSIT_CHANNEL_PREFIX:
+        raise ValueError(f"deposits are only valid on MPESA or BANK channels, got {channel!r}")
     amt = to_cents(amount)
     return PostingSpec(
         txn_type=TxnType.DEPOSIT,
@@ -234,16 +257,30 @@ def build_repayment_posting(amount: Decimal, channel: Channel) -> PostingSpec:
     )
 
 
-def build_interest_posting(amount: Decimal) -> PostingSpec:
-    """DR suspense (accrual) / CR interest income."""
+def build_loan_interest_accrual_posting(amount: Decimal) -> PostingSpec:
+    """Accrue interest earned on a loan: DR interest receivable / CR interest income."""
     amt = to_cents(amount)
     return PostingSpec(
         txn_type=TxnType.INTEREST_POSTING,
         channel=Channel.ACCRUAL,
         amount=amt,
         lines=(
-            LedgerLine(account=Account.SUSPENSE, side=Side.DEBIT, amount=amt),
+            LedgerLine(account=Account.INTEREST_RECEIVABLE, side=Side.DEBIT, amount=amt),
             LedgerLine(account=Account.INTEREST_INCOME, side=Side.CREDIT, amount=amt),
+        ),
+    )
+
+
+def build_deposit_interest_posting(amount: Decimal) -> PostingSpec:
+    """Interest paid on member deposits: DR interest expense / CR member deposits."""
+    amt = to_cents(amount)
+    return PostingSpec(
+        txn_type=TxnType.INTEREST_POSTING,
+        channel=Channel.ACCRUAL,
+        amount=amt,
+        lines=(
+            LedgerLine(account=Account.INTEREST_EXPENSE, side=Side.DEBIT, amount=amt),
+            LedgerLine(account=Account.MEMBER_DEPOSITS, side=Side.CREDIT, amount=amt),
         ),
     )
 

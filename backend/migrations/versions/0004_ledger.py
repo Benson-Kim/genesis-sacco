@@ -6,7 +6,13 @@ Create Date: 2026-07-28
 
 Gates satisfied:
   1.4 — pg_advisory_xact_lock + UNIQUE + retry for reference generation
-  1.5 — balanced DR/CR enforced by trigger; UPDATE/DELETE blocked by trigger
+  1.5 — balanced DR/CR enforced by deferred constraint trigger;
+        UPDATE/DELETE blocked by trigger; reversal linkage via
+        transactions.reversal_of_id (one reversal per original)
+
+Note: forbid_row_mutation() is defined in migration 0001 and reused here.
+No per-table GRANTs exist in this project — access control is RLS-based
+(single app role), so txn_ref_sequences needs no GRANT beyond its policy.
 """
 
 from alembic import op
@@ -68,44 +74,54 @@ CREATE TRIGGER transactions_no_delete
     FOR EACH ROW EXECUTE FUNCTION forbid_row_mutation();
 
 -- -------------------------------------------------------------------------
--- Trigger: balanced DR/CR enforced per transaction (gate 1.5)
+-- Reversal linkage (gate 1.5): corrections are reversing entries.
+-- reversal_of_id points at the transaction being reversed; the partial
+-- UNIQUE index enforces at most one reversal per original, tenant-scoped
+-- (consistent with the UNIQUE (tenant_id, txn_ref) pattern in 0001).
+-- -------------------------------------------------------------------------
+ALTER TABLE transactions
+    ADD COLUMN reversal_of_id uuid
+        REFERENCES transactions(id) ON DELETE RESTRICT;
+
+CREATE UNIQUE INDEX uq_transactions_reversal_of
+    ON transactions (tenant_id, reversal_of_id)
+    WHERE reversal_of_id IS NOT NULL;
+
+-- -------------------------------------------------------------------------
+-- Constraint trigger: balanced DR/CR enforced per transaction (gate 1.5)
 --
--- Fires AFTER INSERT on ledger_entries (deferred to statement level so all
--- lines for one transaction are visible together).  Checks that for every
--- transaction_id touched in this statement the sum of debit amounts equals
--- the sum of credit amounts.
+-- DEFERRABLE INITIALLY DEFERRED: the check runs at COMMIT, after all lines
+-- of a posting are inserted — regardless of how many statements were used.
+-- This also protects raw SQL writers that bypass the application service.
+-- Constraint triggers must be FOR EACH ROW, so the function checks the
+-- total DR vs CR of the inserted row's transaction at commit time.
 -- -------------------------------------------------------------------------
 CREATE FUNCTION check_ledger_balanced() RETURNS trigger
 LANGUAGE plpgsql AS $fn$
 DECLARE
-    rec RECORD;
+    dr numeric;
+    cr numeric;
 BEGIN
-    FOR rec IN
-        SELECT
-            transaction_id,
-            SUM(CASE WHEN side = 'debit'  THEN amount ELSE 0 END) AS dr,
-            SUM(CASE WHEN side = 'credit' THEN amount ELSE 0 END) AS cr
-        FROM ledger_entries
-        WHERE transaction_id = ANY(
-            SELECT DISTINCT transaction_id FROM new_table
-        )
-        GROUP BY transaction_id
-    LOOP
-        IF rec.dr <> rec.cr THEN
-            RAISE EXCEPTION
-                'Unbalanced ledger for transaction %: DR=% CR=%',
-                rec.transaction_id, rec.dr, rec.cr;
-        END IF;
-    END LOOP;
+    SELECT
+        COALESCE(SUM(CASE WHEN side = 'debit'  THEN amount END), 0),
+        COALESCE(SUM(CASE WHEN side = 'credit' THEN amount END), 0)
+    INTO dr, cr
+    FROM ledger_entries
+    WHERE transaction_id = NEW.transaction_id;
+
+    IF dr <> cr THEN
+        RAISE EXCEPTION
+            'Unbalanced ledger for transaction %: DR=% CR=%',
+            NEW.transaction_id, dr, cr;
+    END IF;
     RETURN NULL;
 END
 $fn$;
 
--- AFTER INSERT ... REFERENCING NEW TABLE allows set-level balance check.
-CREATE TRIGGER ledger_entries_balanced
+CREATE CONSTRAINT TRIGGER ledger_entries_balanced
     AFTER INSERT ON ledger_entries
-    REFERENCING NEW TABLE AS new_table
-    FOR EACH STATEMENT EXECUTE FUNCTION check_ledger_balanced();
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION check_ledger_balanced();
 """
 
 _DOWN = """
@@ -115,6 +131,8 @@ DROP TRIGGER IF EXISTS ledger_entries_no_delete  ON ledger_entries;
 DROP TRIGGER IF EXISTS transactions_no_update    ON transactions;
 DROP TRIGGER IF EXISTS transactions_no_delete    ON transactions;
 DROP FUNCTION IF EXISTS check_ledger_balanced();
+DROP INDEX IF EXISTS uq_transactions_reversal_of;
+ALTER TABLE transactions DROP COLUMN IF EXISTS reversal_of_id;
 DROP FUNCTION IF EXISTS ledger_append_only();
 DROP TABLE IF EXISTS txn_ref_sequences CASCADE;
 """

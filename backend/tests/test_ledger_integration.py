@@ -3,12 +3,14 @@
 Requires a migrated PostgreSQL database (DATABASE_URL env var).
 
 Tests covered:
-  * Trigger: balanced DR/CR enforced — unbalanced insert raises
+  * Trigger: balanced DR/CR enforced at COMMIT — unbalanced insert raises
   * Trigger: UPDATE on ledger_entries raises
   * Trigger: DELETE on ledger_entries raises
   * Trigger: UPDATE on transactions raises
   * Trigger: DELETE on transactions raises
-  * Reversal: reversing entry posts correctly; original untouched
+  * Reversal: reversing entry posts correctly; original untouched;
+    reversal_of_id linkage set; double reversal and reversing a reversal
+    both raise ConflictError
   * Disbursement: atomic — approval check + posting + schedule + outbox
   * Disbursement: non-approved application raises ConflictError
   * Concurrency: 50 parallel deposits produce zero gaps or duplicates in refs
@@ -33,7 +35,8 @@ from genesis.application.ledger import (
     PostingResult,
     disburse_loan,
     post_deposit,
-    post_interest,
+    post_deposit_interest,
+    post_loan_interest_accrual,
     post_repayment,
     post_reversal,
     post_share_topup,
@@ -114,7 +117,8 @@ async def _seed_approved_application(
 
 
 def test_trigger_blocks_unbalanced_ledger_insert() -> None:
-    """DB trigger must reject an unbalanced set of ledger lines (gate 1.5)."""
+    """The deferred constraint trigger must reject an unbalanced set of
+    ledger lines at COMMIT (gate 1.5) — protecting raw SQL writers too."""
 
     async def run() -> None:
         tid, _ = await seed_user(unique_email())
@@ -125,7 +129,9 @@ def test_trigger_blocks_unbalanced_ledger_insert() -> None:
             result = await post_deposit(session, tid, mid, Decimal("1000"), Channel.MPESA)
             txn_id = result.txn_id
 
-        # Now try to insert an extra unbalanced line directly.
+        # Insert an extra unbalanced line directly.  The INSERT statement
+        # itself succeeds; the DEFERRABLE INITIALLY DEFERRED constraint
+        # trigger raises when the transaction COMMITs (on context exit).
         with pytest.raises(Exception, match=r"[Uu]nbalanced"):
             async with tenant_session(factory(), tid) as session:
                 await session.execute(
@@ -141,6 +147,7 @@ def test_trigger_blocks_unbalanced_ledger_insert() -> None:
                         "txn": str(txn_id),
                     },
                 )
+                # No error yet: balance is only validated at commit.
 
     asyncio.run(run())
 
@@ -333,13 +340,26 @@ def test_repayment_ref_prefix_and_repayments_row() -> None:
     asyncio.run(run())
 
 
-def test_interest_posting_ref_prefix() -> None:
+def test_loan_interest_accrual_ref_prefix() -> None:
     async def run() -> None:
         tid, _ = await seed_user(unique_email())
         mid = await _seed_member(tid)
 
         async with tenant_session(factory(), tid) as session:
-            result = await post_interest(session, tid, mid, Decimal("125.50"))
+            result = await post_loan_interest_accrual(session, tid, mid, Decimal("125.50"))
+
+        assert result.txn_ref.startswith("INT-")
+
+    asyncio.run(run())
+
+
+def test_deposit_interest_ref_prefix() -> None:
+    async def run() -> None:
+        tid, _ = await seed_user(unique_email())
+        mid = await _seed_member(tid)
+
+        async with tenant_session(factory(), tid) as session:
+            result = await post_deposit_interest(session, tid, mid, Decimal("42.00"))
 
         assert result.txn_ref.startswith("INT-")
 
@@ -364,6 +384,16 @@ def test_reversal_creates_mirror_entry_and_leaves_original_intact() -> None:
 
         assert reversal.txn_ref.startswith("MP-")
         assert reversal.txn_id != original.txn_id
+
+        # Reversal linkage: reversal_of_id points at the original.
+        async with tenant_session(factory(), tid) as session:
+            linked = (
+                await session.execute(
+                    text("SELECT reversal_of_id FROM transactions WHERE id = CAST(:id AS uuid)"),
+                    {"id": str(reversal.txn_id)},
+                )
+            ).scalar_one()
+        assert str(linked) == str(original.txn_id)
 
         # Original lines must still exist and be unchanged.
         async with tenant_session(factory(), tid) as session:
@@ -419,6 +449,46 @@ def test_reversal_of_nonexistent_transaction_raises() -> None:
         async with tenant_session(factory(), tid) as session:
             with pytest.raises(NotFoundError):
                 await post_reversal(session, tid, uuid.uuid4())
+
+    asyncio.run(run())
+
+
+def test_reversal_of_already_reversed_transaction_raises_conflict() -> None:
+    """One reversal per original: a second reversal must raise ConflictError."""
+
+    async def run() -> None:
+        tid, _ = await seed_user(unique_email())
+        mid = await _seed_member(tid)
+
+        async with tenant_session(factory(), tid) as session:
+            original = await post_deposit(session, tid, mid, Decimal("1500.00"), Channel.MPESA)
+
+        async with tenant_session(factory(), tid) as session:
+            await post_reversal(session, tid, original.txn_id)
+
+        with pytest.raises(ConflictError, match="already been reversed"):
+            async with tenant_session(factory(), tid) as session:
+                await post_reversal(session, tid, original.txn_id)
+
+    asyncio.run(run())
+
+
+def test_reversal_of_a_reversal_raises_conflict() -> None:
+    """A reversal itself must never be reversed — re-post the original instead."""
+
+    async def run() -> None:
+        tid, _ = await seed_user(unique_email())
+        mid = await _seed_member(tid)
+
+        async with tenant_session(factory(), tid) as session:
+            original = await post_deposit(session, tid, mid, Decimal("800.00"), Channel.MPESA)
+
+        async with tenant_session(factory(), tid) as session:
+            reversal = await post_reversal(session, tid, original.txn_id)
+
+        with pytest.raises(ConflictError, match="cannot be reversed"):
+            async with tenant_session(factory(), tid) as session:
+                await post_reversal(session, tid, reversal.txn_id)
 
     asyncio.run(run())
 

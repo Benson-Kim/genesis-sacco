@@ -32,9 +32,10 @@ from genesis.domain.ledger import (
     PostingSpec,
     Side,
     TxnType,
+    build_deposit_interest_posting,
     build_deposit_posting,
     build_disbursement_posting,
-    build_interest_posting,
+    build_loan_interest_accrual_posting,
     build_repayment_posting,
     build_reversal_posting,
     build_share_topup_posting,
@@ -67,9 +68,11 @@ def _advisory_key(tenant_id: uuid.UUID, prefix: str) -> int:
     with a stable hash of the prefix, then mask to the positive int4 range.
     """
     tid_int = int.from_bytes(tenant_id.bytes[:4], "big")
-    # Use a stable hash: sum of ord values, not Python's hash() which is
-    # randomised per process.
-    prefix_hash = sum(ord(c) for c in prefix) & 0x7FFFFFFF
+    # Use a stable, well-distributed hash: CRC-32 of the prefix bytes.
+    # (Python's hash() is randomised per process; a naive character sum
+    # collides for anagram-like prefixes such as "SH-" and "WD-", forcing
+    # needless serialisation across unrelated sequences.)
+    prefix_hash = zlib.crc32(prefix.encode()) & 0x7FFFFFFF
     return (tid_int ^ prefix_hash) & 0x7FFFFFFF
 
 
@@ -163,11 +166,13 @@ async def _post(
     actor_id: uuid.UUID | None = None,
     *,
     occurred_at: datetime | None = None,
+    reversal_of_id: uuid.UUID | None = None,
 ) -> PostingResult:
     """Write one transaction + its ledger lines atomically.
 
     Caller must already hold a tenant-scoped session (tenancy middleware or
-    tenant_session context manager).  The DB trigger enforces balance.
+    tenant_session context manager).  The DB constraint trigger enforces
+    balance at commit time.
     """
     spec.assert_balanced()
 
@@ -183,10 +188,12 @@ async def _post(
     await session.execute(
         text(
             "INSERT INTO transactions "
-            "(id, tenant_id, txn_ref, member_id, type, amount, channel, occurred_at) "
+            "(id, tenant_id, txn_ref, member_id, type, amount, channel, "
+            " occurred_at, reversal_of_id) "
             "VALUES "
             "(CAST(:id AS uuid), CAST(:tid AS uuid), :ref, "
-            " CAST(:mid AS uuid), :type, :amount, :channel, :ts)"
+            " CAST(:mid AS uuid), :type, :amount, :channel, :ts, "
+            " CAST(:rev_of AS uuid))"
         ),
         {
             "id": str(txn_id),
@@ -197,6 +204,7 @@ async def _post(
             "amount": str(spec.amount),
             "channel": spec.channel.value,
             "ts": ts,
+            "rev_of": str(reversal_of_id) if reversal_of_id else None,
         },
     )
 
@@ -345,7 +353,15 @@ async def post_repayment(
     actor_id: uuid.UUID | None = None,
     occurred_at: datetime | None = None,
 ) -> PostingResult:
-    """Post a loan repayment and record in the repayments table."""
+    """Post a loan repayment and record it in the repayments table.
+
+    This is a posting primitive only: it writes the balanced ledger legs
+    and the repayments row for the amount received.  Allocation of a
+    repayment across interest / principal / penalties, and the resulting
+    loans.balance update, are owned by P10's repayment allocation service,
+    which will call this primitive with the split legs.  Do not add
+    allocation logic here.
+    """
     spec = build_repayment_posting(amount, channel)
     result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
     # Record in repayments table.
@@ -379,7 +395,7 @@ async def post_repayment(
     return result
 
 
-async def post_interest(
+async def post_loan_interest_accrual(
     session: AsyncSession,
     tenant_id: uuid.UUID,
     member_id: uuid.UUID | None,
@@ -387,13 +403,44 @@ async def post_interest(
     actor_id: uuid.UUID | None = None,
     occurred_at: datetime | None = None,
 ) -> PostingResult:
-    """Post an interest accrual entry."""
-    spec = build_interest_posting(amount)
+    """Accrue interest earned on a loan (INT- ref).
+
+    DR interest.receivable / CR income.interest.
+    """
+    spec = build_loan_interest_accrual_posting(amount)
     result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
     await enqueue_event(
         session,
         tenant_id,
-        event_type="ledger.interest_posted",
+        event_type="ledger.loan_interest_accrued",
+        payload={
+            "txn_id": str(result.txn_id),
+            "txn_ref": result.txn_ref,
+            "member_id": str(member_id) if member_id else None,
+            "amount": str(amount),
+        },
+    )
+    return result
+
+
+async def post_deposit_interest(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    member_id: uuid.UUID | None,
+    amount: Decimal,
+    actor_id: uuid.UUID | None = None,
+    occurred_at: datetime | None = None,
+) -> PostingResult:
+    """Post interest paid on member deposits (INT- ref).
+
+    DR interest.expense / CR member.deposits.
+    """
+    spec = build_deposit_interest_posting(amount)
+    result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="ledger.deposit_interest_posted",
         payload={
             "txn_id": str(result.txn_id),
             "txn_ref": result.txn_ref,
@@ -413,14 +460,20 @@ async def post_reversal(
     """Post a reversing entry for a previous transaction (gate 1.5).
 
     Fetches the original lines, builds the mirror image, and posts it as a
-    new transaction.  The original is never modified.
+    new transaction linked via reversal_of_id.  The original is never
+    modified.  Guards:
+      * a transaction that already has a reversal cannot be reversed again
+        (ConflictError; the partial UNIQUE index is the final safety net)
+      * a reversal itself cannot be reversed — correct by re-posting the
+        original instead (ConflictError)
     """
-    # Load original transaction.
+    # Load and lock the original transaction (FOR UPDATE serialises
+    # concurrent reversal attempts; rows are append-only so no trigger fires).
     txn_row = (
         await session.execute(
             text(
-                "SELECT member_id, type, amount, channel "
-                "FROM transactions WHERE id = CAST(:id AS uuid)"
+                "SELECT member_id, type, amount, channel, reversal_of_id "
+                "FROM transactions WHERE id = CAST(:id AS uuid) FOR UPDATE"
             ),
             {"id": str(original_txn_id)},
         )
@@ -428,8 +481,22 @@ async def post_reversal(
     if txn_row is None:
         raise NotFoundError(f"transaction {original_txn_id} not found")
 
-    member_id_raw, txn_type_str, amount_str, channel_str = txn_row
+    member_id_raw, txn_type_str, amount_str, channel_str, orig_reversal_of = txn_row
     member_id = uuid.UUID(str(member_id_raw)) if member_id_raw else None
+
+    if orig_reversal_of is not None:
+        raise ConflictError(
+            f"transaction {original_txn_id} is itself a reversal and cannot be reversed"
+        )
+
+    existing_reversal = (
+        await session.execute(
+            text("SELECT id FROM transactions WHERE reversal_of_id = CAST(:id AS uuid) LIMIT 1"),
+            {"id": str(original_txn_id)},
+        )
+    ).first()
+    if existing_reversal is not None:
+        raise ConflictError(f"transaction {original_txn_id} has already been reversed")
 
     # Load original ledger lines.
     line_rows = (
@@ -561,7 +628,7 @@ async def disburse_loan(
     except InvalidTransitionError as exc:
         raise ConflictError(f"cannot disburse application in stage '{stage_str}'") from exc
 
-    await session.execute(
+    update_result = await session.execute(
         text(
             "UPDATE loan_applications "
             "SET stage = 'disbursed', version = version + 1, updated_at = :ts "
@@ -569,6 +636,13 @@ async def disburse_loan(
         ),
         {"ts": ts, "id": str(application_id), "ver": version},
     )
+    if update_result.rowcount != 1:
+        # Version moved between our SELECT ... FOR UPDATE and this UPDATE
+        # (should not happen while the row lock is held, but the optimistic
+        # check is the contract for editable aggregates — gate 1.4).
+        raise ConflictError(
+            f"stale version for loan application {application_id}; retry the disbursement"
+        )
 
     # Step 3: create loan record.
     loan_id = uuid.uuid4()

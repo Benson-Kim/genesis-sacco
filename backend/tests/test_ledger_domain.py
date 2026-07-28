@@ -12,9 +12,10 @@ from genesis.domain.ledger import (
     PostingSpec,
     Side,
     TxnType,
+    build_deposit_interest_posting,
     build_deposit_posting,
     build_disbursement_posting,
-    build_interest_posting,
+    build_loan_interest_accrual_posting,
     build_repayment_posting,
     build_reversal_posting,
     build_share_topup_posting,
@@ -113,9 +114,41 @@ def test_repayment_posting_is_balanced() -> None:
     build_repayment_posting(Decimal("5000.00"), Channel.MPESA).assert_balanced()
 
 
-def test_interest_posting_is_balanced() -> None:
-    spec = build_interest_posting(Decimal("250.50"))
-    spec.assert_balanced()
+def test_loan_interest_accrual_posting_is_balanced() -> None:
+    build_loan_interest_accrual_posting(Decimal("250.50")).assert_balanced()
+
+
+def test_deposit_interest_posting_is_balanced() -> None:
+    build_deposit_interest_posting(Decimal("250.50")).assert_balanced()
+
+
+# ---------------------------------------------------------------------------
+# Interest postings — correct accounts (no suspense leg)
+# ---------------------------------------------------------------------------
+
+
+def test_loan_interest_accrual_dr_receivable_cr_income() -> None:
+    spec = build_loan_interest_accrual_posting(Decimal("300"))
+    dr = [ln for ln in spec.lines if ln.side is Side.DEBIT]
+    cr = [ln for ln in spec.lines if ln.side is Side.CREDIT]
+    assert dr[0].account is Account.INTEREST_RECEIVABLE
+    assert cr[0].account is Account.INTEREST_INCOME
+
+
+def test_deposit_interest_dr_expense_cr_member_deposits() -> None:
+    spec = build_deposit_interest_posting(Decimal("300"))
+    dr = [ln for ln in spec.lines if ln.side is Side.DEBIT]
+    cr = [ln for ln in spec.lines if ln.side is Side.CREDIT]
+    assert dr[0].account is Account.INTEREST_EXPENSE
+    assert cr[0].account is Account.MEMBER_DEPOSITS
+
+
+def test_interest_postings_never_touch_suspense() -> None:
+    for spec in (
+        build_loan_interest_accrual_posting(Decimal("10")),
+        build_deposit_interest_posting(Decimal("10")),
+    ):
+        assert all(ln.account is not Account.SUSPENSE for ln in spec.lines)
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +214,7 @@ def test_reversal_of_reversal_equals_original() -> None:
     "txn_type,channel,expected_prefix",
     [
         (TxnType.DEPOSIT, Channel.MPESA, "MP-"),
-        (TxnType.DEPOSIT, Channel.BANK, "WD-"),
+        (TxnType.DEPOSIT, Channel.BANK, "BK-"),
         (TxnType.WITHDRAWAL, Channel.MPESA, "WD-"),
         (TxnType.WITHDRAWAL, Channel.BANK, "WD-"),
         (TxnType.SHARE_TOPUP, Channel.MPESA, "SH-"),
@@ -192,6 +225,18 @@ def test_reversal_of_reversal_equals_original() -> None:
 )
 def test_ref_prefix_mapping(txn_type: TxnType, channel: Channel, expected_prefix: str) -> None:
     assert ref_prefix(txn_type, channel) == expected_prefix
+
+
+@pytest.mark.parametrize("channel", [Channel.ACCRUAL, Channel.INTERNAL])
+def test_ref_prefix_rejects_non_cash_deposit_channels(channel: Channel) -> None:
+    with pytest.raises(ValueError, match="MPESA or BANK"):
+        ref_prefix(TxnType.DEPOSIT, channel)
+
+
+@pytest.mark.parametrize("channel", [Channel.ACCRUAL, Channel.INTERNAL])
+def test_build_deposit_posting_rejects_non_cash_channels(channel: Channel) -> None:
+    with pytest.raises(ValueError, match="MPESA or BANK"):
+        build_deposit_posting(Decimal("100"), channel)
 
 
 # ---------------------------------------------------------------------------
