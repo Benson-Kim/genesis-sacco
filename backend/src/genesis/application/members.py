@@ -31,7 +31,7 @@ from genesis.domain.members import (
     format_member_no,
     transition,
 )
-from genesis.errors import ConflictError, NotFoundError
+from genesis.errors import ConflictError, InvalidInputError, NotFoundError
 
 
 @dataclass(frozen=True)
@@ -421,6 +421,10 @@ async def member_statement(
     amount). The cursor is '<occurred_at ISO>|<txn id>' so every page is
     one index scan on (tenant_id, member_id, occurred_at) at any depth.
     """
+    # Existence check keeps semantics consistent with GET /members/{id}:
+    # unknown ids (including cross-tenant ids hidden by RLS) surface 404
+    # instead of a misleading empty page, without leaking existence.
+    await get_member(session, member_id)
     limit = max(1, min(limit, 100))
     params: dict[str, object] = {"mid": str(member_id), "limit": limit + 1}
     keyset = ""
@@ -430,7 +434,7 @@ async def member_statement(
             params["c_ts"] = datetime.fromisoformat(ts_raw)
             params["c_id"] = str(uuid.UUID(id_raw))
         except ValueError as exc:
-            raise NotFoundError("invalid statement cursor") from exc
+            raise InvalidInputError("invalid statement cursor") from exc
         keyset = "AND (occurred_at, id) < (:c_ts, CAST(:c_id AS uuid)) "
     # The keyset fragment is a static literal chosen in code; every value
     # is a bound parameter, so string assembly is injection-safe.
