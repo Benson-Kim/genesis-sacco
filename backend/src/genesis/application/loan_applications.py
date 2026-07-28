@@ -5,6 +5,8 @@ transition function (gate 1.4). The API-facing transition set excludes
 APPROVED (only committee quorum produces it) and DISBURSED (only the P7
 disbursement contract produces it). Cover% is a derived field computed
 from the member's deposit balance plus pledged/active guarantees.
+Rejection - by either path - releases the application's pledges so
+guarantor capacity never leaks (gate 1.5).
 """
 
 from __future__ import annotations
@@ -32,6 +34,10 @@ from genesis.errors import ConflictError, InvalidInputError, NotFoundError
 API_TRANSITION_TARGETS = frozenset(
     {ApplicationStage.APPRAISAL, ApplicationStage.COMMITTEE, ApplicationStage.REJECTED}
 )
+
+#: Schema ceiling for cover_pct (NUMERIC(6,2)). Beyond ~100x cover the
+#: number carries no additional decision content.
+_COVER_CAP = Decimal("9999.99")
 
 _COLS = (
     "id, member_id, product_id, amount, term_months, rate_pct, "
@@ -101,7 +107,50 @@ async def _guarantee_total(session: AsyncSession, application_id: uuid.UUID) -> 
 
 
 def _cover_pct(deposits: Decimal, guarantees: Decimal, amount: Decimal) -> Decimal:
-    return to_cents((deposits + guarantees) * Decimal("100") / amount)
+    cover = to_cents((deposits + guarantees) * Decimal("100") / amount)
+    return min(cover, _COVER_CAP)
+
+
+async def _release_application_pledges(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+    application_id: uuid.UUID,
+) -> None:
+    """Free guarantor capacity when an application dies (gate 1.5).
+
+    Lives here (not in guarantees.py) to keep the module import graph
+    acyclic: guarantees.py depends on this module for cover recompute.
+    """
+    result = cast(
+        CursorResult[Any],
+        await session.execute(
+            text(
+                "UPDATE guarantees SET status = 'released', "
+                "version = version + 1, updated_at = now() "
+                "WHERE application_id = CAST(:aid AS uuid) "
+                "AND status IN ('pledged', 'active')"
+            ),
+            {"aid": str(application_id)},
+        ),
+    )
+    released = int(result.rowcount or 0)
+    if released:
+        await record_audit(
+            session,
+            tenant_id,
+            actor_id,
+            action="guarantee.release",
+            entity="guarantees",
+            entity_id=str(application_id),
+            after={"application_id": str(application_id), "released": released},
+        )
+        await enqueue_event(
+            session,
+            tenant_id,
+            event_type="guarantee.released",
+            payload={"application_id": str(application_id), "released": released},
+        )
 
 
 async def create_application(
@@ -118,8 +167,9 @@ async def create_application(
     """Create an application obeying product rules (gate 1.6).
 
     The rate is derived from the product - clients never supply pricing.
-    Cover% is computed at creation from the member's deposit balance
-    (guarantees are pledged later and recompute it).
+    Only ACTIVE members may borrow. Cover% is computed at creation from
+    the member's deposit balance (guarantees are pledged later and
+    recompute it).
     """
     amount = to_cents(amount)
     if amount <= ZERO:
@@ -131,14 +181,16 @@ async def create_application(
         raise InvalidInputError(
             f"term {term_months} outside product limit of {product.max_term_months} months"
         )
-    member_exists = (
+    member_row = (
         await session.execute(
-            text("SELECT 1 FROM members WHERE id = CAST(:m AS uuid)"),
+            text("SELECT status FROM members WHERE id = CAST(:m AS uuid)"),
             {"m": str(member_id)},
         )
     ).first()
-    if member_exists is None:
+    if member_row is None:
         raise NotFoundError(f"member {member_id} not found")
+    if str(member_row[0]) != "active":
+        raise ConflictError("only active members can apply for loans")
     deposits = await _deposit_balance(session, member_id)
     cover = _cover_pct(deposits, ZERO, amount)
     application_id = uuid.uuid4()
@@ -322,6 +374,8 @@ async def transition_stage(
             "to": target.value,
         },
     )
+    if target is ApplicationStage.REJECTED:
+        await _release_application_pledges(session, tenant_id, actor_id, application_id)
     return await get_application(session, application_id)
 
 
@@ -433,6 +487,8 @@ async def cast_vote(
                 "rejections": rejections,
             },
         )
+        if target is ApplicationStage.REJECTED:
+            await _release_application_pledges(session, tenant_id, voter_id, application_id)
     return VoteTally(
         approvals=approvals,
         rejections=rejections,
