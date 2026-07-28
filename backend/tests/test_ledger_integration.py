@@ -127,7 +127,7 @@ def test_trigger_blocks_unbalanced_ledger_insert() -> None:
             txn_id = result.txn_id
 
         # Now try to insert an extra unbalanced line directly.
-        with pytest.raises(Exception, match="[Uu]nbalanced"):
+        with pytest.raises(Exception, match=r"[Uu]nbalanced"):
             async with tenant_session(factory(), tid) as session:
                 await session.execute(
                     text(

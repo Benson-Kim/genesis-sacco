@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 """Unit tests for genesis.domain.ledger — pure, no I/O (P7 gate 1.5)."""
 
 from decimal import Decimal
@@ -159,7 +160,7 @@ def test_reversal_flips_sides_and_is_balanced() -> None:
     reversal = build_reversal_posting(original)
     reversal.assert_balanced()
     # Every line's side should be flipped.
-    for orig_ln, rev_ln in zip(original.lines, reversal.lines):
+    for orig_ln, rev_ln in zip(original.lines, reversal.lines, strict=True):
         assert orig_ln.account == rev_ln.account
         assert orig_ln.amount == rev_ln.amount
         assert orig_ln.side != rev_ln.side

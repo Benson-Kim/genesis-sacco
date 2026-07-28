@@ -123,7 +123,7 @@ async def _audit(
     action: str,
     entity: str,
     entity_id: str,
-    after: dict[object, object],
+    after: dict[str, object],
 ) -> None:
     await session.execute(
         text(
@@ -548,7 +548,7 @@ async def disburse_loan(
         raise NotFoundError(f"loan application {application_id} not found")
 
     (
-        app_id,
+        _,
         member_id_raw,
         product_id_raw,
         amount_str,
@@ -613,7 +613,7 @@ async def disburse_loan(
 
     # Step 5: generate and persist the amortisation schedule.
     schedule = build_schedule(principal, rate_pct, term_months)
-    start_date = ts.date() if isinstance(ts, datetime) else date.today()
+    start_date = ts.date()
     for inst in schedule:
         due_date = _add_months(start_date, inst.number)
         await session.execute(

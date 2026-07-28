@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 """Double-entry ledger domain: pure types, account chart, and posting rules.
 
 Zero I/O — no imports from application, infrastructure, or api layers.
