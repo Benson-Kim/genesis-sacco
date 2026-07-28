@@ -43,6 +43,20 @@ class TokenPair:
 
 
 @dataclass(frozen=True)
+class AuthFailure:
+    """Failed authentication outcome whose side effects must survive.
+
+    Punitive state changes (OTP attempt counters, refresh-family
+    revocation) have to be committed even though the request fails, so
+    failures are returned as values and translated into a 401 by the API
+    layer only after the transaction has committed (gates 1.4, 1.6).
+    Raising inside the transaction would roll the punitive state back.
+    """
+
+    reason: str
+
+
+@dataclass(frozen=True)
 class AuthContext:
     user_id: uuid.UUID
     tenant_id: uuid.UUID
@@ -133,8 +147,13 @@ async def request_otp(session: AsyncSession, tenant_id: uuid.UUID, email: str) -
 
 async def verify_otp(
     session: AsyncSession, tenant_id: uuid.UUID, email: str, code: str
-) -> TokenPair:
-    """Verify the newest challenge under a row lock (gate 1.4)."""
+) -> TokenPair | AuthFailure:
+    """Verify the newest challenge under a row lock (gate 1.4).
+
+    Failures are returned (not raised) so the attempt-counter increment
+    commits with the surrounding transaction; the API layer raises the
+    401 after commit.
+    """
     row = (
         await session.execute(
             text(
@@ -148,7 +167,7 @@ async def verify_otp(
         )
     ).first()
     if row is None:
-        raise UnauthenticatedError("no otp challenge")
+        return AuthFailure("no otp challenge")
     challenge_id, stored_hash, attempts, expires_at, consumed_at, user_id, role_id = row
     presented = hash_code(code, salt=str(challenge_id), pepper=_otp_pepper())
     result = evaluate_challenge(
@@ -165,7 +184,9 @@ async def verify_otp(
             {"id": str(challenge_id)},
         )
     if result is not OtpResult.OK:
-        raise UnauthenticatedError(f"otp {result.value}")
+        # Returned, not raised: the increment above must commit so the
+        # lockout engages after OTP_MAX_ATTEMPTS failures (gate 1.6).
+        return AuthFailure(f"otp {result.value}")
     await session.execute(
         text("UPDATE otp_challenges SET consumed_at = :now WHERE id = CAST(:id AS uuid)"),
         {"now": _now(), "id": str(challenge_id)},
@@ -180,8 +201,13 @@ async def verify_otp(
 
 async def rotate_refresh_token(
     session: AsyncSession, tenant_id: uuid.UUID, refresh_token: str
-) -> TokenPair:
-    """Rotate under a row lock; reuse of a spent token revokes its family."""
+) -> TokenPair | AuthFailure:
+    """Rotate under a row lock; reuse of a spent token revokes its family.
+
+    Failures are returned (not raised) so the family-wide revocation
+    commits with the surrounding transaction; the API layer raises the
+    401 after commit.
+    """
     row = (
         await session.execute(
             text(
@@ -192,14 +218,16 @@ async def rotate_refresh_token(
         )
     ).first()
     if row is None:
-        raise UnauthenticatedError("unknown refresh token")
+        return AuthFailure("unknown refresh token")
     token_id, user_id, family_id, status, expires_at = row
     if status != "active":
+        # Returned, not raised: the revocation must commit so every
+        # descendant token in the family dies with the reuse (gate 1.6).
         await _revoke_family(session, family_id)
-        raise UnauthenticatedError("refresh token reuse detected")
+        return AuthFailure("refresh token reuse detected")
     if _now() >= expires_at:
         await _revoke_family(session, family_id)
-        raise UnauthenticatedError("refresh token expired")
+        return AuthFailure("refresh token expired")
     role_id = (
         await session.execute(
             text("SELECT role_id FROM users WHERE id = CAST(:uid AS uuid)"),
