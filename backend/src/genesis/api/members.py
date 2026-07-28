@@ -138,7 +138,12 @@ async def member_statement(
 ) -> StatementResponse:
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        page = await members_service.member_statement(session, member_id, cursor=cursor, limit=limit)
+        page = await members_service.member_statement(
+            session,
+            member_id,
+            cursor=cursor,
+            limit=limit,
+        )
     return StatementResponse(
         items=[
             StatementLineOut(
