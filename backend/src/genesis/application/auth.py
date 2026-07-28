@@ -43,6 +43,20 @@ class TokenPair:
 
 
 @dataclass(frozen=True)
+class AuthFailure:
+    """Failed authentication outcome whose side effects must survive.
+
+    Punitive state changes (OTP attempt counters, refresh-family
+    revocation) have to be committed even though the request fails, so
+    failures are returned as values and translated into a 401 by the API
+    layer only after the transaction has committed (gates 1.4, 1.6).
+    Raising inside the transaction would roll the punitive state back.
+    """
+
+    reason: str
+
+
+@dataclass(frozen=True)
 class AuthContext:
     user_id: uuid.UUID
     tenant_id: uuid.UUID
