@@ -25,6 +25,7 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_helpers import factory, seed_user, unique_email
 from genesis.application.ledger import (
@@ -620,14 +621,22 @@ def test_50_parallel_deposits_zero_gaps_or_duplicates() -> None:
     """50 concurrent deposits must produce 50 unique, sequential MP- refs."""
 
     async def run() -> None:
+        # Create a fresh engine for this test to avoid event-loop binding issues
+        # when running many concurrent coroutines (gate 1.4 concurrency test).
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        engine = create_async_engine(os.environ["DATABASE_URL"], pool_size=60, max_overflow=0)
+        sm: async_sessionmaker[AsyncSession] = async_sessionmaker(engine, expire_on_commit=False)
+
         tid, _ = await seed_user(unique_email())
         mid = await _seed_member(tid)
 
         async def one_deposit() -> PostingResult:
-            async with tenant_session(factory(), tid) as session:
+            async with tenant_session(sm, tid) as session:
                 return await post_deposit(session, tid, mid, Decimal("100.00"), Channel.MPESA)
 
         results = await asyncio.gather(*[one_deposit() for _ in range(50)])
+        await engine.dispose()
 
         refs = [r.txn_ref for r in results]
         # All references must be unique.
@@ -649,19 +658,25 @@ def test_50_parallel_mixed_postings_zero_duplicates() -> None:
     """50 concurrent postings of different types produce unique refs per prefix."""
 
     async def run() -> None:
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        engine = create_async_engine(os.environ["DATABASE_URL"], pool_size=60, max_overflow=0)
+        sm: async_sessionmaker[AsyncSession] = async_sessionmaker(engine, expire_on_commit=False)
+
         tid, _ = await seed_user(unique_email())
         mid = await _seed_member(tid)
 
         async def deposit() -> PostingResult:
-            async with tenant_session(factory(), tid) as session:
+            async with tenant_session(sm, tid) as session:
                 return await post_deposit(session, tid, mid, Decimal("100.00"), Channel.MPESA)
 
         async def share_topup() -> PostingResult:
-            async with tenant_session(factory(), tid) as session:
+            async with tenant_session(sm, tid) as session:
                 return await post_share_topup(session, tid, mid, Decimal("50.00"), Channel.MPESA)
 
         tasks = [deposit() for _ in range(25)] + [share_topup() for _ in range(25)]
         results = await asyncio.gather(*tasks)
+        await engine.dispose()
 
         all_refs = [r.txn_ref for r in results]
         assert len(set(all_refs)) == 50, f"Duplicate refs: {sorted(all_refs)}"

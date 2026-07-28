@@ -87,10 +87,11 @@ async def _next_ref(
     """
     lock_key = _advisory_key(tenant_id, prefix)
     # Acquire an exclusive transaction-level advisory lock.
-    # Cast to int4 explicitly so PostgreSQL selects the two-argument int4 overload.
+    # Both values are computed integers (not user input), so embedding them
+    # directly in the SQL literal is safe and avoids SQLAlchemy parameter-
+    # binding conflicts with the PostgreSQL ::int4 cast syntax.
     await session.execute(
-        text("SELECT pg_advisory_xact_lock(:ns::int4, :key::int4)"),
-        {"ns": _ADVISORY_NS, "key": lock_key},
+        text(f"SELECT pg_advisory_xact_lock({_ADVISORY_NS}, {lock_key})")
     )
     # Upsert the sequence row and return the new value.
     row = (
