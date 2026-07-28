@@ -115,7 +115,7 @@ class VoteResultOut(BaseModel):
 
 class GuaranteePledgeBody(BaseModel):
     guarantor_member_id: uuid.UUID
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(gt=0, le=1_000_000_000)
 
 
 class ConsentBody(BaseModel):
