@@ -628,13 +628,16 @@ async def disburse_loan(
     except InvalidTransitionError as exc:
         raise ConflictError(f"cannot disburse application in stage '{stage_str}'") from exc
 
-    update_result = await session.execute(
-        text(
-            "UPDATE loan_applications "
-            "SET stage = 'disbursed', version = version + 1, updated_at = :ts "
-            "WHERE id = CAST(:id AS uuid) AND version = :ver"
+    update_result = cast(
+        CursorResult[Any],
+        await session.execute(
+            text(
+                "UPDATE loan_applications "
+                "SET stage = 'disbursed', version = version + 1, updated_at = :ts "
+                "WHERE id = CAST(:id AS uuid) AND version = :ver"
+            ),
+            {"ts": ts, "id": str(application_id), "ver": version},
         ),
-        {"ts": ts, "id": str(application_id), "ver": version},
     )
     if update_result.rowcount != 1:
         # Version moved between our SELECT ... FOR UPDATE and this UPDATE
