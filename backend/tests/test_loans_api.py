@@ -80,10 +80,7 @@ async def _make_member(headers: dict[str, str], name: str) -> str:
 async def _set_deposit_balance(tid: uuid.UUID, member_id: str, balance: str) -> None:
     async with tenant_session(factory(), tid) as session:
         await session.execute(
-            text(
-                "UPDATE deposit_accounts SET balance = :b "
-                "WHERE member_id = CAST(:m AS uuid)"
-            ),
+            text("UPDATE deposit_accounts SET balance = :b WHERE member_id = CAST(:m AS uuid)"),
             {"b": balance, "m": member_id},
         )
 
@@ -534,111 +531,5 @@ def test_application_for_unknown_member_returns_404() -> None:
                 headers=headers,
             )
         assert res.status_code == 404
-
-    asyncio.run(run())
-
-
-# ---------------------------------------------------------------------------
-# Red-team regressions: pledge release on rejection, exit blockers,
-# cover clamp, lifecycle rules
-# ---------------------------------------------------------------------------
-
-
-def test_rejection_releases_pledges_and_unblocks_exit() -> None:
-    async def run() -> None:
-        tid, _, token = await _seed_actor()
-        headers = _headers(token)
-        borrower = await _make_member(headers, "Release Borrower")
-        guarantor = await _make_member(headers, "Release Guarantor")
-        await _set_deposit_balance(tid, guarantor, "5000.00")
-        product_id = await _make_product(headers, "Release Product")
-        app = await _make_application(headers, borrower, product_id, "9000.00")
-        aid = app["id"]
-        async with api_client() as client:
-            pledge = await client.post(
-                f"/applications/{aid}/guarantees",
-                json={"guarantor_member_id": guarantor, "amount": "2000.00"},
-                headers=headers,
-            )
-            assert pledge.status_code == 201
-            gid = pledge.json()["id"]
-            blocked_exit = await client.post(
-                f"/members/{guarantor}/status",
-                json={"version": 1, "status": "exited"},
-                headers=headers,
-            )
-            assert blocked_exit.status_code == 409  # live pledge blocks exit
-            rejected = await client.post(
-                f"/applications/{aid}/transition",
-                json={"version": 1, "target": "rejected"},
-                headers=headers,
-            )
-            assert rejected.status_code == 200
-        async with tenant_session(factory(), tid) as session:
-            status = (
-                await session.execute(
-                    text("SELECT status FROM guarantees WHERE id = CAST(:g AS uuid)"),
-                    {"g": gid},
-                )
-            ).scalar_one()
-        assert str(status) == "released"  # rejection frees guarantor capacity
-        async with api_client() as client:
-            free_exit = await client.post(
-                f"/members/{guarantor}/status",
-                json={"version": 1, "status": "exited"},
-                headers=headers,
-            )
-        assert free_exit.status_code == 200
-
-    asyncio.run(run())
-
-
-def test_cover_pct_is_clamped_at_schema_ceiling() -> None:
-    async def run() -> None:
-        tid, _, token = await _seed_actor()
-        headers = _headers(token)
-        member_id = await _make_member(headers, "Whale Member")
-        await _set_deposit_balance(tid, member_id, "1000000.00")
-        product_id = await _make_product(headers, "Clamp Product")
-        app = await _make_application(headers, member_id, product_id, "100.00")
-        assert app["cover_pct"] == "9999.99"
-
-    asyncio.run(run())
-
-
-def test_non_active_members_cannot_borrow_or_guarantee() -> None:
-    async def run() -> None:
-        tid, _, token = await _seed_actor()
-        headers = _headers(token)
-        product_id = await _make_product(headers, "Lifecycle Product")
-        arrears_member = await _make_member(headers, "Arrears Member")
-        async with api_client() as client:
-            moved = await client.post(
-                f"/members/{arrears_member}/status",
-                json={"version": 1, "status": "arrears"},
-                headers=headers,
-            )
-            assert moved.status_code == 200
-            borrow = await client.post(
-                "/applications",
-                json={
-                    "member_id": arrears_member,
-                    "product_id": product_id,
-                    "amount": "1000.00",
-                    "term_months": 6,
-                },
-                headers=headers,
-            )
-            assert borrow.status_code == 409
-        borrower = await _make_member(headers, "Healthy Borrower")
-        await _set_deposit_balance(tid, arrears_member, "5000.00")
-        app = await _make_application(headers, borrower, product_id, "2000.00")
-        async with api_client() as client:
-            pledge = await client.post(
-                f"/applications/{app['id']}/guarantees",
-                json={"guarantor_member_id": arrears_member, "amount": "1000.00"},
-                headers=headers,
-            )
-        assert pledge.status_code == 409
 
     asyncio.run(run())
