@@ -403,7 +403,7 @@ async def cast_vote(
             ),
             {"st": target.value, "id": str(application_id)},
         )
-        stage = target
+        stage: ApplicationStage = current
         await record_audit(
             session,
             tenant_id,
