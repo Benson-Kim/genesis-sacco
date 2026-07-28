@@ -1,0 +1,456 @@
+"""Loan application services: creation, stage machine, committee voting (P9).
+
+Stage changes run under SELECT ... FOR UPDATE through the pure P6
+transition function (gate 1.4). The API-facing transition set excludes
+APPROVED (only committee quorum produces it) and DISBURSED (only the P7
+disbursement contract produces it). Cover% is a derived field computed
+from the member's deposit balance plus pledged/active guarantees.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
+from typing import Any, cast
+
+from sqlalchemy import CursorResult, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from genesis.application.audit import record_audit
+from genesis.application.loan_products import get_product
+from genesis.application.outbox import enqueue_event
+from genesis.domain.committee import Decision, Vote, decide
+from genesis.domain.lending import ApplicationStage, InvalidTransitionError, transition
+from genesis.domain.money import ZERO, to_cents
+from genesis.errors import ConflictError, InvalidInputError, NotFoundError
+
+#: Stage moves a caller may request directly. APPROVED comes only from
+#: committee quorum; DISBURSED comes only from P7's disburse_loan.
+API_TRANSITION_TARGETS = frozenset(
+    {ApplicationStage.APPRAISAL, ApplicationStage.COMMITTEE, ApplicationStage.REJECTED}
+)
+
+_COLS = "id, member_id, product_id, amount, term_months, rate_pct, purpose, stage, cover_pct, version"
+
+
+@dataclass(frozen=True)
+class ApplicationRecord:
+    id: uuid.UUID
+    member_id: uuid.UUID
+    product_id: uuid.UUID
+    amount: Decimal
+    term_months: int
+    rate_pct: Decimal
+    purpose: str | None
+    stage: ApplicationStage
+    cover_pct: Decimal
+    version: int
+
+
+@dataclass(frozen=True)
+class VoteTally:
+    approvals: int
+    rejections: int
+    decision: Decision | None
+    stage: ApplicationStage
+
+
+def _row_to_application(row: Any) -> ApplicationRecord:
+    return ApplicationRecord(
+        id=uuid.UUID(str(row[0])),
+        member_id=uuid.UUID(str(row[1])),
+        product_id=uuid.UUID(str(row[2])),
+        amount=Decimal(str(row[3])),
+        term_months=int(row[4]),
+        rate_pct=Decimal(str(row[5])),
+        purpose=str(row[6]) if row[6] is not None else None,
+        stage=ApplicationStage(str(row[7])),
+        cover_pct=Decimal(str(row[8])),
+        version=int(row[9]),
+    )
+
+
+async def _deposit_balance(session: AsyncSession, member_id: uuid.UUID) -> Decimal:
+    row = (
+        await session.execute(
+            text("SELECT balance FROM deposit_accounts WHERE member_id = CAST(:m AS uuid)"),
+            {"m": str(member_id)},
+        )
+    ).first()
+    return Decimal(str(row[0])) if row is not None else ZERO
+
+
+async def _guarantee_total(session: AsyncSession, application_id: uuid.UUID) -> Decimal:
+    value = (
+        await session.execute(
+            text(
+                "SELECT COALESCE(SUM(amount), 0) FROM guarantees "
+                "WHERE application_id = CAST(:a AS uuid) "
+                "AND status IN ('pledged', 'active')"
+            ),
+            {"a": str(application_id)},
+        )
+    ).scalar_one()
+    return Decimal(str(value))
+
+
+def _cover_pct(deposits: Decimal, guarantees: Decimal, amount: Decimal) -> Decimal:
+    return to_cents((deposits + guarantees) * Decimal("100") / amount)
+
+
+async def create_application(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+    *,
+    member_id: uuid.UUID,
+    product_id: uuid.UUID,
+    amount: Decimal,
+    term_months: int,
+    purpose: str | None = None,
+) -> ApplicationRecord:
+    """Create an application obeying product rules (gate 1.6).
+
+    The rate is derived from the product - clients never supply pricing.
+    Cover% is computed at creation from the member's deposit balance
+    (guarantees are pledged later and recompute it).
+    """
+    amount = to_cents(amount)
+    if amount <= ZERO:
+        raise InvalidInputError("amount must be positive")
+    product = await get_product(session, product_id)
+    if not product.active:
+        raise InvalidInputError(f"loan product {product_id} is inactive")
+    if term_months <= 0 or term_months > product.max_term_months:
+        raise InvalidInputError(
+            f"term {term_months} outside product limit of {product.max_term_months} months"
+        )
+    deposits = await _deposit_balance(session, member_id)
+    cover = _cover_pct(deposits, ZERO, amount)
+    application_id = uuid.uuid4()
+    await session.execute(
+        text(
+            "INSERT INTO loan_applications "
+            "(id, tenant_id, member_id, product_id, amount, term_months, "
+            " rate_pct, purpose, cover_pct) "
+            "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:mid AS uuid), "
+            "CAST(:pid AS uuid), :amount, :term, :rate, :purpose, :cover)"
+        ),
+        {
+            "id": str(application_id),
+            "tid": str(tenant_id),
+            "mid": str(member_id),
+            "pid": str(product_id),
+            "amount": str(amount),
+            "term": term_months,
+            "rate": str(product.rate_pct),
+            "purpose": purpose,
+            "cover": str(cover),
+        },
+    )
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="application.create",
+        entity="loan_applications",
+        entity_id=str(application_id),
+        after={
+            "member_id": str(member_id),
+            "product_id": str(product_id),
+            "amount": str(amount),
+            "term_months": term_months,
+            "rate_pct": str(product.rate_pct),
+            "cover_pct": str(cover),
+            "stage": ApplicationStage.SUBMITTED.value,
+        },
+    )
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="loan.application_submitted",
+        payload={
+            "application_id": str(application_id),
+            "member_id": str(member_id),
+            "amount": str(amount),
+        },
+    )
+    return ApplicationRecord(
+        id=application_id,
+        member_id=member_id,
+        product_id=product_id,
+        amount=amount,
+        term_months=term_months,
+        rate_pct=product.rate_pct,
+        purpose=purpose,
+        stage=ApplicationStage.SUBMITTED,
+        cover_pct=cover,
+        version=1,
+    )
+
+
+async def get_application(session: AsyncSession, application_id: uuid.UUID) -> ApplicationRecord:
+    row = (
+        await session.execute(
+            text(f"SELECT {_COLS} FROM loan_applications WHERE id = CAST(:id AS uuid)"),  # noqa: S608
+            {"id": str(application_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"loan application {application_id} not found")
+    return _row_to_application(row)
+
+
+async def list_applications(
+    session: AsyncSession,
+    *,
+    stage: ApplicationStage | None = None,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> tuple[list[ApplicationRecord], str | None]:
+    """Keyset-paginated listing, newest first (gate 1.3)."""
+    limit = max(1, min(limit, 100))
+    clauses: list[str] = []
+    params: dict[str, object] = {"limit": limit + 1}
+    if stage is not None:
+        clauses.append("stage = :stage")
+        params["stage"] = stage.value
+    if cursor:
+        ts_raw, _, id_raw = cursor.partition("|")
+        try:
+            params["c_ts"] = datetime.fromisoformat(ts_raw)
+            params["c_id"] = str(uuid.UUID(id_raw))
+        except ValueError as exc:
+            raise InvalidInputError("invalid application cursor") from exc
+        clauses.append("(created_at, id) < (:c_ts, CAST(:c_id AS uuid))")
+    where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+    # Static fragments chosen in code; all values are bound parameters.
+    rows = (
+        await session.execute(
+            text(
+                f"SELECT created_at, {_COLS} FROM loan_applications "  # noqa: S608
+                f"{where}"
+                "ORDER BY created_at DESC, id DESC LIMIT :limit"
+            ),
+            params,
+        )
+    ).all()
+    page_rows = rows[:limit]
+    items = [_row_to_application(r[1:]) for r in page_rows]
+    next_cursor = None
+    if len(rows) > limit and page_rows:
+        last = page_rows[-1]
+        next_cursor = f"{last[0].isoformat()}|{last[1]}"
+    return items, next_cursor
+
+
+async def transition_stage(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+    application_id: uuid.UUID,
+    *,
+    version: int,
+    target: ApplicationStage,
+) -> ApplicationRecord:
+    """Move an application through the P6 machine under a row lock."""
+    if target not in API_TRANSITION_TARGETS:
+        raise ConflictError(
+            f"stage '{target.value}' is decided by committee voting or disbursement, "
+            "not by direct transition"
+        )
+    row = (
+        await session.execute(
+            text(
+                "SELECT stage, version FROM loan_applications "
+                "WHERE id = CAST(:id AS uuid) FOR UPDATE"
+            ),
+            {"id": str(application_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"loan application {application_id} not found")
+    current = ApplicationStage(str(row[0]))
+    try:
+        transition(current, target)
+    except InvalidTransitionError as exc:
+        raise ConflictError(str(exc)) from exc
+    result = cast(
+        CursorResult[Any],
+        await session.execute(
+            text(
+                "UPDATE loan_applications SET stage = :st, "
+                "version = version + 1, updated_at = now() "
+                "WHERE id = CAST(:id AS uuid) AND version = :ver"
+            ),
+            {"st": target.value, "id": str(application_id), "ver": version},
+        ),
+    )
+    if result.rowcount != 1:
+        raise ConflictError(f"stale version {version} for application {application_id}")
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="application.stage",
+        entity="loan_applications",
+        entity_id=str(application_id),
+        before={"stage": current.value},
+        after={"stage": target.value},
+    )
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="loan.application_stage_changed",
+        payload={
+            "application_id": str(application_id),
+            "from": current.value,
+            "to": target.value,
+        },
+    )
+    return await get_application(session, application_id)
+
+
+async def cast_vote(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    voter_id: uuid.UUID,
+    application_id: uuid.UUID,
+    vote: Vote,
+) -> VoteTally:
+    """Record a committee vote; quorum decides the application (gate 1.4).
+
+    The application row lock serialises voters, so tallies and the
+    resulting decision are race-free. The UNIQUE constraint makes
+    double-voting impossible even outside this code path.
+    """
+    row = (
+        await session.execute(
+            text(
+                "SELECT stage FROM loan_applications "
+                "WHERE id = CAST(:id AS uuid) FOR UPDATE"
+            ),
+            {"id": str(application_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"loan application {application_id} not found")
+    current = ApplicationStage(str(row[0]))
+    if current is not ApplicationStage.COMMITTEE:
+        raise ConflictError(f"voting is only open in committee stage, not '{current.value}'")
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO committee_votes "
+                "(tenant_id, application_id, voter_id, vote) "
+                "VALUES (CAST(:tid AS uuid), CAST(:aid AS uuid), "
+                "CAST(:vid AS uuid), :vote)"
+            ),
+            {
+                "tid": str(tenant_id),
+                "aid": str(application_id),
+                "vid": str(voter_id),
+                "vote": vote.value,
+            },
+        )
+    except IntegrityError as exc:
+        raise ConflictError("committee member has already voted on this application") from exc
+    tally_rows = (
+        await session.execute(
+            text(
+                "SELECT vote, count(*) FROM committee_votes "
+                "WHERE application_id = CAST(:aid AS uuid) GROUP BY vote"
+            ),
+            {"aid": str(application_id)},
+        )
+    ).all()
+    counts = {str(r[0]): int(r[1]) for r in tally_rows}
+    approvals = counts.get(Vote.APPROVE.value, 0)
+    rejections = counts.get(Vote.REJECT.value, 0)
+    await record_audit(
+        session,
+        tenant_id,
+        voter_id,
+        action="application.vote",
+        entity="loan_applications",
+        entity_id=str(application_id),
+        after={"vote": vote.value, "approvals": approvals, "rejections": rejections},
+    )
+    decision = decide(approvals, rejections)
+    stage = current
+    if decision is not None:
+        target = (
+            ApplicationStage.APPROVED
+            if decision is Decision.APPROVED
+            else ApplicationStage.REJECTED
+        )
+        transition(current, target)
+        await session.execute(
+            text(
+                "UPDATE loan_applications SET stage = :st, "
+                "version = version + 1, updated_at = now() "
+                "WHERE id = CAST(:id AS uuid)"
+            ),
+            {"st": target.value, "id": str(application_id)},
+        )
+        stage = target
+        await record_audit(
+            session,
+            tenant_id,
+            voter_id,
+            action="application.decided",
+            entity="loan_applications",
+            entity_id=str(application_id),
+            before={"stage": current.value},
+            after={
+                "stage": target.value,
+                "approvals": approvals,
+                "rejections": rejections,
+            },
+        )
+        await enqueue_event(
+            session,
+            tenant_id,
+            event_type="loan.application_decided",
+            payload={
+                "application_id": str(application_id),
+                "decision": decision.value,
+                "approvals": approvals,
+                "rejections": rejections,
+            },
+        )
+    return VoteTally(
+        approvals=approvals,
+        rejections=rejections,
+        decision=decision,
+        stage=stage,
+    )
+
+
+async def recompute_cover(session: AsyncSession, application_id: uuid.UUID) -> Decimal:
+    """Refresh the derived cover%% after guarantee changes.
+
+    cover_pct is derived data, so this deliberately does not bump the
+    optimistic version - it must never invalidate a concurrent edit.
+    """
+    row = (
+        await session.execute(
+            text("SELECT member_id, amount FROM loan_applications WHERE id = CAST(:id AS uuid)"),
+            {"id": str(application_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"loan application {application_id} not found")
+    member_id = uuid.UUID(str(row[0]))
+    amount = Decimal(str(row[1]))
+    deposits = await _deposit_balance(session, member_id)
+    guarantees = await _guarantee_total(session, application_id)
+    cover = _cover_pct(deposits, guarantees, amount)
+    await session.execute(
+        text("UPDATE loan_applications SET cover_pct = :c WHERE id = CAST(:id AS uuid)"),
+        {"c": str(cover), "id": str(application_id)},
+    )
+    return cover
