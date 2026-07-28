@@ -395,8 +395,7 @@ async def change_member_status(
         ).first()
         if blockers is not None and (int(blockers[0]) or int(blockers[1]) or int(blockers[2])):
             raise ConflictError(
-                "member cannot exit with live guarantees, active loans, "
-                "or open loan applications"
+                "member cannot exit with live guarantees, active loans, or open loan applications"
             )
     result = cast(
         CursorResult[Any],
