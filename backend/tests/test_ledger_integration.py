@@ -327,7 +327,10 @@ def test_repayment_ref_prefix_and_repayments_row() -> None:
         async with tenant_session(factory(), tid) as session:
             count = (
                 await session.execute(
-                    text("SELECT count(*) FROM repayments WHERE transaction_id = CAST(:id AS uuid)"),
+                    text(
+                        "SELECT count(*) FROM repayments "
+                        "WHERE transaction_id = CAST(:id AS uuid)"
+                    ),
                     {"id": str(result.txn_id)},
                 )
             ).scalar_one()
@@ -449,7 +452,10 @@ def test_disbursement_is_atomic_and_creates_schedule() -> None:
         async with tenant_session(factory(), tid) as session:
             loan_row = (
                 await session.execute(
-                    text("SELECT principal, balance, status FROM loans WHERE id = CAST(:id AS uuid)"),
+                    text(
+                        "SELECT principal, balance, status FROM loans "
+                        "WHERE id = CAST(:id AS uuid)"
+                    ),
                     {"id": str(result.loan_id)},
                 )
             ).first()
