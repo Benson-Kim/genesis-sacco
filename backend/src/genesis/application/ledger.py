@@ -527,7 +527,14 @@ async def post_reversal(
     )
     reversal_spec = build_reversal_posting(original_spec)
 
-    result = await _post(session, tenant_id, member_id, reversal_spec, actor_id)
+    result = await _post(
+        session,
+        tenant_id,
+        member_id,
+        reversal_spec,
+        actor_id,
+        reversal_of_id=original_txn_id,
+    )
 
     await _audit(
         session,
