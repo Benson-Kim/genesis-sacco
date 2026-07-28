@@ -24,8 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from genesis.application.ledger import _ADVISORY_NS, _advisory_key
 from genesis.application.outbox import enqueue_event
 from genesis.domain.members import (
-    InvalidStatusTransitionError,
     MEMBER_NO_PREFIX,
+    InvalidStatusTransitionError,
     MemberStatus,
     MemberType,
     format_member_no,
@@ -259,10 +259,12 @@ async def list_members(
         clauses.append("type = :mtype")
         params["mtype"] = member_type.value
     where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+    # The WHERE fragments above are static literals chosen in code; every
+    # value is a bound parameter, so string assembly is injection-safe.
     rows = (
         await session.execute(
             text(
-                "SELECT id, member_no, type, name, phone, email, status, version "
+                "SELECT id, member_no, type, name, phone, email, status, version "  # noqa: S608
                 f"FROM members {where}"
                 "ORDER BY member_no LIMIT :limit"
             ),
@@ -420,10 +422,12 @@ async def member_statement(
         except ValueError as exc:
             raise NotFoundError("invalid statement cursor") from exc
         keyset = "AND (occurred_at, id) < (:c_ts, CAST(:c_id AS uuid)) "
+    # The keyset fragment is a static literal chosen in code; every value
+    # is a bound parameter, so string assembly is injection-safe.
     rows = (
         await session.execute(
             text(
-                "SELECT occurred_at, id, txn_ref, type, channel, amount "
+                "SELECT occurred_at, id, txn_ref, type, channel, amount "  # noqa: S608
                 "FROM transactions "
                 "WHERE member_id = CAST(:mid AS uuid) "
                 f"{keyset}"
