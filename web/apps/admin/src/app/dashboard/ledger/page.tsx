@@ -1,33 +1,3 @@
-'use client';
+import { LayoutShell, DataTable, ledger, money, pill } from '../genesis-prototype';
 
-import { PageHeader, CursorTable, type CursorTableColumn } from '@genesis/ui';
-import { RouteGuard } from '@/lib/permissions';
-import { useLedger, type LedgerRow } from '@/hooks/use-ledger';
-
-const columns: Array<CursorTableColumn<LedgerRow>> = [
-  { key: 'postedAt', header: 'Date', render: (r) => r.postedAt },
-  { key: 'txnRef', header: 'Ref.', render: (r) => r.txnRef },
-  { key: 'memberName', header: 'Member', render: (r) => r.memberName },
-  { key: 'type', header: 'Type', render: (r) => r.type },
-  { key: 'direction', header: 'DR/CR', render: (r) => r.direction },
-  { key: 'amount', header: 'Amount', render: (r) => r.amount, align: 'right' },
-  { key: 'channel', header: 'Channel', render: (r) => r.channel },
-];
-
-function LedgerContent() {
-  const pagination = useLedger();
-  return (
-    <div>
-      <PageHeader title="Ledger" />
-      <CursorTable columns={columns} rowKey={(r) => r.id} pagination={pagination} caption="Ledger" />
-    </div>
-  );
-}
-
-export default function LedgerPage() {
-  return (
-    <RouteGuard module="transactions">
-      <LedgerContent />
-    </RouteGuard>
-  );
-}
+export default function Page(){return <LayoutShell active="/dashboard/ledger"><div className="gp-chipbar"><button className="gp-chip on">All</button><button className="gp-chip">Active</button><button className="gp-chip">Needs action</button></div><DataTable heads={['Date','Ref','Member','Type','DR','CR','Channel']}>{ledger.map(r=><tr key={r[1]}><td>{r[0]}</td><td><b>{r[1]}</b></td><td>{r[2]}</td><td>{r[3]}</td><td className="r">{r[4]?money(r[4]):'—'}</td><td className="r">{r[5]?money(r[5]):'—'}</td><td>{pill(r[6])}</td></tr>)}</DataTable></LayoutShell>}

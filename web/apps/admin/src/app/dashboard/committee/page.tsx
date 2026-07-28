@@ -1,0 +1,3 @@
+import { LayoutShell, DataTable, apps, money, pill } from '../genesis-prototype';
+
+export default function Page(){return <LayoutShell active="/dashboard/committee"><div className="gp-chipbar"><button className="gp-chip on">All</button><button className="gp-chip">Active</button><button className="gp-chip">Needs action</button></div><DataTable heads={['Applicant','Product','Amount','Cover','Decision']}>{apps.filter(a=>a[8]==='Committee').map(a=><tr key={a[1]}><td><b>{a[0]}</b><br/><span>{a[1]}</span></td><td>{a[3]}</td><td className="r">{money(a[4])}</td><td>{pill(String(a[7]) + '%','good')}</td><td><button className="gp-btn g">Approve</button> <button className="gp-btn">Defer</button></td></tr>)}</DataTable></LayoutShell>}
