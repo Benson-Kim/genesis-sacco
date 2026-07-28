@@ -201,8 +201,13 @@ async def verify_otp(
 
 async def rotate_refresh_token(
     session: AsyncSession, tenant_id: uuid.UUID, refresh_token: str
-) -> TokenPair:
-    """Rotate under a row lock; reuse of a spent token revokes its family."""
+) -> TokenPair | AuthFailure:
+    """Rotate under a row lock; reuse of a spent token revokes its family.
+
+    Failures are returned (not raised) so the family-wide revocation
+    commits with the surrounding transaction; the API layer raises the
+    401 after commit.
+    """
     row = (
         await session.execute(
             text(
@@ -213,14 +218,16 @@ async def rotate_refresh_token(
         )
     ).first()
     if row is None:
-        raise UnauthenticatedError("unknown refresh token")
+        return AuthFailure("unknown refresh token")
     token_id, user_id, family_id, status, expires_at = row
     if status != "active":
+        # Returned, not raised: the revocation must commit so every
+        # descendant token in the family dies with the reuse (gate 1.6).
         await _revoke_family(session, family_id)
-        raise UnauthenticatedError("refresh token reuse detected")
+        return AuthFailure("refresh token reuse detected")
     if _now() >= expires_at:
         await _revoke_family(session, family_id)
-        raise UnauthenticatedError("refresh token expired")
+        return AuthFailure("refresh token expired")
     role_id = (
         await session.execute(
             text("SELECT role_id FROM users WHERE id = CAST(:uid AS uuid)"),
