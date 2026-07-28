@@ -514,3 +514,88 @@ def test_statement_with_malformed_cursor_returns_400() -> None:
         assert res.json()["category"] == "validation_error"
 
     asyncio.run(run())
+
+
+def test_list_members_with_status_and_type_filters() -> None:
+    """Covers the status and member_type filter clauses in list_members."""
+
+    async def run() -> None:
+        _, token = await _seed_actor()
+        headers = _headers(token)
+        async with api_client() as client:
+            await client.post(
+                "/members",
+                json={"type": "person", "name": "Filter Person"},
+                headers=headers,
+            )
+            await client.post(
+                "/members",
+                json={"type": "company", "name": "Filter Company"},
+                headers=headers,
+            )
+            by_type = await client.get("/members", params={"type": "person"}, headers=headers)
+            assert by_type.status_code == 200
+            assert all(m["type"] == "person" for m in by_type.json()["items"])
+            by_status = await client.get("/members", params={"status": "active"}, headers=headers)
+            assert by_status.status_code == 200
+            assert all(m["status"] == "active" for m in by_status.json()["items"])
+            combined = await client.get(
+                "/members",
+                params={"type": "company", "status": "active"},
+                headers=headers,
+            )
+            assert combined.status_code == 200
+            assert all(
+                m["type"] == "company" and m["status"] == "active" for m in combined.json()["items"]
+            )
+
+    asyncio.run(run())
+
+
+def test_exit_blocked_by_open_loan_application() -> None:
+    """Covers the blocker check in change_member_status for open applications."""
+
+    async def run() -> None:
+        tid, token = await _seed_actor()
+        headers = _headers(token)
+        async with api_client() as client:
+            created = await client.post(
+                "/members",
+                json={"type": "person", "name": "Blocked Exit"},
+                headers=headers,
+            )
+            mid = created.json()["id"]
+        async with tenant_session(factory(), tid) as session:
+            product_id = uuid.uuid4()
+            await session.execute(
+                text(
+                    "INSERT INTO loan_products "
+                    "(id, tenant_id, name, rate_pct, deposit_multiplier, max_term_months) "
+                    "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :name, '12.00', '3.00', 36)"
+                ),
+                {"id": str(product_id), "tid": str(tid), "name": f"Block-{uuid.uuid4().hex[:8]}"},
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO loan_applications "
+                    "(id, tenant_id, member_id, product_id, amount, term_months, "
+                    " rate_pct, stage, cover_pct) "
+                    "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:mid AS uuid), "
+                    "CAST(:pid AS uuid), 5000, 12, '12.00', 'submitted', '0.00')"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "tid": str(tid),
+                    "mid": mid,
+                    "pid": str(product_id),
+                },
+            )
+        async with api_client() as client:
+            res = await client.post(
+                f"/members/{mid}/status",
+                json={"version": 1, "status": "exited"},
+                headers=headers,
+            )
+        assert res.status_code == 409
+
+    asyncio.run(run())

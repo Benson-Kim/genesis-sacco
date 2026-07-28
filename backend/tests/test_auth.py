@@ -150,3 +150,34 @@ def test_auth_rate_limit_returns_429() -> None:
         assert 429 in statuses
 
     asyncio.run(run())
+
+
+def test_logout_revokes_family_and_returns_204() -> None:
+    """Covers revoke_refresh_token and the /auth/logout endpoint."""
+
+    async def run() -> None:
+        email = unique_email()
+        tid, _ = await seed_user(email)
+        headers = {"x-tenant-id": str(tid)}
+        async with api_client() as client:
+            await client.post("/auth/otp/request", json={"email": email}, headers=headers)
+            code = await latest_otp_code(tid)
+            res = await client.post(
+                "/auth/otp/verify", json={"email": email, "code": code}, headers=headers
+            )
+            assert res.status_code == 200
+            tokens = res.json()
+            logout_res = await client.post(
+                "/auth/logout",
+                json={"refresh_token": tokens["refresh_token"]},
+                headers=headers,
+            )
+            assert logout_res.status_code == 204
+            refresh_after = await client.post(
+                "/auth/refresh",
+                json={"refresh_token": tokens["refresh_token"]},
+                headers=headers,
+            )
+            assert refresh_after.status_code == 401
+
+    asyncio.run(run())

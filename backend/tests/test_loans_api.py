@@ -533,3 +533,195 @@ def test_application_for_unknown_member_returns_404() -> None:
         assert res.status_code == 404
 
     asyncio.run(run())
+
+
+def test_application_listing_pagination_and_stage_filter() -> None:
+    """Covers list_applications: stage filter, cursor, next_cursor."""
+
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        headers = _headers(token)
+        member_id = await _make_member(headers, "List Borrower")
+        await _set_deposit_balance(tid, member_id, "100000.00")
+        product_id = await _make_product(headers, "List Product")
+        for _ in range(3):
+            await _make_application(headers, member_id, product_id, "5000.00")
+        async with api_client() as client:
+            all_apps = await client.get("/applications", headers=headers)
+            assert all_apps.status_code == 200
+            assert len(all_apps.json()["items"]) == 3
+            page1 = await client.get("/applications", params={"limit": 2}, headers=headers)
+            assert page1.status_code == 200
+            body1 = page1.json()
+            assert len(body1["items"]) == 2
+            assert body1["next_cursor"] is not None
+            page2 = await client.get(
+                "/applications",
+                params={"limit": 2, "cursor": body1["next_cursor"]},
+                headers=headers,
+            )
+            assert page2.status_code == 200
+            body2 = page2.json()
+            assert len(body2["items"]) == 1
+            assert body2["next_cursor"] is None
+            by_stage = await client.get(
+                "/applications",
+                params={"stage": "submitted"},
+                headers=headers,
+            )
+            assert by_stage.status_code == 200
+            assert all(a["stage"] == "submitted" for a in by_stage.json()["items"])
+            empty = await client.get(
+                "/applications",
+                params={"stage": "approved"},
+                headers=headers,
+            )
+            assert empty.status_code == 200
+            assert len(empty.json()["items"]) == 0
+
+    asyncio.run(run())
+
+
+def test_application_listing_bad_cursor_returns_400() -> None:
+    """Covers the InvalidInputError path in list_applications cursor parsing."""
+
+    async def run() -> None:
+        _, _, token = await _seed_actor()
+        headers = _headers(token)
+        async with api_client() as client:
+            res = await client.get(
+                "/applications",
+                params={"cursor": "not|a-valid-cursor"},
+                headers=headers,
+            )
+        assert res.status_code == 400
+        assert res.json()["category"] == "validation_error"
+
+    asyncio.run(run())
+
+
+def test_get_single_application() -> None:
+    """Covers get_application directly via the GET endpoint."""
+
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        headers = _headers(token)
+        member_id = await _make_member(headers, "Get Borrower")
+        await _set_deposit_balance(tid, member_id, "10000.00")
+        product_id = await _make_product(headers, "Get Product")
+        app = await _make_application(headers, member_id, product_id, "5000.00")
+        aid = app["id"]
+        async with api_client() as client:
+            res = await client.get(f"/applications/{aid}", headers=headers)
+            assert res.status_code == 200
+            assert res.json()["id"] == aid
+            assert res.json()["stage"] == "submitted"
+            missing = await client.get(f"/applications/{uuid.uuid4()}", headers=headers)
+            assert missing.status_code == 404
+
+    asyncio.run(run())
+
+
+def test_stale_version_on_transition_returns_409() -> None:
+    """Covers the optimistic-lock check in transition_stage (rowcount != 1)."""
+
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        headers = _headers(token)
+        member_id = await _make_member(headers, "Stale Transition")
+        await _set_deposit_balance(tid, member_id, "10000.00")
+        product_id = await _make_product(headers, "Stale Product")
+        app = await _make_application(headers, member_id, product_id, "5000.00")
+        aid = app["id"]
+        async with api_client() as client:
+            res = await client.post(
+                f"/applications/{aid}/transition",
+                json={"version": 999, "target": "appraisal"},
+                headers=headers,
+            )
+        assert res.status_code == 409
+
+    asyncio.run(run())
+
+
+def test_guarantee_on_non_pledgeable_stage_returns_409() -> None:
+    """Covers the _PLEDGEABLE check in pledge_guarantee."""
+
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        headers = _headers(token)
+        borrower = await _make_member(headers, "Pledge Stage Borrower")
+        guarantor = await _make_member(headers, "Pledge Stage Guarantor")
+        await _set_deposit_balance(tid, guarantor, "50000.00")
+        product_id = await _make_product(headers, "Pledge Stage Product")
+        app = await _make_application(headers, borrower, product_id, "5000.00")
+        aid = app["id"]
+        async with api_client() as client:
+            reject = await client.post(
+                f"/applications/{aid}/transition",
+                json={"version": 1, "target": "rejected"},
+                headers=headers,
+            )
+            assert reject.status_code == 200
+            pledge = await client.post(
+                f"/applications/{aid}/guarantees",
+                json={"guarantor_member_id": guarantor, "amount": "1000.00"},
+                headers=headers,
+            )
+        assert pledge.status_code == 409
+
+    asyncio.run(run())
+
+
+def test_inactive_product_rejection() -> None:
+    """Covers the product.active check in create_application."""
+
+    async def run() -> None:
+        _tid, _, token = await _seed_actor()
+        headers = _headers(token)
+        member_id = await _make_member(headers, "Inactive Prod Borrower")
+        product_id = await _make_product(headers, "Deactivated Product")
+        async with api_client() as client:
+            deactivated = await client.put(
+                f"/products/{product_id}",
+                json={"version": 1, "active": False},
+                headers=headers,
+            )
+            assert deactivated.status_code == 200
+            res = await client.post(
+                "/applications",
+                json={
+                    "member_id": member_id,
+                    "product_id": product_id,
+                    "amount": "1000.00",
+                    "term_months": 6,
+                },
+                headers=headers,
+            )
+        assert res.status_code == 400
+
+    asyncio.run(run())
+
+
+def test_zero_amount_application_rejected() -> None:
+    """Covers the amount <= ZERO guard in create_application."""
+
+    async def run() -> None:
+        _, _, token = await _seed_actor()
+        headers = _headers(token)
+        member_id = await _make_member(headers, "Zero Amount Borrower")
+        product_id = await _make_product(headers, "Zero Product")
+        async with api_client() as client:
+            res = await client.post(
+                "/applications",
+                json={
+                    "member_id": member_id,
+                    "product_id": product_id,
+                    "amount": "0",
+                    "term_months": 6,
+                },
+                headers=headers,
+            )
+        assert res.status_code == 422
+
+    asyncio.run(run())
