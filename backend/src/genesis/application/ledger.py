@@ -94,9 +94,7 @@ async def _next_ref(
     # Both values are computed integers (not user input), so embedding them
     # directly in the SQL literal is safe and avoids SQLAlchemy parameter-
     # binding conflicts with the PostgreSQL ::int4 cast syntax.
-    await session.execute(
-        text(f"SELECT pg_advisory_xact_lock({_ADVISORY_NS}, {lock_key})")
-    )
+    await session.execute(text(f"SELECT pg_advisory_xact_lock({_ADVISORY_NS}, {lock_key})"))
     # Upsert the sequence row and return the new value.
     row = (
         await session.execute(
