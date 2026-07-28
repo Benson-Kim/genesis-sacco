@@ -16,7 +16,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [tokens, setTokensState] = useState<AuthTokens | null>(null);
   const [hydrated, setHydrated] = useState(false);
 

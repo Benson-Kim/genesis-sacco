@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import '@genesis/tokens';
+import './globals.css';
 import { Providers } from './providers';
 
 export const metadata = {

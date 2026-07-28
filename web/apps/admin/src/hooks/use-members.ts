@@ -18,7 +18,9 @@ function fetchMembersPage(_cursor: string | null, _pageSize: number): Promise<Cu
   // TODO(P8): replace with `apiClient.members.list({ cursor, pageSize })`
   // once GET /members ships and the client is regenerated. Until then this
   // intentionally throws rather than returning fake data.
-  throw new Error('GET /members is not implemented on the backend yet (see docs/BUILD_PROMPTS.md, P8).');
+  return Promise.reject(
+    new Error('GET /members is not implemented on the backend yet (see docs/BUILD_PROMPTS.md, P8).'),
+  );
 }
 
 export function useMembers() {

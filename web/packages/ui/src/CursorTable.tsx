@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery, keepPreviousData, type UseQueryOptions } from '@tanstack/react-query';
 import type { CursorPage } from '@genesis/api-client';
-import { colors, space, fontSize, radii } from '@genesis/tokens';
+import { colors, space, fontSize } from '@genesis/tokens';
 import { Button } from './primitives';
 
 /** Hard cap mirrors MASTER_PROMPT gate 1.3 ("hard max page size 100"). */
@@ -35,7 +35,7 @@ export function useCursorPagination<T>({
   const effectivePageSize = Math.min(pageSize, MAX_PAGE_SIZE);
   // Stack of cursors that produced each page already seen; null = first page.
   const [cursorStack, setCursorStack] = useState<Array<string | null>>([null]);
-  const currentCursor = cursorStack.at(-1) ?? null;
+  const currentCursor = cursorStack[cursorStack.length - 1] ?? null;
 
   const query = useQuery({
     queryKey: [...queryKey, 'cursor', currentCursor, effectivePageSize],
@@ -102,8 +102,8 @@ export function CursorTable<T>({
   pagination,
   emptyLabel = 'No records found.',
   caption,
-}: Readonly<CursorTableProps<T>>) {
-  const { items, isLoading, isError, error, hasNextPage, hasPrevPage, goNext, goPrev, isFetching } =
+}: CursorTableProps<T>) {
+  const { items, isLoading, isError, error, hasNextPage, hasPrevPage, goNext, goPrev, isFetching, pageIndex } =
     pagination;
 
   if (isError) {
@@ -116,84 +116,99 @@ export function CursorTable<T>({
 
   return (
     <div>
-      <table
-        aria-busy={isFetching}
-        style={{ width: '100%', borderCollapse: 'collapse', fontSize: fontSize.base }}
-      >
-        <caption style={{ position: 'absolute', left: -9999 }}>{caption}</caption>
-        <thead>
-          <tr>
-            {columns.map((col) => (
-              <th
-                key={col.key}
-                style={{
-                  textAlign: col.align ?? 'left',
-                  padding: space[5],
-                  borderBottom: `1px solid ${colors.line}`,
-                  color: colors.sub,
-                  fontSize: fontSize.sm,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.03em',
-                }}
-              >
-                {col.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {isLoading
-            ? (
-              <tr>
-                <td colSpan={columns.length} style={{ padding: space[9], textAlign: 'center', color: colors.sub }}>
-                  Loading…
-                </td>
-              </tr>
-            )
-            : items.length === 0
+      {/* Horizontal scroll on narrow viewports beats squeezing columns
+          unreadably thin — the standard responsive pattern for data
+          tables (the row/column relationship must stay intact). */}
+      <div style={{ overflowX: 'auto' }}>
+        <table
+          aria-busy={isFetching}
+          style={{ width: '100%', minWidth: 480, borderCollapse: 'collapse', fontSize: fontSize.base }}
+        >
+          <caption className="gp-sr-only">{caption}</caption>
+          <thead>
+            <tr>
+              {columns.map((col) => (
+                <th
+                  key={col.key}
+                  scope="col"
+                  style={{
+                    textAlign: col.align ?? 'left',
+                    padding: space[5],
+                    borderBottom: `1px solid ${colors.line}`,
+                    color: colors.sub,
+                    fontSize: fontSize.sm,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.03em',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {col.header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading
               ? (
                 <tr>
                   <td colSpan={columns.length} style={{ padding: space[9], textAlign: 'center', color: colors.sub }}>
-                    {emptyLabel}
+                    Loading…
                   </td>
                 </tr>
               )
-              : (
-                items.map((row) => (
-                  <tr key={rowKey(row)}>
-                    {columns.map((col) => (
-                      <td
-                        key={col.key}
-                        style={{
-                          textAlign: col.align ?? 'left',
-                          padding: space[5],
-                          borderBottom: `1px solid ${colors.line}`,
-                        }}
-                      >
-                        {col.render(row)}
-                      </td>
-                    ))}
+              : items.length === 0
+                ? (
+                  <tr>
+                    <td colSpan={columns.length} style={{ padding: space[9], textAlign: 'center', color: colors.sub }}>
+                      {emptyLabel}
+                    </td>
                   </tr>
-                ))
-              )}
-        </tbody>
-      </table>
+                )
+                : (
+                  items.map((row) => (
+                    <tr key={rowKey(row)}>
+                      {columns.map((col) => (
+                        <td
+                          key={col.key}
+                          style={{
+                            textAlign: col.align ?? 'left',
+                            padding: space[5],
+                            borderBottom: `1px solid ${colors.line}`,
+                          }}
+                        >
+                          {col.render(row)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))
+                )}
+          </tbody>
+        </table>
+      </div>
 
       <div
         style={{
           display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
           justifyContent: 'flex-end',
-          gap: space[4],
+          gap: space[5],
           marginTop: space[6],
-          borderRadius: radii.md,
         }}
       >
-        <Button variant="secondary" onClick={goPrev} disabled={!hasPrevPage || isFetching}>
-          Previous
-        </Button>
-        <Button variant="secondary" onClick={goNext} disabled={!hasNextPage || isFetching}>
-          Next
-        </Button>
+        {/* Visible + announced page position — so the user never has to
+            count clicks to know where they are (recognition over recall). */}
+        <span aria-live="polite" style={{ fontSize: fontSize.sm, color: colors.sub }}>
+          Page {pageIndex}
+        </span>
+        <div style={{ display: 'flex', gap: space[4] }}>
+          <Button variant="secondary" onClick={goPrev} disabled={!hasPrevPage || isFetching}>
+            Previous
+          </Button>
+          <Button variant="secondary" onClick={goNext} disabled={!hasNextPage || isFetching}>
+            Next
+          </Button>
+        </div>
       </div>
     </div>
   );

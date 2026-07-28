@@ -1,0 +1,78 @@
+/*
+ * Layout-critical CSS that inline styles can't express (media queries).
+ * Component-level styling stays inline/tokenized elsewhere in the app —
+ * this file is intentionally small and limited to responsive structure.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+}
+
+/* Skip link: hidden until focused, so keyboard users can jump past the
+   nav on every page instead of tabbing through it each time. */
+.gp-skip-link {
+  position: absolute;
+  left: 8px;
+  top: -100px;
+  background: var(--navy);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  z-index: 100;
+  transition: top 0.15s ease;
+}
+.gp-skip-link:focus {
+  top: 8px;
+}
+
+/* Dashboard shell: side-by-side nav + content on wide viewports, stacked
+   with a horizontally-scrollable nav bar on narrow ones — no hamburger
+   menu/JS state needed, so every nav item stays one tap away at any width. */
+.gp-dashboard-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.gp-dashboard-nav {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--navy);
+  padding: 14px;
+}
+
+.gp-dashboard-nav-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gp-dashboard-main {
+  flex: 1;
+  min-width: 0; /* let the table's own scroll container handle overflow */
+  padding: 20px;
+  background: var(--bg);
+}
+
+@media (max-width: 720px) {
+  .gp-dashboard-shell {
+    flex-direction: column;
+    min-height: 0;
+  }
+  .gp-dashboard-nav {
+    width: 100%;
+    padding: 10px;
+  }
+  .gp-dashboard-nav-items {
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 6px;
+  }
+  .gp-dashboard-main {
+    padding: 14px;
+  }
+}

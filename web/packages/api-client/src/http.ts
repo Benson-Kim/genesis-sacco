@@ -45,7 +45,8 @@ async function refreshTokens(): Promise<AuthTokens | null> {
   const cfg = requireConfig();
   const tokens = cfg.getTokens();
   if (!tokens) return null;
-  refreshInFlight ??= (async () => {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
       const res = await fetch(`${cfg.baseUrl}/auth/refresh`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-tenant-id': cfg.tenantId },
@@ -62,6 +63,7 @@ async function refreshTokens(): Promise<AuthTokens | null> {
     })().finally(() => {
       refreshInFlight = null;
     });
+  }
   return refreshInFlight;
 }
 

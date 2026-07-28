@@ -9,6 +9,8 @@ import { colors, space, fontSize, radii } from '@genesis/tokens';
 import { useAuth } from '@/lib/auth-context';
 
 type Step = 'email' | 'code';
+const STEP_NUMBER: Record<Step, number> = { email: 1, code: 2 };
+const TOTAL_STEPS = 2;
 
 export default function LoginPage() {
   const router = useRouter();
@@ -40,11 +42,20 @@ export default function LoginPage() {
         minHeight: '100vh',
         display: 'grid',
         placeItems: 'center',
+        padding: space[6],
         background: colors.bg,
       }}
     >
-      <Card style={{ padding: space[9], width: 360 }}>
-        <h1 style={{ fontSize: fontSize['2xl'], color: colors.navy, marginTop: 0 }}>Genesis Prestige</h1>
+      <Card style={{ padding: space[9], width: '100%', maxWidth: 360 }}>
+        <h1 style={{ fontSize: fontSize['2xl'], color: colors.navy, marginTop: 0, marginBottom: space[2] }}>
+          Genesis Prestige
+        </h1>
+        {/* Visible progress + a polite live region: sighted users see the
+            step change, screen-reader users hear it announced once,
+            without duplicating every keystroke. */}
+        <p aria-live="polite" style={{ fontSize: fontSize.sm, color: colors.sub, marginTop: 0, marginBottom: space[7] }}>
+          Step {STEP_NUMBER[step]} of {TOTAL_STEPS}
+        </p>
 
         {pendingError && (
           <ErrorBanner
@@ -63,14 +74,19 @@ export default function LoginPage() {
               requestOtp.mutate();
             }}
           >
-            <label style={{ display: 'block', fontSize: fontSize.sm, color: colors.sub, marginBottom: space[2] }}>
+            <label htmlFor="email" style={labelStyle}>
               Work email
             </label>
             <input
+              id="email"
+              name="email"
               type="email"
+              autoComplete="email"
               required
               value={email}
-              onChange={(e) => { setEmail(e.target.value); }}
+              onChange={(e) => {
+                setEmail(e.target.value);
+              }}
               style={inputStyle}
             />
             <Button
@@ -89,17 +105,22 @@ export default function LoginPage() {
               verifyOtp.mutate();
             }}
           >
-            <label style={{ display: 'block', fontSize: fontSize.sm, color: colors.sub, marginBottom: space[2] }}>
+            <label htmlFor="otp-code" style={labelStyle}>
               6-digit code sent to {email}
             </label>
             <input
+              id="otp-code"
+              name="otp"
               type="text"
               inputMode="numeric"
               pattern="\d{6}"
               maxLength={6}
+              autoComplete="one-time-code"
               required
               value={code}
-              onChange={(e) => { setCode(e.target.value); }}
+              onChange={(e) => {
+                setCode(e.target.value);
+              }}
               style={inputStyle}
             />
             <Button
@@ -123,12 +144,23 @@ function describeAuthError(err: ApiError): string {
   return 'Could not sign in right now. Please try again shortly.';
 }
 
+const labelStyle: React.CSSProperties = {
+  display: 'block',
+  fontSize: fontSize.sm,
+  color: colors.sub,
+  marginBottom: space[2],
+};
+
 const inputStyle: React.CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
+  minHeight: 44, // touch target (Fitts's law), matches Button
   padding: `${space[4]} ${space[5]}`,
   borderRadius: radii.md,
   border: `1px solid ${colors.line}`,
-  fontSize: fontSize.base,
+  // 16px, not the design system's 13px base size: anything smaller makes
+  // iOS Safari auto-zoom the page on focus, which is jarring on a login
+  // form users hit on their phone first.
+  fontSize: 16,
   fontFamily: 'inherit',
 };

@@ -13,7 +13,9 @@ function fetchLoansPage(_cursor: string | null, _pageSize: number): Promise<Curs
   // TODO(P10): replace with `apiClient.loans.list({ cursor, pageSize })`
   // once GET /loans ships (docs/BUILD_PROMPTS.md, P10) and the client is
   // regenerated.
-  return Promise.reject('GET /loans is not implemented on the backend yet (see docs/BUILD_PROMPTS.md, P10).');
+  return Promise.reject(
+    new Error('GET /loans is not implemented on the backend yet (see docs/BUILD_PROMPTS.md, P10).'),
+  );
 }
 
 export function useLoanBook() {

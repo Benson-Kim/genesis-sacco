@@ -31,21 +31,29 @@ export function Button({
   variant = 'secondary',
   children,
   style,
+  disabled,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
   const v = VARIANT_STYLE[variant];
   return (
     <button
       {...rest}
+      disabled={disabled}
       style={{
         border: `1.5px solid ${v.border}`,
         background: v.bg,
         color: v.fg,
         borderRadius: radii.md,
         padding: `${space[3]} ${space[7]}`,
+        // 44px is the WCAG 2.5.5 / mobile-platform minimum comfortable
+        // tap target — smaller targets measurably increase mis-taps
+        // (Fitts's law: acquisition time falls as target size grows).
+        minHeight: 44,
+        minWidth: 44,
         fontWeight: 800,
         fontSize: fontSize.base,
-        cursor: 'pointer',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
         fontFamily: 'inherit',
         ...style,
       }}
@@ -80,8 +88,10 @@ export function PageHeader({ title, actions }: { title: string; actions?: ReactN
     <div
       style={{
         display: 'flex',
+        flexWrap: 'wrap',
         alignItems: 'center',
         justifyContent: 'space-between',
+        gap: space[5],
         marginBottom: space[8],
       }}
     >
@@ -94,6 +104,7 @@ export function PageHeader({ title, actions }: { title: string; actions?: ReactN
 export function EmptyState({ label }: { label: string }) {
   return (
     <div
+      role="status"
       style={{
         padding: space[9],
         textAlign: 'center',
