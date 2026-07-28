@@ -70,6 +70,16 @@ async def pledge_guarantee(
         raise ConflictError(f"application in stage '{stage.value}' no longer accepts pledges")
     if guarantor_member_id == borrower_id:
         raise InvalidInputError("a member cannot guarantee their own loan")
+    guarantor_row = (
+        await session.execute(
+            text("SELECT status FROM members WHERE id = CAST(:m AS uuid)"),
+            {"m": str(guarantor_member_id)},
+        )
+    ).first()
+    if guarantor_row is None:
+        raise NotFoundError(f"guarantor member {guarantor_member_id} not found")
+    if str(guarantor_row[0]) != "active":
+        raise ConflictError("only active members can pledge guarantees")
     # Serialisation point: every capacity computation for this guarantor
     # happens while holding this row lock.
     balance_row = (

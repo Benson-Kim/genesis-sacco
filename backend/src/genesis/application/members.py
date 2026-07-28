@@ -374,6 +374,30 @@ async def change_member_status(
         transition(current_status, new_status)
     except InvalidStatusTransitionError as exc:
         raise ConflictError(str(exc)) from exc
+    if new_status is MemberStatus.EXITED:
+        # P12 eligibility invariant, enforced early: live guarantees,
+        # active loans, or open applications block terminal exit.
+        blockers = (
+            await session.execute(
+                text(
+                    "SELECT "
+                    "(SELECT count(*) FROM guarantees "
+                    " WHERE guarantor_member_id = CAST(:m AS uuid) "
+                    " AND status IN ('pledged', 'active')), "
+                    "(SELECT count(*) FROM loans "
+                    " WHERE member_id = CAST(:m AS uuid) AND status = 'active'), "
+                    "(SELECT count(*) FROM loan_applications "
+                    " WHERE member_id = CAST(:m AS uuid) "
+                    " AND stage IN ('submitted', 'appraisal', 'committee', 'approved'))"
+                ),
+                {"m": str(member_id)},
+            )
+        ).first()
+        if blockers is not None and (int(blockers[0]) or int(blockers[1]) or int(blockers[2])):
+            raise ConflictError(
+                "member cannot exit with live guarantees, active loans, "
+                "or open loan applications"
+            )
     result = cast(
         CursorResult[Any],
         await session.execute(
