@@ -1,0 +1,48 @@
+name: member_app
+description: Genesis Prestige Member Mobile App.
+version: 1.0.0+1
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Shared packages
+  gp_ui:
+    path: ../gp_ui
+  gp_api_client:
+    path: ../gp_api_client
+
+  # State management
+  flutter_riverpod: ^2.5.0
+  riverpod_annotation: ^2.3.0
+
+  # Secure storage (via gp_api_client, re-exported for app-level use)
+  flutter_secure_storage: ^9.0.0
+
+  # Biometric authentication
+  local_auth: ^2.2.0
+
+  # Offline cache
+  hive_flutter: ^1.1.0
+
+  # Navigation
+  go_router: ^13.0.0
+
+  # Utilities
+  uuid: ^4.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  build_runner: ^2.4.0
+  riverpod_generator: ^2.4.0
+  mockito: ^5.4.0
+
+flutter:
+  uses-material-design: true
