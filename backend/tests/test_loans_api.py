@@ -1,0 +1,517 @@
+"""API + integration tests for P9: products, applications, votes, guarantees.
+
+Requires a migrated PostgreSQL database (DATABASE_URL env var).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import uuid
+from decimal import Decimal
+
+import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from db_helpers import api_client, factory, seed_user, unique_email
+from genesis.application.auth import AuthContext, issue_access_token
+from genesis.application.guarantees import pledge_guarantee
+from genesis.application.rbac import seed_permissions
+from genesis.errors import ConflictError
+from genesis.infrastructure.tenancy import tenant_session
+
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("DATABASE_URL"), reason="requires a migrated database"
+)
+
+
+async def _seed_actor(role_name: str = "System Admin") -> tuple[uuid.UUID, uuid.UUID, str]:
+    email = unique_email()
+    tid, role_id = await seed_user(email, role_name=role_name)
+    async with tenant_session(factory(), tid) as session:
+        await seed_permissions(session, tid)
+        user_id = (
+            await session.execute(
+                text("SELECT id FROM users WHERE email = :email"), {"email": email}
+            )
+        ).scalar_one()
+    token = issue_access_token(
+        AuthContext(user_id=uuid.UUID(str(user_id)), tenant_id=tid, role_id=role_id)
+    )
+    return tid, role_id, token
+
+
+async def _add_actor(tid: uuid.UUID, role_id: uuid.UUID) -> str:
+    """Add another user to an existing tenant and return their token."""
+    user_id = uuid.uuid4()
+    async with tenant_session(factory(), tid) as session:
+        await session.execute(
+            text(
+                "INSERT INTO users (id, tenant_id, role_id, full_name, email) "
+                "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), "
+                "CAST(:rid AS uuid), 'Extra Voter', :email)"
+            ),
+            {
+                "id": str(user_id),
+                "tid": str(tid),
+                "rid": str(role_id),
+                "email": unique_email(),
+            },
+        )
+    return issue_access_token(AuthContext(user_id=user_id, tenant_id=tid, role_id=role_id))
+
+
+def _headers(token: str) -> dict[str, str]:
+    return {"authorization": f"Bearer {token}"}
+
+
+async def _make_member(headers: dict[str, str], name: str) -> str:
+    async with api_client() as client:
+        res = await client.post(
+            "/members",
+            json={"type": "person", "name": name},
+            headers=headers,
+        )
+    assert res.status_code == 201, res.text
+    return str(res.json()["id"])
+
+
+async def _set_deposit_balance(tid: uuid.UUID, member_id: str, balance: str) -> None:
+    async with tenant_session(factory(), tid) as session:
+        await session.execute(
+            text(
+                "UPDATE deposit_accounts SET balance = :b "
+                "WHERE member_id = CAST(:m AS uuid)"
+            ),
+            {"b": balance, "m": member_id},
+        )
+
+
+async def _make_product(headers: dict[str, str], name: str) -> str:
+    async with api_client() as client:
+        res = await client.post(
+            "/products",
+            json={
+                "name": name,
+                "rate_pct": "12.00",
+                "deposit_multiplier": "3.00",
+                "max_term_months": 36,
+            },
+            headers=headers,
+        )
+    assert res.status_code == 201, res.text
+    return str(res.json()["id"])
+
+
+async def _make_application(
+    headers: dict[str, str],
+    member_id: str,
+    product_id: str,
+    amount: str,
+) -> dict[str, object]:
+    async with api_client() as client:
+        res = await client.post(
+            "/applications",
+            json={
+                "member_id": member_id,
+                "product_id": product_id,
+                "amount": amount,
+                "term_months": 12,
+            },
+            headers=headers,
+        )
+    assert res.status_code == 201, res.text
+    body: dict[str, object] = res.json()
+    return body
+
+
+# ---------------------------------------------------------------------------
+# Products
+# ---------------------------------------------------------------------------
+
+
+def test_product_crud_and_duplicate_409() -> None:
+    async def run() -> None:
+        _, _, token = await _seed_actor()
+        headers = _headers(token)
+        pid = await _make_product(headers, "Biashara Loan")
+        async with api_client() as client:
+            dup = await client.post(
+                "/products",
+                json={
+                    "name": "Biashara Loan",
+                    "rate_pct": "14.00",
+                    "deposit_multiplier": "2.00",
+                    "max_term_months": 24,
+                },
+                headers=headers,
+            )
+            assert dup.status_code == 409
+            listed = await client.get("/products", headers=headers)
+            assert listed.status_code == 200
+            assert [p["name"] for p in listed.json()] == ["Biashara Loan"]
+            updated = await client.put(
+                f"/products/{pid}",
+                json={"version": 1, "rate_pct": "13.50"},
+                headers=headers,
+            )
+            assert updated.status_code == 200
+            assert updated.json()["rate_pct"] == "13.50"
+            stale = await client.put(
+                f"/products/{pid}",
+                json={"version": 1, "active": False},
+                headers=headers,
+            )
+        assert stale.status_code == 409
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Applications: cover computation, product rules
+# ---------------------------------------------------------------------------
+
+
+def test_application_cover_and_product_rules() -> None:
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        headers = _headers(token)
+        member_id = await _make_member(headers, "Borrower One")
+        await _set_deposit_balance(tid, member_id, "25000.00")
+        product_id = await _make_product(headers, "Maendeleo Loan")
+        app = await _make_application(headers, member_id, product_id, "50000.00")
+        assert app["stage"] == "submitted"
+        assert app["cover_pct"] == "50.00"
+        assert app["rate_pct"] == "12.00"  # derived from the product, never client-supplied
+        async with api_client() as client:
+            over_term = await client.post(
+                "/applications",
+                json={
+                    "member_id": member_id,
+                    "product_id": product_id,
+                    "amount": "10000.00",
+                    "term_months": 48,
+                },
+                headers=headers,
+            )
+        assert over_term.status_code == 400
+        assert over_term.json()["category"] == "validation_error"
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# EXIT: stage machine adversarial tests
+# ---------------------------------------------------------------------------
+
+
+def test_stage_machine_adversarial() -> None:
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        headers = _headers(token)
+        member_id = await _make_member(headers, "Stage Walker")
+        await _set_deposit_balance(tid, member_id, "10000.00")
+        product_id = await _make_product(headers, "Stage Product")
+        app = await _make_application(headers, member_id, product_id, "5000.00")
+        aid = app["id"]
+        async with api_client() as client:
+            direct_approve = await client.post(
+                f"/applications/{aid}/transition",
+                json={"version": 1, "target": "approved"},
+                headers=headers,
+            )
+            assert direct_approve.status_code == 409  # committee quorum only
+            skip = await client.post(
+                f"/applications/{aid}/transition",
+                json={"version": 1, "target": "committee"},
+                headers=headers,
+            )
+            assert skip.status_code == 409  # submitted -> committee is illegal
+            ok1 = await client.post(
+                f"/applications/{aid}/transition",
+                json={"version": 1, "target": "appraisal"},
+                headers=headers,
+            )
+            assert ok1.status_code == 200
+            ok2 = await client.post(
+                f"/applications/{aid}/transition",
+                json={"version": 2, "target": "committee"},
+                headers=headers,
+            )
+            assert ok2.status_code == 200
+            backwards = await client.post(
+                f"/applications/{aid}/transition",
+                json={"version": 3, "target": "appraisal"},
+                headers=headers,
+            )
+            assert backwards.status_code == 409
+        # Rejection is terminal.
+        app2 = await _make_application(headers, member_id, product_id, "3000.00")
+        aid2 = app2["id"]
+        async with api_client() as client:
+            rejected = await client.post(
+                f"/applications/{aid2}/transition",
+                json={"version": 1, "target": "rejected"},
+                headers=headers,
+            )
+            assert rejected.status_code == 200
+            revive = await client.post(
+                f"/applications/{aid2}/transition",
+                json={"version": 2, "target": "appraisal"},
+                headers=headers,
+            )
+        assert revive.status_code == 409
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Committee voting: quorum, double-vote, closed stages
+# ---------------------------------------------------------------------------
+
+
+async def _application_in_committee(
+    headers: dict[str, str], tid: uuid.UUID, name: str, product_id: str
+) -> str:
+    member_id = await _make_member(headers, name)
+    await _set_deposit_balance(tid, member_id, "10000.00")
+    app = await _make_application(headers, member_id, product_id, "5000.00")
+    aid = str(app["id"])
+    async with api_client() as client:
+        r1 = await client.post(
+            f"/applications/{aid}/transition",
+            json={"version": 1, "target": "appraisal"},
+            headers=headers,
+        )
+        assert r1.status_code == 200
+        r2 = await client.post(
+            f"/applications/{aid}/transition",
+            json={"version": 2, "target": "committee"},
+            headers=headers,
+        )
+        assert r2.status_code == 200
+    return aid
+
+
+def test_committee_voting_quorum_and_double_vote() -> None:
+    async def run() -> None:
+        tid, role_id, token = await _seed_actor()
+        headers = _headers(token)
+        product_id = await _make_product(headers, "Committee Product")
+        aid = await _application_in_committee(headers, tid, "Vote Target", product_id)
+        voter2 = _headers(await _add_actor(tid, role_id))
+        voter3 = _headers(await _add_actor(tid, role_id))
+        async with api_client() as client:
+            v1 = await client.post(
+                f"/applications/{aid}/vote",
+                json={"vote": "approve"},
+                headers=headers,
+            )
+            assert v1.status_code == 200
+            assert v1.json()["decision"] is None
+            dup = await client.post(
+                f"/applications/{aid}/vote",
+                json={"vote": "approve"},
+                headers=headers,
+            )
+            assert dup.status_code == 409  # UNIQUE: one vote per member
+            v2 = await client.post(
+                f"/applications/{aid}/vote",
+                json={"vote": "reject"},
+                headers=voter2,
+            )
+            assert v2.status_code == 200
+            assert v2.json()["decision"] is None
+            v3 = await client.post(
+                f"/applications/{aid}/vote",
+                json={"vote": "approve"},
+                headers=voter3,
+            )
+            assert v3.status_code == 200
+            assert v3.json()["decision"] == "approved"
+            assert v3.json()["stage"] == "approved"
+            late_voter = _headers(await _add_actor(tid, role_id))
+            closed = await client.post(
+                f"/applications/{aid}/vote",
+                json={"vote": "approve"},
+                headers=late_voter,
+            )
+            assert closed.status_code == 409  # voting closed after decision
+        async with tenant_session(factory(), tid) as session:
+            decided = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM outbox_events "
+                        "WHERE event_type = 'loan.application_decided'"
+                    )
+                )
+            ).scalar_one()
+        assert int(decided) == 1
+
+    asyncio.run(run())
+
+
+def test_committee_rejection_quorum() -> None:
+    async def run() -> None:
+        tid, role_id, token = await _seed_actor()
+        headers = _headers(token)
+        product_id = await _make_product(headers, "Reject Product")
+        aid = await _application_in_committee(headers, tid, "Reject Target", product_id)
+        voter2 = _headers(await _add_actor(tid, role_id))
+        async with api_client() as client:
+            r1 = await client.post(
+                f"/applications/{aid}/vote",
+                json={"vote": "reject"},
+                headers=headers,
+            )
+            assert r1.status_code == 200
+            r2 = await client.post(
+                f"/applications/{aid}/vote",
+                json={"vote": "reject"},
+                headers=voter2,
+            )
+        assert r2.status_code == 200
+        assert r2.json()["decision"] == "rejected"
+        assert r2.json()["stage"] == "rejected"
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# EXIT: concurrent over-pledge - capacity never exceeded
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_over_pledge_capacity_never_exceeded() -> None:
+    """10 parallel pledges of 300 against 1000 capacity: exactly 3 land."""
+
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        headers = _headers(token)
+        borrower = await _make_member(headers, "Pledge Borrower")
+        guarantor = await _make_member(headers, "Pledge Guarantor")
+        await _set_deposit_balance(tid, borrower, "1000.00")
+        await _set_deposit_balance(tid, guarantor, "1000.00")
+        product_id = await _make_product(headers, "Pledge Product")
+        app = await _make_application(headers, borrower, product_id, "9000.00")
+        aid = uuid.UUID(str(app["id"]))
+        g_id = uuid.UUID(guarantor)
+
+        engine = create_async_engine(os.environ["DATABASE_URL"], pool_size=20, max_overflow=0)
+        sm: async_sessionmaker[AsyncSession] = async_sessionmaker(engine, expire_on_commit=False)
+
+        async def one_pledge() -> object:
+            try:
+                async with tenant_session(sm, tid) as session:
+                    return await pledge_guarantee(
+                        session,
+                        tid,
+                        None,
+                        application_id=aid,
+                        guarantor_member_id=g_id,
+                        amount=Decimal("300.00"),
+                    )
+            except ConflictError as exc:
+                return exc
+
+        results = await asyncio.gather(*[one_pledge() for _ in range(10)])
+        await engine.dispose()
+
+        successes = [r for r in results if not isinstance(r, ConflictError)]
+        failures = [r for r in results if isinstance(r, ConflictError)]
+        assert len(successes) == 3, f"expected exactly 3 pledges, got {len(successes)}"
+        assert len(failures) == 7
+        async with tenant_session(factory(), tid) as session:
+            total = (
+                await session.execute(
+                    text(
+                        "SELECT COALESCE(SUM(amount), 0) FROM guarantees "
+                        "WHERE guarantor_member_id = CAST(:g AS uuid) "
+                        "AND status IN ('pledged', 'active')"
+                    ),
+                    {"g": guarantor},
+                )
+            ).scalar_one()
+        assert Decimal(str(total)) == Decimal("900.00")
+        assert Decimal(str(total)) <= Decimal("1000.00")
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Guarantees: consent flow, cover recompute, self-guarantee
+# ---------------------------------------------------------------------------
+
+
+def test_guarantee_consent_and_cover_recompute() -> None:
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        headers = _headers(token)
+        borrower = await _make_member(headers, "Cover Borrower")
+        guarantor = await _make_member(headers, "Cover Guarantor")
+        await _set_deposit_balance(tid, guarantor, "30000.00")
+        product_id = await _make_product(headers, "Cover Product")
+        app = await _make_application(headers, borrower, product_id, "40000.00")
+        aid = app["id"]
+        assert app["cover_pct"] == "0.00"  # borrower has no deposits
+        async with api_client() as client:
+            pledge = await client.post(
+                f"/applications/{aid}/guarantees",
+                json={"guarantor_member_id": guarantor, "amount": "20000.00"},
+                headers=headers,
+            )
+            assert pledge.status_code == 201, pledge.text
+            gid = pledge.json()["id"]
+            refreshed = await client.get(f"/applications/{aid}", headers=headers)
+            assert refreshed.json()["cover_pct"] == "50.00"
+            consent = await client.post(
+                f"/guarantees/{gid}/consent",
+                json={"version": 1},
+                headers=headers,
+            )
+            assert consent.status_code == 200
+            assert consent.json()["status"] == "active"
+            double = await client.post(
+                f"/guarantees/{gid}/consent",
+                json={"version": 2},
+                headers=headers,
+            )
+            assert double.status_code == 409
+            selfie = await client.post(
+                f"/applications/{aid}/guarantees",
+                json={"guarantor_member_id": borrower, "amount": "1000.00"},
+                headers=headers,
+            )
+        assert selfie.status_code == 400
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# RBAC: deny-by-default on loans routes
+# ---------------------------------------------------------------------------
+
+
+def test_loans_rbac_enforced() -> None:
+    async def run() -> None:
+        _, _, teller_token = await _seed_actor("Teller")
+        teller = _headers(teller_token)
+        async with api_client() as client:
+            res = await client.get("/applications", headers=teller)
+            assert res.status_code == 403
+            res = await client.post(
+                "/applications",
+                json={
+                    "member_id": str(uuid.uuid4()),
+                    "product_id": str(uuid.uuid4()),
+                    "amount": "1000.00",
+                    "term_months": 6,
+                },
+                headers=teller,
+            )
+            assert res.status_code == 403
+            res = await client.get("/products", headers=teller)
+        assert res.status_code == 403
+
+    asyncio.run(run())
