@@ -85,9 +85,7 @@ async def refresh(body: RefreshBody, request: Request) -> TokenResponse:
     tenant_id = tenant_id_from_headers(request)
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, tenant_id) as session:
-        outcome = await auth_service.rotate_refresh_token(
-            session, tenant_id, body.refresh_token
-        )
+        outcome = await auth_service.rotate_refresh_token(session, tenant_id, body.refresh_token)
     # Family revocation on reuse must survive the failed request, so the
     # 401 is raised only after the transaction has committed (gate 1.4).
     if isinstance(outcome, auth_service.AuthFailure):
