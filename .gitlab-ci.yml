@@ -272,6 +272,17 @@ bootstrap:web:
     - node -e "const fs=require('fs');const p='packages/api-client/openapi.json';const s=JSON.parse(fs.readFileSync(p,'utf8'));if(!s.components.schemas.TokenResponse)throw new Error('TokenResponse missing');s.components.schemas.TokenResponse.properties.stale_marker={type:'string'};fs.writeFileSync(p,JSON.stringify(s,null,2)+'\n')"
     - if npm run check:client-drift; then echo "FATAL - drift check did NOT fail on a stale client"; exit 1; else echo "OK - drift check fails on a stale client"; fi
     - cp /tmp/openapi.orig.json packages/api-client/openapi.json
+    # Artifact download is blocked for the agent token; dump the generated
+    # files into the trace (gzip+base64) for retrieval.
+    - echo "=====BEGIN package-lock.json====="
+    - gzip -c package-lock.json | base64
+    - echo "=====END package-lock.json====="
+    - echo "=====BEGIN openapi.json====="
+    - gzip -c packages/api-client/openapi.json | base64
+    - echo "=====END openapi.json====="
+    - echo "=====BEGIN schema.d.ts====="
+    - gzip -c packages/api-client/src/generated/schema.d.ts | base64
+    - echo "=====END schema.d.ts====="
   artifacts:
     paths:
       - web/package-lock.json
