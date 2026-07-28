@@ -72,6 +72,31 @@ backend:test:
     DATABASE_URL: "postgresql+psycopg://genesis@postgres:5432/genesis_test"
   script:
     - alembic upgrade head
+    # RLS must actually be enforced during tests: the postgres-image
+    # bootstrap user is a SUPERUSER, which always bypasses RLS. Create a
+    # non-superuser app role (no BYPASSRLS) per ADR-0002 and run the test
+    # suite through it. Migrations above still run as the privileged owner.
+    - |
+      python - <<'PYEOF'
+      import psycopg
+      conn = psycopg.connect("postgresql://genesis@postgres:5432/genesis_test")
+      conn.autocommit = True
+      cur = conn.cursor()
+      cur.execute(
+          "CREATE ROLE genesis_app LOGIN NOSUPERUSER NOBYPASSRLS "
+          "NOCREATEDB NOCREATEROLE"
+      )
+      cur.execute("GRANT USAGE ON SCHEMA public TO genesis_app")
+      cur.execute(
+          "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES "
+          "IN SCHEMA public TO genesis_app"
+      )
+      cur.execute(
+          "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES "
+          "IN SCHEMA public TO genesis_app"
+      )
+      PYEOF
+    - export DATABASE_URL="postgresql+psycopg://genesis_app@postgres:5432/genesis_test"
     - pytest --cov=src --cov-fail-under=85 --junitxml=report.xml
   coverage: '/TOTAL.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
   artifacts:
