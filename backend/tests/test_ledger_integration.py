@@ -182,10 +182,7 @@ def test_trigger_blocks_delete_on_ledger_entries() -> None:
         with pytest.raises(Exception, match="append-only"):
             async with tenant_session(factory(), tid) as session:
                 await session.execute(
-                    text(
-                        "DELETE FROM ledger_entries "
-                        "WHERE transaction_id = CAST(:txn AS uuid)"
-                    ),
+                    text("DELETE FROM ledger_entries WHERE transaction_id = CAST(:txn AS uuid)"),
                     {"txn": str(txn_id)},
                 )
 
@@ -206,10 +203,7 @@ def test_trigger_blocks_update_on_transactions() -> None:
         with pytest.raises(Exception, match="append-only"):
             async with tenant_session(factory(), tid) as session:
                 await session.execute(
-                    text(
-                        "UPDATE transactions SET amount = 999 "
-                        "WHERE id = CAST(:id AS uuid)"
-                    ),
+                    text("UPDATE transactions SET amount = 999 WHERE id = CAST(:id AS uuid)"),
                     {"id": str(txn_id)},
                 )
 
@@ -328,8 +322,7 @@ def test_repayment_ref_prefix_and_repayments_row() -> None:
             count = (
                 await session.execute(
                     text(
-                        "SELECT count(*) FROM repayments "
-                        "WHERE transaction_id = CAST(:id AS uuid)"
+                        "SELECT count(*) FROM repayments WHERE transaction_id = CAST(:id AS uuid)"
                     ),
                     {"id": str(result.txn_id)},
                 )
@@ -453,8 +446,7 @@ def test_disbursement_is_atomic_and_creates_schedule() -> None:
             loan_row = (
                 await session.execute(
                     text(
-                        "SELECT principal, balance, status FROM loans "
-                        "WHERE id = CAST(:id AS uuid)"
+                        "SELECT principal, balance, status FROM loans WHERE id = CAST(:id AS uuid)"
                     ),
                     {"id": str(result.loan_id)},
                 )
