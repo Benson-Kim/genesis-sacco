@@ -74,7 +74,7 @@ class ProductOut(BaseModel):
 class ApplicationCreateBody(BaseModel):
     member_id: uuid.UUID
     product_id: uuid.UUID
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(gt=0, le=1_000_000_000)
     term_months: int = Field(ge=1)
     purpose: str | None = Field(default=None, max_length=500)
 
