@@ -1,26 +1,65 @@
-import { Card, DataTable, LayoutShell, apps, avatar, cls, loans, members, money, monthly, pill } from './genesis-prototype';
+'use client';
+
+import { Card, MetricCard, PageHeader, StatusPill } from '@genesis/ui';
+import { colors, fontSize, space } from '@genesis/tokens';
+import { usePermissions } from '@/lib/permissions';
+import { useRoles } from '@/hooks/use-roles';
 
 export default function DashboardHomePage() {
-  const deposits = members.reduce((s, m) => s + m[3], 0);
-  const shares = members.reduce((s, m) => s + m[4], 0);
-  const book = loans.reduce((s, l) => s + l[3], 0);
-  const npl = loans.filter((l) => l[7] > 90).reduce((s, l) => s + l[3], 0);
+  const permissions = usePermissions();
+  const roles = useRoles();
+  const grants = permissions.data?.permissions ?? [];
+  const visibleModules = grants.filter((grant) => grant.can_view).length;
+  const approvalModules = grants.filter((grant) => grant.can_approve).length;
+
   return (
-    <LayoutShell active="/dashboard">
-      <div className="gp-grid gp-kpis">
-        <Card><div className="gp-stat-label">Active members</div><div className="gp-stat-value">{members.length}</div></Card>
-        <Card><div className="gp-stat-label">Deposits</div><div className="gp-stat-value">{money(deposits)}</div></Card>
-        <Card><div className="gp-stat-label">Share capital</div><div className="gp-stat-value">{money(shares)}</div></Card>
-        <Card><div className="gp-stat-label">Loan book</div><div className="gp-stat-value">{money(book)}</div></Card>
+    <div>
+      <PageHeader title="Portfolio overview" eyebrow="Backend-driven workspace" />
+      <div style={{ display: 'grid', gap: space[7], gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        <MetricCard label="Visible modules" value={permissions.isLoading ? '…' : visibleModules} detail="Resolved from /me/permissions" />
+        <MetricCard label="Approval grants" value={permissions.isLoading ? '…' : approvalModules} detail="Deny-by-default RBAC" />
+        <MetricCard label="System roles" value={roles.isLoading ? '…' : (roles.data?.filter((role) => role.is_system).length ?? 0)} detail="Loaded from /access/roles" />
+        <MetricCard label="Data source" value="API" detail="No fabricated SACCO records" />
       </div>
-      <div className="gp-grid gp-two" style={{marginTop:16}}>
-        <Card><h2 className="gp-section-title">Collections vs disbursements</h2><div className="gp-bars">{monthly.map(([m,a,b])=><div key={m} style={{flex:1}}><div className="gp-bar-pair"><div className="gp-bar" style={{height:`${String(a * 6)}px`,background:'var(--navy)'}}/><div className="gp-bar" style={{height:`${String(b * 6)}px`,background:'var(--gold)'}}/></div><div className="gp-bar-label">{m}</div></div>)}</div></Card>
-        <Card><div className="gp-hero"><div className="l">Performing portfolio</div><div className="v">{money(book-npl)}</div></div><div style={{marginTop:12}}><div className="gp-row"><span className="k">PAR &gt; 30</span><span className="val">{Math.round((loans.filter(l=>l[7]>30).reduce((s,l)=>s+l[3],0)/book)*100)}%</span></div><div className="gp-row"><span className="k">NPL exposure</span><span className="val">{money(npl)}</span></div><div className="gp-row"><span className="k">Pending applications</span><span className="val">{apps.filter(a=>!['Approved','Rejected'].includes(a[8])).length}</span></div></div></Card>
+
+      <div style={{ display: 'grid', gap: space[7], gridTemplateColumns: 'minmax(0, 1.4fr) minmax(280px, .8fr)', marginTop: space[7] }}>
+        <Card>
+          <h2 style={{ fontSize: fontSize.lg, marginTop: 0 }}>Your effective permissions</h2>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: fontSize.base }}>
+              <thead>
+                <tr style={{ background: colors.panel }}>
+                  {['Module', 'View', 'Create', 'Edit', 'Approve'].map((head) => (
+                    <th key={head} style={{ textAlign: 'left', padding: space[5], color: colors.sub }}>{head}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {grants.map((grant) => (
+                  <tr key={grant.module}>
+                    <td style={{ padding: space[5], borderBottom: `1px solid ${colors.panel}`, fontWeight: 800 }}>{grant.module}</td>
+                    <td style={{ padding: space[5], borderBottom: `1px solid ${colors.panel}` }}><StatusPill tone={grant.can_view ? 'good' : 'neutral'}>{String(grant.can_view)}</StatusPill></td>
+                    <td style={{ padding: space[5], borderBottom: `1px solid ${colors.panel}` }}><StatusPill tone={grant.can_create ? 'good' : 'neutral'}>{String(grant.can_create)}</StatusPill></td>
+                    <td style={{ padding: space[5], borderBottom: `1px solid ${colors.panel}` }}><StatusPill tone={grant.can_edit ? 'good' : 'neutral'}>{String(grant.can_edit)}</StatusPill></td>
+                    <td style={{ padding: space[5], borderBottom: `1px solid ${colors.panel}` }}><StatusPill tone={grant.can_approve ? 'good' : 'neutral'}>{String(grant.can_approve)}</StatusPill></td>
+                  </tr>
+                ))}
+                {!permissions.isLoading && grants.length === 0 && (
+                  <tr><td colSpan={5} style={{ padding: space[9], textAlign: 'center', color: colors.sub }}>No permission grants returned by the backend.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+        <Card tone="hero">
+          <div style={{ color: colors.goldSoft, fontSize: fontSize.sm, fontWeight: 700 }}>Prototype fidelity guardrail</div>
+          <div style={{ fontSize: fontSize['3xl'], fontWeight: 800, marginTop: space[2] }}>Secure first</div>
+          <p style={{ color: colors.goldSoft, lineHeight: 1.6 }}>
+            Views render backend contracts only. Pending modules show explicit unavailable states rather than mock balances,
+            loan totals, or member PII.
+          </p>
+        </Card>
       </div>
-      <div className="gp-grid gp-two" style={{marginTop:16}}>
-        <DataTable heads={['Member','Type','Deposits','Shares','Loan','Status']}>{members.slice(0,5).map(m=><tr key={m[1]}><td><div className="gp-mrow">{avatar(m[0],m[2])}<div><b>{m[0]}</b><br/><span className="gp-sub">{m[1]}</span></div></div></td><td>{m[2]}</td><td className="r">{money(m[3])}</td><td className="r">{money(m[4])}</td><td className="r">{money(m[5])}</td><td>{pill(m[6],m[6]==='Arrears'?'watch':'good')}</td></tr>)}</DataTable>
-        <DataTable heads={['Borrower','Product','Balance','Class']}>{loans.slice(0,5).map(l=>{const c=cls(l[7]);return <tr key={l[1]}><td><b>{l[0]}</b><br/><span>{l[1]}</span></td><td>{l[2]}</td><td className="r">{money(l[3])}</td><td>{pill(c[0],c[1])}</td></tr>})}</DataTable>
-      </div>
-    </LayoutShell>
+    </div>
   );
 }

@@ -1,2 +1,21 @@
-import { Card, LayoutShell, monthly, money } from '../genesis-prototype';
-export default function Page(){return <LayoutShell active="/dashboard/reports"><div className="gp-grid gp-three"><Card><h2 className="gp-section-title">Member statements</h2><p>Cursor-paginated statement exports with truncation headers.</p><button className="gp-btn p">Export CSV</button></Card><Card><h2 className="gp-section-title">Trial balance</h2><div className="gp-row"><span className="k">Debits</span><span className="val">{money(428000)}</span></div><div className="gp-row"><span className="k">Credits</span><span className="val">{money(428000)}</span></div></Card><Card><h2 className="gp-section-title">NPL trend</h2>{monthly.slice(-4).map(([m,,n])=><div className="gp-row" key={m}><span className="k">{m}</span><span className="val">{n}%</span></div>)}</Card></div></LayoutShell>}
+'use client';
+
+import { ModuleUnavailable, PageHeader } from '@genesis/ui';
+import { RouteGuard } from '@/lib/permissions';
+
+function Content() {
+  return (
+    <div>
+      <PageHeader title="Statements & reports" />
+      <ModuleUnavailable moduleName="Reports" prompt="docs/BUILD_PROMPTS.md P13" />
+    </div>
+  );
+}
+
+export default function Page() {
+  return (
+    <RouteGuard module="reports">
+      <Content />
+    </RouteGuard>
+  );
+}

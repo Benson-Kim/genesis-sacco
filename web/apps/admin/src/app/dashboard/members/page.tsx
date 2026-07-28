@@ -1,3 +1,38 @@
-import { LayoutShell, DataTable, members, avatar, money, pill } from '../genesis-prototype';
+'use client';
 
-export default function Page(){return <LayoutShell active="/dashboard/members"><div className="gp-chipbar"><button className="gp-chip on">All</button><button className="gp-chip">Active</button><button className="gp-chip">Needs action</button></div><DataTable heads={['Member','Type','Deposits','Shares','Loan','Status']}>{members.map(m=><tr key={m[1]}><td><div className="gp-mrow">{avatar(m[0],m[2])}<div><b>{m[0]}</b><br/><span>{m[1]}</span></div></div></td><td>{m[2]}</td><td className="r">{money(m[3])}</td><td className="r">{money(m[4])}</td><td className="r">{money(m[5])}</td><td>{pill(m[6],m[6]==="Arrears"?"watch":"good")}</td></tr>)}</DataTable></LayoutShell>}
+import { PageHeader, CursorTable, StatusPill, type CursorTableColumn } from '@genesis/ui';
+import { RouteGuard } from '@/lib/permissions';
+import { useMembers, type MemberRow } from '@/hooks/use-members';
+
+const columns: Array<CursorTableColumn<MemberRow>> = [
+  { key: 'memberNo', header: 'Member No.', render: (r) => r.memberNo },
+  { key: 'name', header: 'Name', render: (r) => r.name },
+  { key: 'type', header: 'Type', render: (r) => r.type },
+  {
+    key: 'status',
+    header: 'Status',
+    render: (r) => (
+      <StatusPill tone={r.status === 'active' ? 'good' : r.status === 'arrears' ? 'watch' : 'neutral'}>
+        {r.status}
+      </StatusPill>
+    ),
+  },
+];
+
+function MembersContent() {
+  const pagination = useMembers();
+  return (
+    <div>
+      <PageHeader title="Members" />
+      <CursorTable columns={columns} rowKey={(r) => r.id} pagination={pagination} caption="Members" />
+    </div>
+  );
+}
+
+export default function MembersPage() {
+  return (
+    <RouteGuard module="members">
+      <MembersContent />
+    </RouteGuard>
+  );
+}

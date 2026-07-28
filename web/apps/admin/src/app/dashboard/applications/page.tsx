@@ -1,3 +1,21 @@
-import { LayoutShell, DataTable, apps, avatar, money, pill } from '../genesis-prototype';
+'use client';
 
-export default function Page(){return <LayoutShell active="/dashboard/applications"><div className="gp-chipbar"><button className="gp-chip on">All</button><button className="gp-chip">Active</button><button className="gp-chip">Needs action</button></div><DataTable heads={['Applicant','Product','Amount','Term','Cover','Stage']}>{apps.map(a=><tr key={a[1]}><td><div className="gp-mrow">{avatar(a[0],a[2])}<div><b>{a[0]}</b><br/><span>{a[1]}</span></div></div></td><td>{a[3]}</td><td className="r">{money(a[4])}</td><td>{a[5]} mo</td><td>{pill(String(a[7]) + '%',a[7] >= 100?"good":"watch")}</td><td>{pill(a[8],a[8]==="Rejected"?"bad":a[8]==="Approved"?"good":"blue")}</td></tr>)}</DataTable></LayoutShell>}
+import { ModuleUnavailable, PageHeader } from '@genesis/ui';
+import { RouteGuard } from '@/lib/permissions';
+
+function Content() {
+  return (
+    <div>
+      <PageHeader title="Loan applications" />
+      <ModuleUnavailable moduleName="Applications" prompt="docs/BUILD_PROMPTS.md P9" />
+    </div>
+  );
+}
+
+export default function Page() {
+  return (
+    <RouteGuard module="applications">
+      <Content />
+    </RouteGuard>
+  );
+}

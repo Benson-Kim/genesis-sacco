@@ -1,6 +1,9 @@
+'use client';
+
 import type { ReactNode } from 'react';
-import '../prototype.css';
+import { AdminShell } from '@/components/admin-shell';
+import './admin-shell.css';
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
-  return children;
+  return <AdminShell>{children}</AdminShell>;
 }

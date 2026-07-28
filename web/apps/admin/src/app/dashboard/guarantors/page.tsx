@@ -1,3 +1,21 @@
-import { LayoutShell, DataTable, guarantees, money, pill } from '../genesis-prototype';
+'use client';
 
-export default function Page(){return <LayoutShell active="/dashboard/guarantors"><div className="gp-chipbar"><button className="gp-chip on">All</button><button className="gp-chip">Active</button><button className="gp-chip">Needs action</button></div><DataTable heads={['Guarantor','Borrower','Loan ref','Pledged','Status']}>{guarantees.map(g=><tr key={g[3]}><td><b>{g[1]}</b><br/><span>{g[0]}</span></td><td>{g[2]}</td><td>{g[3]}</td><td className="r">{money(g[4])}</td><td>{pill('Active','good')}</td></tr>)}</DataTable></LayoutShell>}
+import { ModuleUnavailable, PageHeader } from '@genesis/ui';
+import { RouteGuard } from '@/lib/permissions';
+
+function Content() {
+  return (
+    <div>
+      <PageHeader title="Guarantorship & pledges" />
+      <ModuleUnavailable moduleName="Guarantors" prompt="docs/BUILD_PROMPTS.md P9" />
+    </div>
+  );
+}
+
+export default function Page() {
+  return (
+    <RouteGuard module="loan_book">
+      <Content />
+    </RouteGuard>
+  );
+}

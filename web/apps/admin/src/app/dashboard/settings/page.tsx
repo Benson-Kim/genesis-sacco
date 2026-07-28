@@ -1,3 +1,21 @@
-import { Card, LayoutShell } from '../genesis-prototype';
-const products=[['Development Loan','12%','3× deposits','48 months'],['Emergency Loan','12%','1× deposits','12 months'],['Group Loan','13%','2× deposits','24 months'],['Asset Finance','14%','4× deposits','60 months']];
-export default function Page(){return <LayoutShell active="/dashboard/settings"><div className="gp-grid gp-two"><Card><h2 className="gp-section-title">Loan products</h2>{products.map(p=><div className="gp-row" key={p[0]}><span className="k">{p[0]}</span><span className="val">{p.slice(1).join(' · ')}</span></div>)}</Card><Card><h2 className="gp-section-title">Interest policy</h2><div className="gp-form"><div className="gp-field"><label>Deposit interest</label><input defaultValue="9% p.a." /></div><div className="gp-field"><label>Posting frequency</label><select defaultValue="Quarterly"><option>Quarterly</option></select></div></div><button className="gp-btn p">Save policy</button></Card></div></LayoutShell>}
+'use client';
+
+import { ModuleUnavailable, PageHeader } from '@genesis/ui';
+import { RouteGuard } from '@/lib/permissions';
+
+function Content() {
+  return (
+    <div>
+      <PageHeader title="Settings" />
+      <ModuleUnavailable moduleName="Settings/products" prompt="docs/BUILD_PROMPTS.md P9" />
+    </div>
+  );
+}
+
+export default function Page() {
+  return (
+    <RouteGuard module="settings">
+      <Content />
+    </RouteGuard>
+  );
+}
