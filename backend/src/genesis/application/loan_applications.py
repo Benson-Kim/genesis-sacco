@@ -33,7 +33,10 @@ API_TRANSITION_TARGETS = frozenset(
     {ApplicationStage.APPRAISAL, ApplicationStage.COMMITTEE, ApplicationStage.REJECTED}
 )
 
-_COLS = "id, member_id, product_id, amount, term_months, rate_pct, purpose, stage, cover_pct, version"
+_COLS = (
+    "id, member_id, product_id, amount, term_months, rate_pct, "
+    "purpose, stage, cover_pct, version"
+)
 
 
 @dataclass(frozen=True)
