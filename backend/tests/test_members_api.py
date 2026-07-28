@@ -73,18 +73,14 @@ def test_create_member_opens_accounts_audits_and_notifies() -> None:
         async with tenant_session(factory(), tid) as session:
             shares = (
                 await session.execute(
-                    text(
-                        "SELECT count(*) FROM share_accounts "
-                        "WHERE member_id = CAST(:m AS uuid)"
-                    ),
+                    text("SELECT count(*) FROM share_accounts WHERE member_id = CAST(:m AS uuid)"),
                     {"m": mid},
                 )
             ).scalar_one()
             deposits = (
                 await session.execute(
                     text(
-                        "SELECT count(*) FROM deposit_accounts "
-                        "WHERE member_id = CAST(:m AS uuid)"
+                        "SELECT count(*) FROM deposit_accounts WHERE member_id = CAST(:m AS uuid)"
                     ),
                     {"m": mid},
                 )
