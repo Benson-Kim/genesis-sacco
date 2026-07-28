@@ -321,8 +321,18 @@ async def update_member(
         actor_id,
         "member.update",
         str(member_id),
-        before={"name": current.name, "version": current.version},
-        after={"name": new_name, "version": current.version + 1},
+        before={
+            "name": current.name,
+            "phone": current.phone,
+            "email": current.email,
+            "version": current.version,
+        },
+        after={
+            "name": new_name,
+            "phone": new_phone,
+            "email": new_email,
+            "version": current.version + 1,
+        },
     )
     return MemberRecord(
         id=current.id,
