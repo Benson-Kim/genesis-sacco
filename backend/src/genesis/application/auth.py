@@ -147,8 +147,13 @@ async def request_otp(session: AsyncSession, tenant_id: uuid.UUID, email: str) -
 
 async def verify_otp(
     session: AsyncSession, tenant_id: uuid.UUID, email: str, code: str
-) -> TokenPair:
-    """Verify the newest challenge under a row lock (gate 1.4)."""
+) -> TokenPair | AuthFailure:
+    """Verify the newest challenge under a row lock (gate 1.4).
+
+    Failures are returned (not raised) so the attempt-counter increment
+    commits with the surrounding transaction; the API layer raises the
+    401 after commit.
+    """
     row = (
         await session.execute(
             text(
@@ -162,7 +167,7 @@ async def verify_otp(
         )
     ).first()
     if row is None:
-        raise UnauthenticatedError("no otp challenge")
+        return AuthFailure("no otp challenge")
     challenge_id, stored_hash, attempts, expires_at, consumed_at, user_id, role_id = row
     presented = hash_code(code, salt=str(challenge_id), pepper=_otp_pepper())
     result = evaluate_challenge(
@@ -179,7 +184,9 @@ async def verify_otp(
             {"id": str(challenge_id)},
         )
     if result is not OtpResult.OK:
-        raise UnauthenticatedError(f"otp {result.value}")
+        # Returned, not raised: the increment above must commit so the
+        # lockout engages after OTP_MAX_ATTEMPTS failures (gate 1.6).
+        return AuthFailure(f"otp {result.value}")
     await session.execute(
         text("UPDATE otp_challenges SET consumed_at = :now WHERE id = CAST(:id AS uuid)"),
         {"now": _now(), "id": str(challenge_id)},
