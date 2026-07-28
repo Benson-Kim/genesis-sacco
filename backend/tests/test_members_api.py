@@ -408,3 +408,113 @@ def test_members_rbac_enforced_per_route() -> None:
         assert res.status_code == 403
 
     asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Governed exit: edit alone is not enough (issue #14)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_actor_with_members_perms(*, edit: bool, approve: bool) -> tuple[uuid.UUID, str]:
+    """Custom role with explicit members-module grants (deny elsewhere)."""
+    email = unique_email()
+    tid, role_id = await seed_user(email, role_name="Custom Members Role")
+    async with tenant_session(factory(), tid) as session:
+        await session.execute(
+            text(
+                "INSERT INTO permissions "
+                "(tenant_id, role_id, module, can_view, can_create, can_edit, can_approve) "
+                "VALUES (CAST(:tid AS uuid), CAST(:rid AS uuid), 'members', "
+                "true, true, :edit, :approve)"
+            ),
+            {"tid": str(tid), "rid": str(role_id), "edit": edit, "approve": approve},
+        )
+        user_id = (
+            await session.execute(
+                text("SELECT id FROM users WHERE email = :email"), {"email": email}
+            )
+        ).scalar_one()
+    token = issue_access_token(
+        AuthContext(user_id=uuid.UUID(str(user_id)), tenant_id=tid, role_id=role_id)
+    )
+    return tid, token
+
+
+def test_exit_requires_approve_permission() -> None:
+    async def run() -> None:
+        _, editor_token = await _seed_actor_with_members_perms(edit=True, approve=False)
+        editor = _headers(editor_token)
+        async with api_client() as client:
+            created = await client.post(
+                "/members",
+                json={"type": "person", "name": "Governed Exit"},
+                headers=editor,
+            )
+            assert created.status_code == 201
+            mid = created.json()["id"]
+            arrears = await client.post(
+                f"/members/{mid}/status",
+                json={"version": 1, "status": "arrears"},
+                headers=editor,
+            )
+            assert arrears.status_code == 200
+            denied = await client.post(
+                f"/members/{mid}/status",
+                json={"version": 2, "status": "exited"},
+                headers=editor,
+            )
+            assert denied.status_code == 403
+        _, approver_token = await _seed_actor_with_members_perms(edit=True, approve=True)
+        approver = _headers(approver_token)
+        async with api_client() as client:
+            created = await client.post(
+                "/members",
+                json={"type": "person", "name": "Approved Exit"},
+                headers=approver,
+            )
+            mid = created.json()["id"]
+            exited = await client.post(
+                f"/members/{mid}/status",
+                json={"version": 1, "status": "exited"},
+                headers=approver,
+            )
+        assert exited.status_code == 200
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Statement semantics: 404 for unknown members, 400 for malformed cursors
+# ---------------------------------------------------------------------------
+
+
+def test_statement_of_unknown_member_returns_404() -> None:
+    async def run() -> None:
+        _, token = await _seed_actor()
+        async with api_client() as client:
+            res = await client.get(f"/members/{uuid.uuid4()}/statement", headers=_headers(token))
+        assert res.status_code == 404
+
+    asyncio.run(run())
+
+
+def test_statement_with_malformed_cursor_returns_400() -> None:
+    async def run() -> None:
+        _, token = await _seed_actor()
+        headers = _headers(token)
+        async with api_client() as client:
+            created = await client.post(
+                "/members",
+                json={"type": "person", "name": "Cursor Victim"},
+                headers=headers,
+            )
+            mid = created.json()["id"]
+            res = await client.get(
+                f"/members/{mid}/statement",
+                params={"cursor": "not|a-cursor"},
+                headers=headers,
+            )
+        assert res.status_code == 400
+        assert res.json()["category"] == "validation_error"
+
+    asyncio.run(run())
