@@ -17,6 +17,7 @@ from __future__ import annotations
 import calendar
 import json
 import uuid
+import zlib
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
