@@ -387,7 +387,7 @@ async def cast_vote(
         after={"vote": vote.value, "approvals": approvals, "rejections": rejections},
     )
     decision = decide(approvals, rejections)
-    stage = current
+    stage: ApplicationStage = current
     if decision is not None:
         target = (
             ApplicationStage.APPROVED
@@ -403,7 +403,7 @@ async def cast_vote(
             ),
             {"st": target.value, "id": str(application_id)},
         )
-        stage: ApplicationStage = current
+        stage = target
         await record_audit(
             session,
             tenant_id,
