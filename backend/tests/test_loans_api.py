@@ -839,6 +839,22 @@ def test_release_guarantees_for_loan_service() -> None:
         async with tenant_session(factory(), tid) as session:
             await session.execute(
                 text(
+                    "INSERT INTO loans "
+                    "(id, tenant_id, application_id, member_id, product_id, "
+                    " principal, balance, rate_pct, term_months) "
+                    "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:aid AS uuid), "
+                    "CAST(:mid AS uuid), CAST(:pid AS uuid), 5000, 5000, '12.00', 12)"
+                ),
+                {
+                    "id": str(loan_id),
+                    "tid": str(tid),
+                    "aid": aid,
+                    "mid": borrower,
+                    "pid": product_id,
+                },
+            )
+            await session.execute(
+                text(
                     "UPDATE guarantees SET loan_id = CAST(:lid AS uuid) "
                     "WHERE id = CAST(:gid AS uuid)"
                 ),
