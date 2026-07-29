@@ -123,10 +123,10 @@ def test_p13_report_and_export_queries_are_index_backed() -> None:
             "idx_txns_member_keyset" in statement_page
             or "idx_transactions_member" in statement_page
         )
-        assert (
-            "idx_txns_member_keyset" in statement_opening
-            or "idx_transactions_member" in statement_opening
-        )
+        # The opening aggregate groups by type, so the planner may pick
+        # any of the transactions composite indexes; the gate is that
+        # SOME index serves it (no sequential scan, asserted below).
+        assert "Index" in statement_opening
         assert "idx_loans_created_keyset" in loan_book
         assert "idx_txns_type_occurred" in disb_coll
         assert "idx_schedules_due" in npl_month

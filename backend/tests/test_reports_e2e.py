@@ -439,15 +439,23 @@ def test_npl_trend_reconstructs_month_end_state() -> None:
                     "txn": str(txn_id),
                 },
             )
-            await session.execute(
-                text(
-                    "INSERT INTO ledger_entries "
-                    "(id, tenant_id, transaction_id, account, side, amount) "
-                    "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:txn AS uuid), "
-                    "'loans.receivable', 'credit', '2000.00')"
-                ),
-                {"id": str(uuid.uuid4()), "tid": str(tid), "txn": str(txn_id)},
-            )
+            # Balanced legs (0004 DB trigger): DR cash / CR receivable.
+            for account, side in (("cash.bank", "debit"), ("loans.receivable", "credit")):
+                await session.execute(
+                    text(
+                        "INSERT INTO ledger_entries "
+                        "(id, tenant_id, transaction_id, account, side, amount) "
+                        "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:txn AS uuid), "
+                        ":account, :side, '2000.00')"
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "tid": str(tid),
+                        "txn": str(txn_id),
+                        "account": account,
+                        "side": side,
+                    },
+                )
 
         _, completed = await request_and_render(token, tid, {"report": "npl_trend"})
         artifact = completed["artifact"]
