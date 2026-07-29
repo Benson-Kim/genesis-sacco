@@ -126,8 +126,7 @@ def test_p11_hot_path_queries_are_index_backed() -> None:
         assert "idx_txns_member_keyset" in member_plan or "idx_transactions_member" in member_plan
         assert "Seq Scan" not in member_plan
         assert (
-            "idx_deposit_accounts_keyset" in accrual_plan
-            or "deposit_accounts_pkey" in accrual_plan
+            "idx_deposit_accounts_keyset" in accrual_plan or "deposit_accounts_pkey" in accrual_plan
         )
         assert "Seq Scan" not in accrual_plan
 

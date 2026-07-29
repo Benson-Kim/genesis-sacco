@@ -391,9 +391,7 @@ async def run_deposit_interest_for_tenant(
         annual_rate_pct=annual_rate_pct,
         batch_size=batch_size,
     )
-    scanned, batches, payloads = await run_in_batches(
-        session_scope, process, batch_size=batch_size
-    )
+    scanned, batches, payloads = await run_in_batches(session_scope, process, batch_size=batch_size)
     posted = sum(p[0] for p in payloads)
     skipped = sum(p[1] for p in payloads)
     mismatches = sum(p[2] for p in payloads)

@@ -221,9 +221,7 @@ async def record_share_topup(
     if amount <= ZERO:
         raise InvalidInputError("share top-up amount must be positive")
     await _require_member(session, member_id, require_active=False)
-    account_id, balance = await _lock_account(
-        session, tenant_id, kind="share", member_id=member_id
-    )
+    account_id, balance = await _lock_account(session, tenant_id, kind="share", member_id=member_id)
     posting = await post_share_topup(session, tenant_id, member_id, amount, channel, actor_id)
     balance_after = to_cents(balance + amount)
     await _set_balance(session, kind="share", account_id=account_id, balance=balance_after)
