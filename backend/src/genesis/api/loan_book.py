@@ -15,7 +15,7 @@ from functools import partial
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from genesis.api.authz import RequirePermission
 from genesis.api.params import require_cash_channel, resolve_as_of

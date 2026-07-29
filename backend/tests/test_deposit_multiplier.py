@@ -460,7 +460,7 @@ def test_money_bodies_reject_caller_supplied_occurred_at() -> None:
     (extra="forbid"; the P11 caller-input lesson)."""
 
     async def run() -> None:
-        tid, uid, token = await _seed_actor()
+        tid, _, token = await _seed_actor()
         mid = await _make_member(tid, deposit="10000.00")
         pid = await _make_product(token)
         app_id = await _approved_application(tid, token, mid, pid, "5000.00")
