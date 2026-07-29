@@ -715,7 +715,7 @@ def test_portfolio_summary_matches_seeded_fixtures_to_the_cent() -> None:
 
         # Direct service-layer aggregate (coverage convention).
         async with tenant_session(factory(), tid) as session:
-            summary = await loans_service.portfolio_summary(session)
+            summary = await loans_service.portfolio_summary(session, tid)
         assert summary.active_loans == 4
         assert summary.outstanding_balance == outstanding
         assert summary.npl_balance == npl

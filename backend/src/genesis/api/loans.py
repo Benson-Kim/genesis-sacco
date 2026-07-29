@@ -191,7 +191,7 @@ async def create_product(body: ProductCreateBody, ctx: SettingsCreateCtx) -> Pro
 async def list_products(ctx: SettingsViewCtx) -> list[ProductOut]:
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        products = await products_service.list_products(session)
+        products = await products_service.list_products(session, ctx.tenant_id)
     return [_product_out(p) for p in products]
 
 
@@ -245,6 +245,7 @@ async def list_applications(
     async with tenant_session(factory, ctx.tenant_id) as session:
         items, next_cursor = await applications_service.list_applications(
             session,
+            ctx.tenant_id,
             stage=stage,
             cursor=cursor,
             limit=limit,
@@ -259,7 +260,7 @@ async def list_applications(
 async def get_application(application_id: uuid.UUID, ctx: AppsViewCtx) -> ApplicationOut:
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        record = await applications_service.get_application(session, application_id)
+        record = await applications_service.get_application(session, ctx.tenant_id, application_id)
     return _application_out(record)
 
 
