@@ -89,6 +89,11 @@ class ApplicationOut(BaseModel):
     purpose: str | None
     stage: str
     cover_pct: str
+    #: deposits x product multiplier + live guarantees — the cap the P7
+    #: disbursement gate enforces (issue #15). Computed on the single-
+    #: application read only; None on listings (computing it per row
+    #: would grow queries with result size, gate 1.3).
+    max_eligible: str | None = None
     version: int
 
 
@@ -261,7 +266,12 @@ async def get_application(application_id: uuid.UUID, ctx: AppsViewCtx) -> Applic
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         record = await applications_service.get_application(session, ctx.tenant_id, application_id)
-    return _application_out(record)
+        max_eligible = await applications_service.application_max_eligible(
+            session, ctx.tenant_id, record
+        )
+    out = _application_out(record)
+    out.max_eligible = str(max_eligible)
+    return out
 
 
 @router.post("/applications/{application_id}/transition")

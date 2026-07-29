@@ -184,8 +184,18 @@ EXIT: guarantee-blocked exit test green; settlement is atomic (kill-switch
 test leaves no partial state); approval-drift test returns 409 and posts
 nothing; exited members are rejected by every mutation path.
 
+### P12.5 — Phase B debt consolidation (issues #12, #13, #15)
+ROLE: Developer + DBA. DEPENDS: P12.
+PROMPT: Close all open Phase B debt before reports, so P13 reads a settled, trustworthy ledger:
+- Issue #13: reproduce and fix the pre-existing backend:test failures on main; a fully green main pipeline gates every later prompt.
+- Issue #12 (P7): enforce open accounting period / occurred_at validation on EVERY ledger posting — period resolved server-side, never caller-backdatable (the P11 caller-input lesson); postings into closed periods return 409; additive migration if a periods table is needed, with RLS matching 0001.
+- Issue #15 (P9→P10): enforce the product deposit-multiplier rule at approval/disbursement under the full row-lock set, and link guarantees to the loan at disbursement so P10 closure release and P12 exit sweeps always find them; backfill-safe for existing rows.
+- Verify #14 and #17 are fully closed by !19; fix any residue here.
+All under standing gates: explicit tenant predicates on reads AND writes, RequirePermission, Idempotency-Key, least-disclosure errors, hand-computed oracles, EXPLAIN + indexes shipped together, kill-switch atomicity wherever money moves.
+EXIT: main pipeline fully green including backend:test; backdated and closed-period posting tests return 409; concurrent over-multiplier disbursement provably blocked; guarantee–loan linkage proven by release-on-closure and exit-sweep tests; issues #12, #13, #15 closed.
+
 ### P13 — Reports & exports
-ROLE: Developer. DEPENDS: P10, P11.
+ROLE: Developer. DEPENDS: P10, P11, P12.5.
 PROMPT: Implement `run_export(query, batch_size)` in `core/exports`:
 fetch batch_size+1 for truncation detection, stream batches off the event
 loop, set `X-Export-Truncated`/`X-Export-Limit`, enforce row caps (1.3).

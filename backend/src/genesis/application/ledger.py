@@ -25,7 +25,10 @@ from typing import Any, cast
 from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from genesis.application.accounting_periods import assert_open_period
 from genesis.application.audit import record_audit
+from genesis.application.loan_applications import guarantee_total
+from genesis.application.loan_products import get_product
 from genesis.application.outbox import enqueue_event
 from genesis.domain.ledger import (
     Account,
@@ -54,6 +57,7 @@ from genesis.domain.lending import (
     build_schedule,
     transition,
 )
+from genesis.domain.money import to_cents
 from genesis.errors import ConflictError, NotFoundError
 
 # ---------------------------------------------------------------------------
@@ -149,6 +153,13 @@ async def _post(
 
     prefix = ref_prefix(spec.txn_type, spec.channel)
     ts = occurred_at or datetime.now(UTC)
+
+    # Issue #12 (gates 1.4-1.6): EVERY posting validates occurred_at
+    # server-side before anything is written — never future-dated,
+    # never inside a closed accounting period (409). The shared
+    # advisory barrier inside serialises against a concurrent period
+    # close; the 0012 trigger is the DB-level backstop.
+    await assert_open_period(session, tenant_id, ts)
 
     # pg_advisory_xact_lock serialises all callers for the same tenant+prefix
     # within the transaction, so the sequence counter is always unique.
@@ -672,8 +683,10 @@ async def disburse_loan(
 
     Steps:
       1. Lock the application row; verify stage == approved.
-      2. Transition stage to disbursed.
-      3. Create the loan record.
+      2. Verify the deposit-multiplier eligibility under the deposit
+         account row lock (issue #15); transition stage to disbursed.
+      3. Create the loan record; link the application's live
+         guarantees to it (issue #15).
       4. Post the disbursement ledger entry.
       5. Generate and persist the amortisation schedule.
       6. Enqueue the outbox event.
@@ -720,6 +733,39 @@ async def disburse_loan(
     except InvalidTransitionError as exc:
         raise ConflictError(f"cannot disburse application in stage '{stage_str}'") from exc
 
+    # Step 2b: product deposit-multiplier eligibility under the full
+    # lock set (issue #15, gate 1.4): principal <= deposits x
+    # multiplier + live guarantees, re-verified at the money-moving
+    # moment. The deposit-account row lock is the same serialisation
+    # point P9 pledging and P11 withdrawals take, so a concurrent
+    # withdrawal can never leave a disbursed loan over the cap: one
+    # side waits and then observes the other's committed effect.
+    # Guarantee amounts for this application only change under the
+    # application row lock (pledging locks it FOR UPDATE), which step 1
+    # already holds. Least disclosure (gate 1.6): the rejection never
+    # echoes balances, the multiplier, or the shortfall.
+    product = await get_product(session, tenant_id, product_id)
+    deposit_row = (
+        await session.execute(
+            text(
+                # Explicit tenant predicate on the row-lock read, on
+                # top of RLS (defence in depth, gate 1.6 v1.1).
+                "SELECT balance FROM deposit_accounts "
+                "WHERE member_id = CAST(:m AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
+            ),
+            {"m": str(member_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    deposits = Decimal(str(deposit_row[0])) if deposit_row is not None else Decimal("0")
+    guarantees = await guarantee_total(session, tenant_id, application_id)
+    max_eligible = to_cents(deposits * product.deposit_multiplier) + guarantees
+    if principal > max_eligible:
+        raise ConflictError(
+            "loan amount exceeds the product deposit-multiplier eligibility; "
+            "increase deposits or guarantees before disbursement"
+        )
+
     update_result = cast(
         CursorResult[Any],
         await session.execute(
@@ -765,6 +811,41 @@ async def disburse_loan(
             "ts": ts,
         },
     )
+
+    # Step 3b: link every live guarantee to the loan (issue #15,
+    # gate 1.5): pledges carry application_id with loan_id NULL until
+    # this moment; from disbursement on, the guarantee lifecycle
+    # follows the loan, so the P10 release-on-closure hook and the P12
+    # exit sweep always find them. Runs inside the same atomic
+    # disbursement transaction (P7 contract). Explicit tenant predicate
+    # on the write, on top of RLS (gate 1.6 v1.1).
+    linked = cast(
+        CursorResult[Any],
+        await session.execute(
+            text(
+                "UPDATE guarantees SET loan_id = CAST(:lid AS uuid), status = 'active', "
+                "version = version + 1, updated_at = now() "
+                "WHERE application_id = CAST(:aid AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) "
+                "AND status IN ('pledged', 'active')"
+            ),
+            {"lid": str(loan_id), "aid": str(application_id), "tid": str(tenant_id)},
+        ),
+    )
+    if int(linked.rowcount or 0):
+        await record_audit(
+            session,
+            tenant_id,
+            actor_id,
+            action="guarantee.link_loan",
+            entity="guarantees",
+            entity_id=str(loan_id),
+            after={
+                "application_id": str(application_id),
+                "loan_id": str(loan_id),
+                "linked": int(linked.rowcount or 0),
+            },
+        )
 
     # Step 4: post the disbursement ledger entry.
     spec = build_disbursement_posting(principal, channel)

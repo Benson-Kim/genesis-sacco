@@ -97,9 +97,16 @@ async def _deposit_balance(
     return Decimal(str(row[0])) if row is not None else ZERO
 
 
-async def _guarantee_total(
+async def guarantee_total(
     session: AsyncSession, tenant_id: uuid.UUID, application_id: uuid.UUID
 ) -> Decimal:
+    """Sum of an application's live (pledged/active) guarantee amounts.
+
+    Shared by cover%% recomputation, the eligibility read model and the
+    P7 disbursement multiplier gate (issue #15). Callers making a money
+    decision must hold the application row lock (pledging takes it FOR
+    UPDATE, so the sum cannot change underneath them).
+    """
     value = (
         await session.execute(
             text(
@@ -550,7 +557,7 @@ async def recompute_cover(
     member_id = uuid.UUID(str(row[0]))
     amount = Decimal(str(row[1]))
     deposits = await _deposit_balance(session, tenant_id, member_id)
-    guarantees = await _guarantee_total(session, tenant_id, application_id)
+    guarantees = await guarantee_total(session, tenant_id, application_id)
     cover = _cover_pct(deposits, guarantees, amount)
     await session.execute(
         text(
@@ -560,3 +567,18 @@ async def recompute_cover(
         {"c": str(cover), "id": str(application_id), "tid": str(tenant_id)},
     )
     return cover
+
+
+async def application_max_eligible(
+    session: AsyncSession, tenant_id: uuid.UUID, record: ApplicationRecord
+) -> Decimal:
+    """max_eligible = deposits x product multiplier + live guarantees.
+
+    The issue #15 read model: the committee sees the cap the P7
+    disbursement gate will enforce. A display read (no locks) — the
+    binding check re-verifies under the full lock set at disbursement.
+    """
+    product = await get_product(session, tenant_id, record.product_id)
+    deposits = await _deposit_balance(session, tenant_id, record.member_id)
+    guarantees = await guarantee_total(session, tenant_id, record.id)
+    return to_cents(deposits * product.deposit_multiplier) + guarantees
