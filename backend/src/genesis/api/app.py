@@ -15,6 +15,7 @@ from genesis.api.loan_book import router as loan_book_router
 from genesis.api.loans import router as loans_router
 from genesis.api.me import router as me_router
 from genesis.api.members import router as members_router
+from genesis.api.transactions import router as transactions_router
 from genesis.errors import AppError, ErrorCategory
 from genesis.logging import configure_logging, correlation_id_var
 
@@ -33,6 +34,7 @@ def create_app() -> FastAPI:
     app.include_router(members_router)
     app.include_router(loans_router)
     app.include_router(loan_book_router)
+    app.include_router(transactions_router)
     app.include_router(me_router)
     app.include_router(access_router)
     app.add_middleware(IdempotencyMiddleware)
