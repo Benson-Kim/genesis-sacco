@@ -11,6 +11,7 @@ from genesis.api.access import router as access_router
 from genesis.api.auth import router as auth_router
 from genesis.api.health import router as health_router
 from genesis.api.idempotency import IdempotencyMiddleware
+from genesis.api.loan_book import router as loan_book_router
 from genesis.api.loans import router as loans_router
 from genesis.api.me import router as me_router
 from genesis.api.members import router as members_router
