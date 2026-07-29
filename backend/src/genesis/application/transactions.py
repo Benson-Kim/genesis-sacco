@@ -62,7 +62,11 @@ async def _require_member(
 ) -> None:
     row = (
         await session.execute(
-            text("SELECT status FROM members WHERE id = CAST(:m AS uuid)"),
+            # FOR SHARE holds off a concurrent terminal member exit
+            # (which locks the row FOR UPDATE) until this mutation
+            # commits, closing the TOCTOU window between the status
+            # check and the posting (gate 1.4; P9 pledge precedent).
+            text("SELECT status FROM members WHERE id = CAST(:m AS uuid) FOR SHARE"),
             {"m": str(member_id)},
         )
     ).first()

@@ -36,6 +36,7 @@ from genesis.application.audit import record_audit
 from genesis.application.ledger import post_deposit_interest
 from genesis.domain.deposits import QuarterPeriod, quarterly_interest
 from genesis.domain.money import ZERO, to_cents
+from genesis.errors import InvalidInputError
 
 SessionScope = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
@@ -95,10 +96,14 @@ async def _process_batch(
         exists = (
             await session.execute(
                 text(
+                    # tenant_id matches the UNIQUE idempotency key
+                    # (tenant_id, account_id, period_start) exactly; RLS
+                    # already scopes the row — defence in depth (gate 1.6).
                     "SELECT 1 FROM deposit_interest_accruals "
-                    "WHERE account_id = CAST(:a AS uuid) AND period_start = :ps"
+                    "WHERE tenant_id = CAST(:tid AS uuid) "
+                    "AND account_id = CAST(:a AS uuid) AND period_start = :ps"
                 ),
-                {"a": account_id, "ps": period.start},
+                {"tid": str(tenant_id), "a": account_id, "ps": period.start},
             )
         ).first()
         if exists is not None:
@@ -172,8 +177,13 @@ async def run_deposit_interest_for_tenant(
     """Accrue one completed quarter for every positive-balance account."""
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
-    # Validate the rate once up front (domain rule), not per account.
-    quarterly_interest(ZERO, annual_rate_pct)
+    # Validate the rate once up front (domain rule), not per account,
+    # translated into the shared error taxonomy so non-API callers get
+    # a mapped 4xx instead of an unhandled ValueError (gate 1.2).
+    try:
+        quarterly_interest(ZERO, annual_rate_pct)
+    except ValueError as exc:
+        raise InvalidInputError(str(exc)) from exc
     scanned = 0
     posted = 0
     skipped = 0
