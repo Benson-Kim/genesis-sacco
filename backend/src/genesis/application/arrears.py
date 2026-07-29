@@ -68,12 +68,13 @@ async def _process_batch(
     rows = (
         await session.execute(
             text(
-                "SELECT l.id, l.days_past_due, l.classification, l.provision_pct, "
+                # Static fragments chosen in code; all values are bound parameters.
+                "SELECT l.id, l.days_past_due, l.classification, l.provision_pct, "  # noqa: S608
                 "(SELECT MIN(s.due_date) FROM loan_schedules s "
                 " WHERE s.loan_id = l.id AND s.due_date <= :as_of "
                 " AND s.paid_amount < s.total_due) AS oldest_unpaid "
                 "FROM loans l "
-                f"WHERE l.status = 'active' {clause}"  # noqa: S608
+                f"WHERE l.status = 'active' {clause}"
                 "ORDER BY l.id LIMIT :limit"
             ),
             params,

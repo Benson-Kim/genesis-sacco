@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(members_router)
     app.include_router(loans_router)
+    app.include_router(loan_book_router)
     app.include_router(me_router)
     app.include_router(access_router)
     app.add_middleware(IdempotencyMiddleware)
