@@ -103,6 +103,8 @@ backend:test:
     when: always
     reports:
       junit: backend/report.xml
+    paths:
+      - backend/perf/
 
 backend:migrate-check:
   extends: .backend
