@@ -377,7 +377,7 @@ async def record_repayment(
         },
     )
 
-    new_status = status
+    new_status: LoanStatus = status
     if balance_after == ZERO and penalty_after == ZERO:
         new_status = await _close_loan(session, tenant_id, actor_id, loan_id, ts)
 
