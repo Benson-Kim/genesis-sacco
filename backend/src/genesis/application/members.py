@@ -370,33 +370,19 @@ async def change_member_status(
     if row is None:
         raise NotFoundError(f"member {member_id} not found")
     current_status = MemberStatus(str(row[0]))
+    if new_status is MemberStatus.EXITED:
+        # P12: the settlement workflow (application/member_exits.py) is
+        # the sole writer of the terminal state (issue #14 resolution).
+        # Direct status changes can never bypass eligibility, committee
+        # approval, and the atomic settlement posting.
+        raise ConflictError(
+            "member exit is processed through the exit settlement workflow, "
+            "not by direct status change"
+        )
     try:
         transition(current_status, new_status)
     except InvalidStatusTransitionError as exc:
         raise ConflictError(str(exc)) from exc
-    if new_status is MemberStatus.EXITED:
-        # P12 eligibility invariant, enforced early: live guarantees,
-        # active loans, or open applications block terminal exit.
-        blockers = (
-            await session.execute(
-                text(
-                    "SELECT "
-                    "(SELECT count(*) FROM guarantees "
-                    " WHERE guarantor_member_id = CAST(:m AS uuid) "
-                    " AND status IN ('pledged', 'active')), "
-                    "(SELECT count(*) FROM loans "
-                    " WHERE member_id = CAST(:m AS uuid) AND status = 'active'), "
-                    "(SELECT count(*) FROM loan_applications "
-                    " WHERE member_id = CAST(:m AS uuid) "
-                    " AND stage IN ('submitted', 'appraisal', 'committee', 'approved'))"
-                ),
-                {"m": str(member_id)},
-            )
-        ).first()
-        if blockers is not None and (int(blockers[0]) or int(blockers[1]) or int(blockers[2])):
-            raise ConflictError(
-                "member cannot exit with live guarantees, active loans, or open loan applications"
-            )
     result = cast(
         CursorResult[Any],
         await session.execute(
@@ -429,6 +415,102 @@ async def change_member_status(
         },
     )
     return await get_member(session, member_id)
+
+
+async def mark_member_exited(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+    member_id: uuid.UUID,
+    *,
+    version: int,
+) -> None:
+    """Terminal Exited transition — called ONLY by the P12 settlement service.
+
+    Runs inside the settlement transaction while the caller already
+    holds the member row FOR UPDATE (re-acquiring it here is a no-op in
+    the same transaction). The pure transition function validates the
+    move (gate 1.4); the blockers query is defence in depth — by the
+    time the settlement service calls this, it has already netted the
+    loans and released the guarantees under the full lock set, so any
+    hit means a logic error upstream, not a user-facing state.
+    """
+    row = (
+        await session.execute(
+            text(
+                "SELECT status, version FROM members WHERE id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
+            ),
+            {"id": str(member_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"member {member_id} not found")
+    current_status = MemberStatus(str(row[0]))
+    try:
+        transition(current_status, MemberStatus.EXITED)
+    except InvalidStatusTransitionError as exc:
+        raise ConflictError(str(exc)) from exc
+    blockers = (
+        await session.execute(
+            text(
+                "SELECT "
+                "(SELECT count(*) FROM guarantees "
+                " WHERE guarantor_member_id = CAST(:m AS uuid) "
+                " AND tenant_id = CAST(:tid AS uuid) "
+                " AND status IN ('pledged', 'active')), "
+                "(SELECT count(*) FROM loans "
+                " WHERE member_id = CAST(:m AS uuid) "
+                " AND tenant_id = CAST(:tid AS uuid) AND status = 'active'), "
+                "(SELECT count(*) FROM loan_applications "
+                " WHERE member_id = CAST(:m AS uuid) "
+                " AND tenant_id = CAST(:tid AS uuid) "
+                " AND stage IN ('submitted', 'appraisal', 'committee', 'approved'))"
+            ),
+            {"m": str(member_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if blockers is not None and (int(blockers[0]) or int(blockers[1]) or int(blockers[2])):
+        raise ConflictError(
+            "member cannot exit with live guarantees, active loans, or open loan applications"
+        )
+    result = cast(
+        CursorResult[Any],
+        await session.execute(
+            text(
+                "UPDATE members SET status = :st, version = version + 1, updated_at = now() "
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "AND version = :ver"
+            ),
+            {
+                "st": MemberStatus.EXITED.value,
+                "id": str(member_id),
+                "tid": str(tenant_id),
+                "ver": version,
+            },
+        ),
+    )
+    if result.rowcount != 1:
+        raise ConflictError(f"stale version {version} for member {member_id}")
+    await _audit(
+        session,
+        tenant_id,
+        actor_id,
+        "member.status",
+        str(member_id),
+        before={"status": current_status.value},
+        after={"status": MemberStatus.EXITED.value},
+    )
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="member.status_changed",
+        payload={
+            "member_id": str(member_id),
+            "from": current_status.value,
+            "to": MemberStatus.EXITED.value,
+        },
+    )
 
 
 async def member_statement(

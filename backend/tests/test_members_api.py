@@ -197,7 +197,9 @@ def test_stale_version_edit_returns_409() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_status_transitions_and_terminal_exit() -> None:
+def test_status_transitions_and_exit_is_workflow_only() -> None:
+    """Active<->Arrears over the API; 'exited' only via the P12 workflow."""
+
     async def run() -> None:
         _, token = await _seed_actor()
         headers = _headers(token)
@@ -208,7 +210,7 @@ def test_status_transitions_and_terminal_exit() -> None:
                 headers=headers,
             )
             mid = created.json()["id"]
-            steps = [(1, "arrears"), (2, "active"), (3, "exited")]
+            steps = [(1, "arrears"), (2, "active")]
             for version, status in steps:
                 res = await client.post(
                     f"/members/{mid}/status",
@@ -217,12 +219,29 @@ def test_status_transitions_and_terminal_exit() -> None:
                 )
                 assert res.status_code == 200, (version, status)
                 assert res.json()["status"] == status
-            illegal = await client.post(
+            # P12: the settlement workflow is the sole writer of the
+            # terminal state — direct status changes are rejected even
+            # for a System Admin (issue #14 resolution).
+            direct_exit = await client.post(
                 f"/members/{mid}/status",
-                json={"version": 4, "status": "active"},
+                json={"version": 3, "status": "exited"},
                 headers=headers,
             )
-        assert illegal.status_code == 409
+            assert direct_exit.status_code == 409
+            still_active = await client.get(f"/members/{mid}", headers=headers)
+            assert still_active.json()["status"] == "active"
+            illegal = await client.post(
+                f"/members/{mid}/status",
+                json={"version": 3, "status": "arrears"},
+                headers=headers,
+            )
+            assert illegal.status_code == 200  # arrears is still legal
+            illegal_back = await client.post(
+                f"/members/{mid}/status",
+                json={"version": 3, "status": "active"},
+                headers=headers,
+            )
+        assert illegal_back.status_code == 409  # stale version -> 409
 
     asyncio.run(run())
 
@@ -436,45 +455,34 @@ async def _seed_actor_with_members_perms(*, edit: bool, approve: bool) -> tuple[
     return tid, token
 
 
-def test_exit_requires_approve_permission() -> None:
+def test_direct_exit_rejected_for_every_permission_level() -> None:
+    """P12 sole-writer rule: not even members:approve can exit directly.
+
+    Under P8 (issue #14) approvers could set 'exited' via the status
+    route as an interim control; P12 replaces that with the settlement
+    workflow, so the direct route now 409s regardless of permissions.
+    """
+
     async def run() -> None:
-        _, editor_token = await _seed_actor_with_members_perms(edit=True, approve=False)
-        editor = _headers(editor_token)
-        async with api_client() as client:
-            created = await client.post(
-                "/members",
-                json={"type": "person", "name": "Governed Exit"},
-                headers=editor,
-            )
-            assert created.status_code == 201
-            mid = created.json()["id"]
-            arrears = await client.post(
-                f"/members/{mid}/status",
-                json={"version": 1, "status": "arrears"},
-                headers=editor,
-            )
-            assert arrears.status_code == 200
-            denied = await client.post(
-                f"/members/{mid}/status",
-                json={"version": 2, "status": "exited"},
-                headers=editor,
-            )
-            assert denied.status_code == 403
-        _, approver_token = await _seed_actor_with_members_perms(edit=True, approve=True)
-        approver = _headers(approver_token)
-        async with api_client() as client:
-            created = await client.post(
-                "/members",
-                json={"type": "person", "name": "Approved Exit"},
-                headers=approver,
-            )
-            mid = created.json()["id"]
-            exited = await client.post(
-                f"/members/{mid}/status",
-                json={"version": 1, "status": "exited"},
-                headers=approver,
-            )
-        assert exited.status_code == 200
+        for approve in (False, True):
+            _, token = await _seed_actor_with_members_perms(edit=True, approve=approve)
+            headers = _headers(token)
+            async with api_client() as client:
+                created = await client.post(
+                    "/members",
+                    json={"type": "person", "name": "Governed Exit"},
+                    headers=headers,
+                )
+                assert created.status_code == 201
+                mid = created.json()["id"]
+                denied = await client.post(
+                    f"/members/{mid}/status",
+                    json={"version": 1, "status": "exited"},
+                    headers=headers,
+                )
+                assert denied.status_code == 409, f"approve={approve}"
+                unchanged = await client.get(f"/members/{mid}", headers=headers)
+                assert unchanged.json()["status"] == "active"
 
     asyncio.run(run())
 
@@ -553,7 +561,7 @@ def test_list_members_with_status_and_type_filters() -> None:
 
 
 def test_exit_blocked_by_open_loan_application() -> None:
-    """Covers the blocker check in change_member_status for open applications."""
+    """An open application blocks the P12 exit request (eligibility)."""
 
     async def run() -> None:
         tid, token = await _seed_actor()
@@ -592,8 +600,8 @@ def test_exit_blocked_by_open_loan_application() -> None:
             )
         async with api_client() as client:
             res = await client.post(
-                f"/members/{mid}/status",
-                json={"version": 1, "status": "exited"},
+                "/member-exits",
+                json={"member_id": mid},
                 headers=headers,
             )
         assert res.status_code == 409

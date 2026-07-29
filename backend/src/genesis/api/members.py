@@ -2,8 +2,9 @@
 
 Every route carries a RequirePermission dependency (deny-by-default);
 mutations are idempotent via the Idempotency-Key middleware (gate 1.4).
-Terminal exit additionally requires members:approve (issue #14) until
-P12 makes the settlement workflow the sole writer of 'exited'.
+Terminal exit is owned exclusively by the P12 settlement workflow
+(/member-exits; issue #14 resolved): direct status changes to 'exited'
+are rejected by the service with 409.
 """
 
 from __future__ import annotations
@@ -16,11 +17,9 @@ from pydantic import BaseModel, Field
 
 from genesis.api.authz import RequirePermission
 from genesis.application import members as members_service
-from genesis.application import rbac as rbac_service
 from genesis.application.auth import AuthContext
 from genesis.domain.members import MemberStatus, MemberType
 from genesis.domain.rbac import Action, Module
-from genesis.errors import ForbiddenError
 from genesis.infrastructure.db import get_sessionmaker
 from genesis.infrastructure.tenancy import tenant_session
 from genesis.settings import get_settings
@@ -34,22 +33,6 @@ _edit = RequirePermission(Module.MEMBERS, Action.EDIT)
 ViewCtx = Annotated[AuthContext, Depends(_view)]
 CreateCtx = Annotated[AuthContext, Depends(_create)]
 EditCtx = Annotated[AuthContext, Depends(_edit)]
-
-
-async def _require_members_approve(ctx: AuthContext) -> None:
-    """Second authz factor for governed transitions (issue #14).
-
-    Terminal exit bypasses the P12 settlement workflow if left open to
-    plain editors, so it demands members:approve in addition to the
-    route-level members:edit.
-    """
-    factory = get_sessionmaker(get_settings().database_url)
-    async with tenant_session(factory, ctx.tenant_id) as session:
-        allowed = await rbac_service.has_permission(
-            session, ctx.role_id, Module.MEMBERS, Action.APPROVE
-        )
-    if not allowed:
-        raise ForbiddenError("members:approve required to exit a member")
 
 
 class MemberCreateBody(BaseModel):
@@ -206,8 +189,7 @@ async def update_member(member_id: uuid.UUID, body: MemberUpdateBody, ctx: EditC
 
 @router.post("/{member_id}/status")
 async def change_status(member_id: uuid.UUID, body: MemberStatusBody, ctx: EditCtx) -> MemberOut:
-    if body.status is MemberStatus.EXITED:
-        await _require_members_approve(ctx)
+    """Active<->Arrears only; 'exited' is owned by the P12 settlement workflow."""
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         record = await members_service.change_member_status(
