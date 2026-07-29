@@ -79,6 +79,7 @@ class Account(enum.StrEnum):
     # Income accounts
     INTEREST_INCOME = "income.interest"
     PENALTY_INCOME = "income.penalties"
+    FEE_INCOME = "income.fees"
 
     # Expense accounts
     INTEREST_EXPENSE = "interest.expense"
@@ -325,6 +326,81 @@ def build_deposit_interest_posting(amount: Decimal) -> PostingSpec:
             LedgerLine(account=Account.INTEREST_EXPENSE, side=Side.DEBIT, amount=amt),
             LedgerLine(account=Account.MEMBER_DEPOSITS, side=Side.CREDIT, amount=amt),
         ),
+    )
+
+
+def build_exit_settlement_posting(
+    *,
+    shares: Decimal,
+    deposits: Decimal,
+    loan_principal: Decimal,
+    loan_interest: Decimal,
+    loan_penalties: Decimal,
+    fee: Decimal,
+    channel: Channel,
+) -> PostingSpec:
+    """Exit settlement set-off (P12): one balanced posting, no suspense leg.
+
+    DR member.shares + DR member.deposits — the member equity being
+    extinguished; CR loans.receivable / income.interest /
+    income.penalties — the loan payoff netted inside the settlement
+    (the P10 early-settlement split: principal, interest already due,
+    penalties); CR income.fees — the tenant-configured exit fee;
+    CR cash — the net refund actually paid out.
+
+    Balanced by construction: net = equity - loan components - fee, so
+    DR(shares + deposits) == CR(loan + fee + net). Guards:
+      * every component must be non-negative
+      * a negative net settlement can never be posted (the documented
+        P12 rule rejects it at request time; this is the final gate)
+      * a positive net refund requires a cash channel (MPESA/BANK);
+        a zero-net set-off moves no cash and posts as INTERNAL
+      * zero-equity settlements have nothing to post — the caller
+        skips the ledger entirely (ValueError here is the guard)
+    """
+    shares = to_cents(shares)
+    deposits = to_cents(deposits)
+    loan_principal = to_cents(loan_principal)
+    loan_interest = to_cents(loan_interest)
+    loan_penalties = to_cents(loan_penalties)
+    fee = to_cents(fee)
+    if min(shares, deposits, loan_principal, loan_interest, loan_penalties, fee) < ZERO:
+        raise ValueError("exit settlement components must not be negative")
+    equity = to_cents(shares + deposits)
+    net = to_cents(equity - loan_principal - loan_interest - loan_penalties - fee)
+    if net < ZERO:
+        raise ValueError("a negative exit settlement cannot be posted")
+    if equity <= ZERO:
+        raise ValueError("exit settlement with zero equity has nothing to post")
+    lines: list[LedgerLine] = []
+    if shares > ZERO:
+        lines.append(LedgerLine(account=Account.MEMBER_SHARES, side=Side.DEBIT, amount=shares))
+    if deposits > ZERO:
+        lines.append(LedgerLine(account=Account.MEMBER_DEPOSITS, side=Side.DEBIT, amount=deposits))
+    if loan_principal > ZERO:
+        lines.append(
+            LedgerLine(account=Account.LOANS_RECEIVABLE, side=Side.CREDIT, amount=loan_principal)
+        )
+    if loan_interest > ZERO:
+        lines.append(
+            LedgerLine(account=Account.INTEREST_INCOME, side=Side.CREDIT, amount=loan_interest)
+        )
+    if loan_penalties > ZERO:
+        lines.append(
+            LedgerLine(account=Account.PENALTY_INCOME, side=Side.CREDIT, amount=loan_penalties)
+        )
+    if fee > ZERO:
+        lines.append(LedgerLine(account=Account.FEE_INCOME, side=Side.CREDIT, amount=fee))
+    if net > ZERO:
+        cash = _cash_account(channel)
+        if cash is Account.SUSPENSE:
+            raise ValueError("a net exit refund requires a cash channel (mpesa or bank)")
+        lines.append(LedgerLine(account=cash, side=Side.CREDIT, amount=net))
+    return PostingSpec(
+        txn_type=TxnType.EXIT_SETTLEMENT,
+        channel=channel,
+        amount=equity,
+        lines=tuple(lines),
     )
 
 
