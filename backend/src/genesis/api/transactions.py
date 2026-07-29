@@ -40,6 +40,13 @@ TxnEditCtx = Annotated[AuthContext, Depends(_txn_edit)]
 
 
 class MoneyBody(BaseModel):
+    """extra="forbid": a caller-sent occurred_at (or any money field this
+    contract does not own) is a 422, never silently ignored — the
+    posting date is resolved server-side (issue #12, gate 1.6).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     #: decimal_places=2 rejects sub-cent amounts at the contract instead
     #: of silently rounding them into the ledger (P10 precedent).
     amount: Decimal = Field(gt=0, le=1_000_000_000, decimal_places=2)

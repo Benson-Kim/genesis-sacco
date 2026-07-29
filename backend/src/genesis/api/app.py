@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from genesis.api.access import router as access_router
+from genesis.api.accounting_periods import router as accounting_periods_router
 from genesis.api.auth import router as auth_router
 from genesis.api.health import router as health_router
 from genesis.api.idempotency import IdempotencyMiddleware
@@ -37,6 +38,7 @@ def create_app() -> FastAPI:
     app.include_router(loans_router)
     app.include_router(loan_book_router)
     app.include_router(transactions_router)
+    app.include_router(accounting_periods_router)
     app.include_router(me_router)
     app.include_router(access_router)
     app.add_middleware(IdempotencyMiddleware)
