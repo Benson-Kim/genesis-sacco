@@ -327,22 +327,9 @@ async def request_exit(
     if computation.net_payable < ZERO:
         # Documented negative-settlement rule (genesis.domain.exits):
         # the SACCO never auto-claims funds it does not hold. Least
-        # disclosure: the shortfall figure lives in the audit row only.
-        await record_audit(
-            session,
-            tenant_id,
-            actor_id,
-            action="member_exit.rejected_negative",
-            entity="member_exits",
-            entity_id=str(member_id),
-            after={
-                "member_id": str(member_id),
-                "equity": str(computation.equity),
-                "loan_total": str(computation.loan_total),
-                "fee": str(computation.fee),
-                "net_payable": str(computation.net_payable),
-            },
-        )
+        # disclosure (gate 1.6): the shortfall figure is never echoed —
+        # staff entitled to it can read the balances via their normal
+        # endpoints. Nothing is persisted: the rejection rolls back.
         raise ConflictError(
             "the outstanding loan payoff exceeds the member's equity: "
             "reduce the loan before requesting exit"
