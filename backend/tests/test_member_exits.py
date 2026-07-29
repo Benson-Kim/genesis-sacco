@@ -291,10 +291,7 @@ async def _settlement_side_effects(tid: uuid.UUID) -> tuple[int, int, int, int]:
         ).scalar_one()
         events = (
             await session.execute(
-                text(
-                    "SELECT count(*) FROM outbox_events "
-                    "WHERE event_type = 'member_exit.settled'"
-                )
+                text("SELECT count(*) FROM outbox_events WHERE event_type = 'member_exit.settled'")
             )
         ).scalar_one()
     return int(txns), int(legs), int(audits), int(events)
@@ -386,10 +383,7 @@ def test_double_submit_creates_exactly_one_open_settlement() -> None:
         async with tenant_session(factory(), tid) as session:
             rows = (
                 await session.execute(
-                    text(
-                        "SELECT count(*) FROM member_exits "
-                        "WHERE member_id = CAST(:m AS uuid)"
-                    ),
+                    text("SELECT count(*) FROM member_exits WHERE member_id = CAST(:m AS uuid)"),
                     {"m": str(mid)},
                 )
             ).scalar_one()
