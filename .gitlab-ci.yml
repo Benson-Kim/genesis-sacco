@@ -102,6 +102,7 @@ backend:test:
   # them into the description (artifact download needs an api-scope token).
   after_script:
     - cat backend/perf/explain_p10.txt || true
+    - cat backend/perf/explain_p13.txt || true
   coverage: '/TOTAL.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
   artifacts:
     when: always

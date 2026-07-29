@@ -72,6 +72,30 @@ _EXPORT_COLS = (
     "as_of, completed_at, version, created_at"
 )
 
+#: Job claim: oldest pending export, skipping rows a concurrent runner
+#: holds (gate 1.4). Served by the partial idx_exports_requested
+#: (0013); module-level so the P13 EXPLAIN test captures this exact
+#: statement.
+CLAIM_SQL = (
+    f"SELECT {_EXPORT_COLS} FROM exports "  # noqa: S608 - static columns
+    "WHERE tenant_id = CAST(:tid AS uuid) AND status = 'requested' "
+    "ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED"
+)
+
+#: Download-token resolution: served by the two UNIQUE token indexes
+#: (BitmapOr) plus the explicit tenant predicate on top of RLS.
+DOWNLOAD_SQL = (
+    "SELECT e.id, e.report, e.as_of, e.requested_by, a.row_count, "
+    "a.truncated, a.row_limit, a.expires_at, "
+    "(a.csv_token = :token) AS is_csv, "
+    "CASE WHEN a.csv_token = :token THEN a.csv_content "
+    "ELSE a.pdf_content END AS content "
+    "FROM export_artifacts a "
+    "JOIN exports e ON e.id = a.export_id AND e.tenant_id = a.tenant_id "
+    "WHERE a.tenant_id = CAST(:tid AS uuid) "
+    "AND (a.csv_token = :token OR a.pdf_token = :token)"
+)
+
 
 # ---------------------------------------------------------------------------
 # Server-side export configuration (P13 blocker a). Small accessors so
@@ -358,14 +382,7 @@ async def run_export_job(session: AsyncSession, tenant_id: uuid.UUID) -> ExportJ
     Returns None when no job is pending.
     """
     claim = (
-        await session.execute(
-            text(
-                f"SELECT {_EXPORT_COLS} FROM exports "  # noqa: S608
-                "WHERE tenant_id = CAST(:tid AS uuid) AND status = 'requested' "
-                "ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED"
-            ),
-            {"tid": str(tenant_id)},
-        )
+        await session.execute(text(CLAIM_SQL), {"tid": str(tenant_id)})
     ).first()
     if claim is None:
         return None
@@ -589,20 +606,7 @@ async def download_artifact(
     doubles the RLS fence (P13 blocker c).
     """
     row = (
-        await session.execute(
-            text(
-                "SELECT e.id, e.report, e.as_of, e.requested_by, a.row_count, "
-                "a.truncated, a.row_limit, a.expires_at, "
-                "(a.csv_token = :token) AS is_csv, "
-                "CASE WHEN a.csv_token = :token THEN a.csv_content "
-                "ELSE a.pdf_content END AS content "
-                "FROM export_artifacts a "
-                "JOIN exports e ON e.id = a.export_id AND e.tenant_id = a.tenant_id "
-                "WHERE a.tenant_id = CAST(:tid AS uuid) "
-                "AND (a.csv_token = :token OR a.pdf_token = :token)"
-            ),
-            {"token": token, "tid": str(tenant_id)},
-        )
+        await session.execute(text(DOWNLOAD_SQL), {"token": token, "tid": str(tenant_id)})
     ).first()
     if (
         row is None
