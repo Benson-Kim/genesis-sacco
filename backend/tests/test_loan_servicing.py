@@ -1009,9 +1009,7 @@ def test_repayments_advance_schedule_paid_amounts() -> None:
         assert rows[0].paid_amount == rows[0].total_due  # installment 1 settled
         assert all(r.paid_amount == Decimal("0.00") for r in rows[1:])
         # DPD is clear again as of today.
-        result = await run_arrears_for_tenant(
-            _scope(tid), tid, as_of=datetime.now(UTC).date()
-        )
+        result = await run_arrears_for_tenant(_scope(tid), tid, as_of=datetime.now(UTC).date())
         assert result.updated == 0  # already normal; nothing changes
 
     asyncio.run(run())
@@ -1027,9 +1025,7 @@ def test_settlement_quote_as_of_future_date() -> None:
         future = datetime.now(UTC).date() + timedelta(days=40)
         async with tenant_session(factory(), tid) as session:
             quote_now = await loans_service.get_settlement_quote(session, loan_id)
-            quote_future = await loans_service.get_settlement_quote(
-                session, loan_id, as_of=future
-            )
+            quote_future = await loans_service.get_settlement_quote(session, loan_id, as_of=future)
         assert quote_now.interest_due == Decimal("0.00")
         assert quote_future.interest_due == schedule[0].interest_due
         assert isinstance(future, date)

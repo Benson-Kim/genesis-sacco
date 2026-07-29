@@ -70,9 +70,7 @@ FROM loans WHERE status = 'active'
 
 
 async def _explain(session: AsyncSession, sql: str, params: dict[str, object]) -> str:
-    rows = (
-        await session.execute(text(f"EXPLAIN (ANALYZE, BUFFERS) {sql}"), params)
-    ).scalars()
+    rows = (await session.execute(text(f"EXPLAIN (ANALYZE, BUFFERS) {sql}"), params)).scalars()
     return "\n".join(str(r) for r in rows)
 
 
