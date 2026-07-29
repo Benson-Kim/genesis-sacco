@@ -684,12 +684,14 @@ async def disburse_loan(
     app_row = (
         await session.execute(
             text(
+                # Explicit tenant predicate on the row-lock read, on top
+                # of RLS (defence in depth, gate 1.6 v1.1; issue #17).
                 "SELECT id, member_id, product_id, amount, term_months, "
                 "rate_pct, stage, version "
                 "FROM loan_applications "
-                "WHERE id = CAST(:id AS uuid) FOR UPDATE"
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
-            {"id": str(application_id)},
+            {"id": str(application_id), "tid": str(tenant_id)},
         )
     ).first()
     if app_row is None:

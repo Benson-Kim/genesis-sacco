@@ -31,6 +31,7 @@ from genesis.application import members as members_service
 from genesis.application import transactions as txn_service
 from genesis.application.ledger import post_reversal
 from genesis.domain.committee import Vote
+from genesis.domain.ledger import Channel
 from genesis.domain.lending import ApplicationStage
 from genesis.errors import NotFoundError
 from genesis.infrastructure.tenancy import tenant_session

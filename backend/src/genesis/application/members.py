@@ -569,6 +569,7 @@ async def member_statement(
                 "SELECT occurred_at, id, txn_ref, type, channel, amount "  # noqa: S608
                 "FROM transactions "
                 "WHERE member_id = CAST(:mid AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) "
                 f"{keyset}"
                 "ORDER BY occurred_at DESC, id DESC LIMIT :limit"
             ),

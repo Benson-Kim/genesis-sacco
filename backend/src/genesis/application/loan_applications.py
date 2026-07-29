@@ -485,9 +485,9 @@ async def cast_vote(
             text(
                 "UPDATE loan_applications SET stage = :st, "
                 "version = version + 1, updated_at = now() "
-                "WHERE id = CAST(:id AS uuid)"
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
             ),
-            {"st": target.value, "id": str(application_id)},
+            {"st": target.value, "id": str(application_id), "tid": str(tenant_id)},
         )
         stage = target
         await record_audit(
