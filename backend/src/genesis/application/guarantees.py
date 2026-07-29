@@ -72,7 +72,11 @@ async def pledge_guarantee(
         raise InvalidInputError("a member cannot guarantee their own loan")
     guarantor_row = (
         await session.execute(
-            text("SELECT status FROM members WHERE id = CAST(:m AS uuid)"),
+            # FOR SHARE holds off a concurrent terminal member exit
+            # (which locks the row FOR UPDATE) until this pledge commits,
+            # closing the TOCTOU window between the status check and the
+            # insert (gate 1.4).
+            text("SELECT status FROM members WHERE id = CAST(:m AS uuid) FOR SHARE"),
             {"m": str(guarantor_member_id)},
         )
     ).first()
@@ -112,8 +116,10 @@ async def pledge_guarantee(
     )
     available = balance - pledged
     if amount > available:
+        # Least disclosure (gate 1.6): the available capacity derives from
+        # the guarantor's deposit balance and is never echoed to callers.
         raise ConflictError(
-            f"insufficient guarantor capacity: requested {amount}, available {available}"
+            f"insufficient guarantor capacity: requested {amount} exceeds available capacity"
         )
     guarantee_id = uuid.uuid4()
     await session.execute(

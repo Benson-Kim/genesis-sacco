@@ -25,8 +25,9 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from typing import Any, cast
 
-from sqlalchemy import text
+from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application.audit import record_audit
@@ -60,6 +61,13 @@ async def _process_batch(
     The scan walks idx_loans_active_scan (tenant_id, id WHERE status =
     'active'); the oldest-unpaid-installment subquery is served by
     idx_schedules_unpaid.
+
+    Rows are read FOR UPDATE SKIP LOCKED (gate 1.4): days-past-due is
+    computed and written under the loan row lock, so it can never
+    interleave with a concurrent repayment (which takes the same lock).
+    A loan mid-repayment is skipped and picked up by the next run; the
+    UPDATE re-checks status = 'active' as defence in depth so a closed
+    loan is never reclassified.
     """
     clause = "AND l.id > CAST(:after AS uuid) " if after_id is not None else ""
     params: dict[str, object] = {"as_of": as_of, "limit": batch_size}
@@ -75,7 +83,8 @@ async def _process_batch(
                 " AND s.paid_amount < s.total_due) AS oldest_unpaid "
                 "FROM loans l "
                 f"WHERE l.status = 'active' {clause}"
-                "ORDER BY l.id LIMIT :limit"
+                "ORDER BY l.id LIMIT :limit "
+                "FOR UPDATE OF l SKIP LOCKED"
             ),
             params,
         )
@@ -94,19 +103,24 @@ async def _process_batch(
             and computed.provision_pct == stored_prov
         ):
             continue  # idempotency: identical state is never rewritten
-        await session.execute(
-            text(
-                "UPDATE loans SET days_past_due = :dpd, classification = :cls, "
-                "provision_pct = :prov, updated_at = now() "
-                "WHERE id = CAST(:id AS uuid)"
+        result = cast(
+            CursorResult[Any],
+            await session.execute(
+                text(
+                    "UPDATE loans SET days_past_due = :dpd, classification = :cls, "
+                    "provision_pct = :prov, updated_at = now() "
+                    "WHERE id = CAST(:id AS uuid) AND status = 'active'"
+                ),
+                {
+                    "dpd": dpd,
+                    "cls": computed.label.value,
+                    "prov": str(computed.provision_pct),
+                    "id": loan_id,
+                },
             ),
-            {
-                "dpd": dpd,
-                "cls": computed.label.value,
-                "prov": str(computed.provision_pct),
-                "id": loan_id,
-            },
         )
+        if result.rowcount != 1:  # pragma: no cover - unreachable under the row lock
+            continue
         await record_audit(
             session,
             tenant_id,

@@ -31,6 +31,7 @@ from genesis.application.audit import record_audit
 from genesis.application.guarantees import release_guarantees_for_loan
 from genesis.application.ledger import post_allocated_repayment
 from genesis.application.outbox import enqueue_event
+from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
 from genesis.domain.ledger import Channel
 from genesis.domain.lending import (
     LoanClass,
@@ -38,6 +39,7 @@ from genesis.domain.lending import (
     RepaymentAllocation,
     SettlementQuote,
     allocate_repayment,
+    classify,
     loan_transition,
     settlement_quote,
 )
@@ -170,12 +172,7 @@ async def list_loans(
         clauses.append("classification = :cls")
         params["cls"] = classification.value
     if cursor:
-        ts_raw, _, id_raw = cursor.partition("|")
-        try:
-            params["c_ts"] = datetime.fromisoformat(ts_raw)
-            params["c_id"] = str(uuid.UUID(id_raw))
-        except ValueError as exc:
-            raise InvalidInputError("invalid loan cursor") from exc
+        params["c_ts"], params["c_id"] = parse_created_id_cursor(cursor, entity="loan")
         clauses.append("(created_at, id) < (:c_ts, CAST(:c_id AS uuid))")
     where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
     # Static fragments chosen in code; all values are bound parameters.
@@ -194,7 +191,7 @@ async def list_loans(
     next_cursor = None
     if len(rows) > limit and page_rows:
         last = page_rows[-1]
-        next_cursor = f"{last[0].isoformat()}|{last[1]}"
+        next_cursor = build_created_id_cursor(last[0], last[1])
     return items, next_cursor
 
 
@@ -404,15 +401,26 @@ async def _close_loan(
     held; the status machine is the single gatekeeper (gate 1.4).
     """
     target = loan_transition(LoanStatus.ACTIVE, LoanStatus.CLOSED)
+    # Fully repaid: the prudential state returns to day zero. Leaving a
+    # stale classification (e.g. 'doubtful' with a 50% provision) on a
+    # closed loan would misstate its record and any per-loan reporting.
+    healthy = classify(0)
     result = cast(
         CursorResult[Any],
         await session.execute(
             text(
                 "UPDATE loans SET status = :st, closed_at = :ts, days_past_due = 0, "
+                "classification = :cls, provision_pct = :prov, "
                 "version = version + 1, updated_at = :ts "
                 "WHERE id = CAST(:id AS uuid) AND status = 'active'"
             ),
-            {"st": target.value, "ts": ts, "id": str(loan_id)},
+            {
+                "st": target.value,
+                "ts": ts,
+                "cls": healthy.label.value,
+                "prov": str(healthy.provision_pct),
+                "id": str(loan_id),
+            },
         ),
     )
     if result.rowcount != 1:  # pragma: no cover - unreachable under the row lock
@@ -426,7 +434,7 @@ async def _close_loan(
         entity="loans",
         entity_id=str(loan_id),
         before={"status": LoanStatus.ACTIVE.value},
-        after={"status": target.value},
+        after={"status": target.value, "classification": healthy.label.value},
     )
     await enqueue_event(
         session,

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
 from typing import Any, cast
 
@@ -22,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from genesis.application.audit import record_audit
 from genesis.application.loan_products import get_product
 from genesis.application.outbox import enqueue_event
+from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
 from genesis.domain.committee import Decision, Vote, decide
 from genesis.domain.lending import ApplicationStage, InvalidTransitionError, transition
 from genesis.domain.money import ZERO, to_cents
@@ -284,12 +284,7 @@ async def list_applications(
         clauses.append("stage = :stage")
         params["stage"] = stage.value
     if cursor:
-        ts_raw, _, id_raw = cursor.partition("|")
-        try:
-            params["c_ts"] = datetime.fromisoformat(ts_raw)
-            params["c_id"] = str(uuid.UUID(id_raw))
-        except ValueError as exc:
-            raise InvalidInputError("invalid application cursor") from exc
+        params["c_ts"], params["c_id"] = parse_created_id_cursor(cursor, entity="application")
         clauses.append("(created_at, id) < (:c_ts, CAST(:c_id AS uuid))")
     where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
     # Static fragments chosen in code; all values are bound parameters.
@@ -308,7 +303,7 @@ async def list_applications(
     next_cursor = None
     if len(rows) > limit and page_rows:
         last = page_rows[-1]
-        next_cursor = f"{last[0].isoformat()}|{last[1]}"
+        next_cursor = build_created_id_cursor(last[0], last[1])
     return items, next_cursor
 
 

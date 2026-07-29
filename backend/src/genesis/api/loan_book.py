@@ -53,12 +53,30 @@ def _require_cash_channel(channel: Channel) -> Channel:
     return channel
 
 
+def _resolve_as_of(as_of: date | None) -> date:
+    """Default to today and reject future dates (gate 1.6).
+
+    A future as_of would let a caller inflate days-past-due (mass
+    reclassification and provisioning distortion via the arrears job) or
+    fabricate interest that is not yet due (settlement quotes).
+    Backdating stays allowed for reconciliation and idempotent re-runs.
+    """
+    today = datetime.now(UTC).date()
+    if as_of is None:
+        return today
+    if as_of > today:
+        raise InvalidInputError("as_of must not be in the future")
+    return as_of
+
+
 class DisburseBody(BaseModel):
     channel: Channel
 
 
 class RepaymentBody(BaseModel):
-    amount: Decimal = Field(gt=0, le=1_000_000_000)
+    #: decimal_places=2 rejects sub-cent amounts at the contract instead
+    #: of silently rounding them into the ledger.
+    amount: Decimal = Field(gt=0, le=1_000_000_000, decimal_places=2)
     channel: Channel
 
 
@@ -246,7 +264,7 @@ async def get_settlement_quote(
     ctx: BookViewCtx,
     as_of: date | None = None,
 ) -> SettlementQuoteOut:
-    quote_date = as_of or datetime.now(UTC).date()
+    quote_date = _resolve_as_of(as_of)
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         quote = await loans_service.get_settlement_quote(session, loan_id, as_of=quote_date)
@@ -324,7 +342,7 @@ async def run_arrears(body: ArrearsRunBody, ctx: BookEditCtx) -> ArrearsRunOut:
     exists for operations and backfills. Each batch commits its own
     short transaction (gate 1.3).
     """
-    as_of = body.as_of or datetime.now(UTC).date()
+    as_of = _resolve_as_of(body.as_of)
     factory = get_sessionmaker(get_settings().database_url)
     result = await arrears_service.run_arrears_for_tenant(
         partial(tenant_session, factory, ctx.tenant_id),
