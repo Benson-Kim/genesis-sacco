@@ -216,7 +216,7 @@ async def run_deposit_interest(body: InterestRunBody, ctx: TxnEditCtx) -> Intere
     concurrent run at worst re-resolves an already finished period,
     which the UNIQUE claim turns into skips.
 
-    Permission (P4 matrix, verified): Transactions × EDIT. Posting
+    Permission (P4 matrix, verified): transactions x EDIT. Posting
     interest is back-office ledger maintenance, so it belongs to the
     roles the matrix grants transactions:edit (System Admin, Branch
     Manager, Accountant) — deliberately not transactions:create, which

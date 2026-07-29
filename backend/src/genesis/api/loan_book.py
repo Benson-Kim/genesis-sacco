@@ -319,7 +319,7 @@ async def run_arrears(body: ArrearsRunBody, ctx: BookEditCtx) -> ArrearsRunOut:
     exists for operations and backfills. Each batch commits its own
     short transaction (gate 1.3).
 
-    Permission (P4 matrix, verified): Loan-book × EDIT. Reclassifying
+    Permission (P4 matrix, verified): loan_book x EDIT. Reclassifying
     days-past-due/provisioning rewrites loan-book rows, so the job sits
     with the roles the matrix grants loan_book:edit (System Admin,
     Branch Manager) — not loan_book:approve (a committee decision

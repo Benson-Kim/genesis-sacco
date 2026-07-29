@@ -14,24 +14,21 @@ from __future__ import annotations
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
-from typing import TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 SessionScope = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
-T = TypeVar("T")
-
 #: One batch of work: (session, keyset cursor) -> (rows scanned, new
 #: cursor, job-specific payload). The payload carries whatever the job
 #: accumulates per batch (e.g. update counts, posted totals).
-BatchProcessor = Callable[
+type BatchProcessor[T] = Callable[
     [AsyncSession, uuid.UUID | None],
     Awaitable[tuple[int, uuid.UUID | None, T]],
 ]
 
 
-async def run_in_batches(
+async def run_in_batches[T](
     session_scope: SessionScope,
     process_batch: BatchProcessor[T],
     *,
