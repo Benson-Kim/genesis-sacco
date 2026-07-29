@@ -15,7 +15,6 @@ No I/O in the domain layer; all DB access lives here.
 from __future__ import annotations
 
 import calendar
-import json
 import uuid
 import zlib
 from dataclasses import dataclass
@@ -26,6 +25,7 @@ from typing import Any, cast
 from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from genesis.application.audit import record_audit
 from genesis.application.outbox import enqueue_event
 from genesis.domain.ledger import (
     Account,
@@ -118,38 +118,6 @@ async def _next_ref(
 
 
 # ---------------------------------------------------------------------------
-# Audit helper
-# ---------------------------------------------------------------------------
-
-
-async def _audit(
-    session: AsyncSession,
-    tenant_id: uuid.UUID,
-    actor_id: uuid.UUID | None,
-    action: str,
-    entity: str,
-    entity_id: str,
-    after: dict[str, object],
-) -> None:
-    await session.execute(
-        text(
-            "INSERT INTO audit_log "
-            "(tenant_id, actor_id, action, entity, entity_id, after) "
-            "VALUES (CAST(:tid AS uuid), CAST(:actor AS uuid), "
-            ":action, :entity, :entity_id, CAST(:after AS jsonb))"
-        ),
-        {
-            "tid": str(tenant_id),
-            "actor": str(actor_id) if actor_id else None,
-            "action": action,
-            "entity": entity,
-            "entity_id": entity_id,
-            "after": json.dumps(after),
-        },
-    )
-
-
-# ---------------------------------------------------------------------------
 # Core posting primitive
 # ---------------------------------------------------------------------------
 
@@ -213,8 +181,8 @@ async def _post(
     # Insert all ledger lines.
     await _insert_lines(session, tenant_id, txn_id, spec.lines)
 
-    # Audit log (gate 1.5).
-    await _audit(
+    # Audit log (gate 1.5) via the shared in-transaction writer.
+    await record_audit(
         session,
         tenant_id,
         actor_id,
@@ -593,7 +561,7 @@ async def post_reversal(
         reversal_of_id=original_txn_id,
     )
 
-    await _audit(
+    await record_audit(
         session,
         tenant_id,
         actor_id,
@@ -768,7 +736,7 @@ async def disburse_loan(
         )
 
     # Audit the disbursement.
-    await _audit(
+    await record_audit(
         session,
         tenant_id,
         actor_id,

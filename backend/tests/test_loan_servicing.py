@@ -190,7 +190,7 @@ def test_golden_schedule_persisted_by_disbursement() -> None:
         tid, _ = await seed_user(unique_email())
         loan_id, _ = await _disburse(tid, Decimal("24000.00"), term=12)
         async with tenant_session(factory(), tid) as session:
-            rows = await loans_service.get_schedule(session, loan_id)
+            rows = await loans_service.get_schedule(session, tid, loan_id)
         cases = json.loads(GOLDEN_SCHEDULES.read_text())
         golden = next(c for c in cases if c["name"] == "standard_24000_12pct_12m")
         assert len(rows) == len(golden["installments"])
@@ -334,7 +334,7 @@ def test_full_repayment_closes_loan_and_releases_guarantees() -> None:
             )
 
         async with tenant_session(factory(), tid) as session:
-            quote = await loans_service.get_settlement_quote(session, loan_id)
+            quote = await loans_service.get_settlement_quote(session, tid, loan_id)
         assert quote.total == Decimal("5000.00")  # nothing due yet: principal only
 
         async with tenant_session(factory(), tid) as session:
@@ -345,7 +345,7 @@ def test_full_repayment_closes_loan_and_releases_guarantees() -> None:
         assert result.balance_after == Decimal("0.00")
 
         async with tenant_session(factory(), tid) as session:
-            loan = await loans_service.get_loan(session, loan_id)
+            loan = await loans_service.get_loan(session, tid, loan_id)
             guarantee_status = (
                 await session.execute(
                     text("SELECT status FROM guarantees WHERE loan_id = CAST(:lid AS uuid)"),
@@ -393,7 +393,7 @@ def test_overpayment_beyond_payoff_is_rejected() -> None:
                 )
         # Nothing was persisted: the transaction rolled back atomically.
         async with tenant_session(factory(), tid) as session:
-            loan = await loans_service.get_loan(session, loan_id)
+            loan = await loans_service.get_loan(session, tid, loan_id)
             repayments = (
                 await session.execute(
                     text("SELECT count(*) FROM repayments WHERE loan_id = CAST(:lid AS uuid)"),
@@ -445,7 +445,7 @@ def test_settlement_quote_includes_due_interest_and_penalties() -> None:
             )
         schedule = build_schedule(Decimal("24000.00"), Decimal("12.00"), 12)
         async with tenant_session(factory(), tid) as session:
-            quote = await loans_service.get_settlement_quote(session, loan_id)
+            quote = await loans_service.get_settlement_quote(session, tid, loan_id)
         # Only installment 1 interest is due; future interest is waived.
         assert quote.principal_balance == Decimal("24000.00")
         assert quote.interest_due == schedule[0].interest_due
@@ -469,7 +469,7 @@ def test_settlement_quote_missing_and_closed_loans() -> None:
         tid, _ = await seed_user(unique_email())
         async with tenant_session(factory(), tid) as session:
             with pytest.raises(NotFoundError):
-                await loans_service.get_settlement_quote(session, uuid.uuid4())
+                await loans_service.get_settlement_quote(session, tid, uuid.uuid4())
         loan_id, _ = await _disburse(tid, Decimal("1000.00"), term=6)
         async with tenant_session(factory(), tid) as session:
             await loans_service.record_repayment(
@@ -477,7 +477,7 @@ def test_settlement_quote_missing_and_closed_loans() -> None:
             )
         async with tenant_session(factory(), tid) as session:
             with pytest.raises(ConflictError, match="nothing to settle"):
-                await loans_service.get_settlement_quote(session, loan_id)
+                await loans_service.get_settlement_quote(session, tid, loan_id)
 
     asyncio.run(run())
 
@@ -522,7 +522,7 @@ def test_concurrent_repayments_never_over_collect() -> None:
         assert len(refs) == 5  # unique race-safe references
 
         async with tenant_session(factory(), tid) as session:
-            loan = await loans_service.get_loan(session, loan_id)
+            loan = await loans_service.get_loan(session, tid, loan_id)
             collected = (
                 await session.execute(
                     text(
@@ -570,7 +570,7 @@ def test_arrears_job_classifies_and_is_idempotent() -> None:
         }
         async with tenant_session(factory(), tid) as session:
             for loan_id, (dpd, label, provision) in expected.items():
-                loan = await loans_service.get_loan(session, loan_id)
+                loan = await loans_service.get_loan(session, tid, loan_id)
                 assert loan.days_past_due == dpd, loan_id
                 assert loan.classification is label, loan_id
                 assert loan.provision_pct == provision, loan_id
@@ -643,7 +643,7 @@ def test_arrears_job_recovery_reclassifies_downwards() -> None:
         as_of = datetime.now(UTC).date()
         await run_arrears_for_tenant(_scope(tid), tid, as_of=as_of)
         async with tenant_session(factory(), tid) as session:
-            loan = await loans_service.get_loan(session, loan_id)
+            loan = await loans_service.get_loan(session, tid, loan_id)
         assert loan.classification is LoanClass.WATCH
 
         schedule = build_schedule(Decimal("24000.00"), Decimal("12.00"), 12)
@@ -654,7 +654,7 @@ def test_arrears_job_recovery_reclassifies_downwards() -> None:
         result = await run_arrears_for_tenant(_scope(tid), tid, as_of=as_of)
         assert result.updated == 1
         async with tenant_session(factory(), tid) as session:
-            loan = await loans_service.get_loan(session, loan_id)
+            loan = await loans_service.get_loan(session, tid, loan_id)
         assert loan.classification is LoanClass.NORMAL
         assert loan.days_past_due == 0
 
@@ -810,18 +810,18 @@ def test_loan_book_direct_service_listing() -> None:
         for amount in (Decimal("1000.00"), Decimal("2000.00"), Decimal("3000.00")):
             await _disburse(tid, amount)
         async with tenant_session(factory(), tid) as session:
-            page1, cursor = await loans_service.list_loans(session, limit=2)
+            page1, cursor = await loans_service.list_loans(session, tid, limit=2)
             assert len(page1) == 2
             assert cursor is not None
-            page2, end = await loans_service.list_loans(session, cursor=cursor, limit=2)
+            page2, end = await loans_service.list_loans(session, tid, cursor=cursor, limit=2)
             assert len(page2) == 1
             assert end is None
             active, _ = await loans_service.list_loans(
-                session, status=LoanStatus.ACTIVE, classification=LoanClass.NORMAL, limit=200
+                session, tid, status=LoanStatus.ACTIVE, classification=LoanClass.NORMAL, limit=200
             )
             assert len(active) == 3  # limit clamped to the 100 cap internally
             with pytest.raises(InvalidInputError, match="cursor"):
-                await loans_service.list_loans(session, cursor="garbage|garbage")
+                await loans_service.list_loans(session, tid, cursor="garbage|garbage")
 
     asyncio.run(run())
 
@@ -995,12 +995,60 @@ def test_repayments_advance_schedule_paid_amounts() -> None:
                 session, tid, None, loan_id, amount=schedule[0].total_due, channel=Channel.BANK
             )
         async with tenant_session(factory(), tid) as session:
-            rows = await loans_service.get_schedule(session, loan_id)
+            rows = await loans_service.get_schedule(session, tid, loan_id)
         assert rows[0].paid_amount == rows[0].total_due  # installment 1 settled
         assert all(r.paid_amount == Decimal("0.00") for r in rows[1:])
         # DPD is clear again as of today.
         result = await run_arrears_for_tenant(_scope(tid), tid, as_of=datetime.now(UTC).date())
         assert result.updated == 0  # already normal; nothing changes
+
+    asyncio.run(run())
+
+
+def test_principal_prepayment_never_consumes_future_interest() -> None:
+    """Review finding 3: prepaid principal must not erase future interest.
+
+    Pay installment 1 in full plus a 5000.00 principal prepayment. Cash
+    may only settle installments due on or before the payment date;
+    future installments keep their full contractual dues, so their
+    interest is still owed in full when their due dates arrive (the old
+    behaviour spread the prepayment across future rows, silently
+    marking interest as collected that never was).
+    """
+
+    async def run() -> None:
+        tid, _ = await seed_user(unique_email())
+        loan_id, _ = await _disburse(tid, Decimal("24000.00"))
+        await _backdate_installment(tid, loan_id, 1, 5)
+        schedule = build_schedule(Decimal("24000.00"), Decimal("12.00"), 12)
+        amount = to_cents(schedule[0].total_due + Decimal("5000.00"))
+        async with tenant_session(factory(), tid) as session:
+            result = await loans_service.record_repayment(
+                session, tid, None, loan_id, amount=amount, channel=Channel.BANK
+            )
+        # Allocation oracle: only installment 1 interest is due; every
+        # other shilling is principal (installment 1's + the prepayment).
+        assert result.allocation.interest == schedule[0].interest_due
+        assert result.allocation.principal == to_cents(
+            schedule[0].principal_due + Decimal("5000.00")
+        )
+        assert result.balance_after == to_cents(
+            Decimal("24000.00") - schedule[0].principal_due - Decimal("5000.00")
+        )
+
+        async with tenant_session(factory(), tid) as session:
+            rows = await loans_service.get_schedule(session, tid, loan_id)
+        assert rows[0].paid_amount == rows[0].total_due  # installment 1 settled
+        # Regression: future installments are untouched by the prepayment.
+        assert all(r.paid_amount == Decimal("0.00") for r in rows[1:])
+
+        # Installment 2's interest is still due IN FULL at its due date.
+        async with tenant_session(factory(), tid) as session:
+            quote = await loans_service.get_settlement_quote(
+                session, tid, loan_id, as_of=rows[1].due_date
+            )
+        assert quote.interest_due == schedule[1].interest_due
+        assert quote.principal_balance == result.balance_after
 
     asyncio.run(run())
 
@@ -1014,8 +1062,10 @@ def test_settlement_quote_as_of_future_date() -> None:
         schedule = build_schedule(Decimal("24000.00"), Decimal("12.00"), 12)
         future = datetime.now(UTC).date() + timedelta(days=40)
         async with tenant_session(factory(), tid) as session:
-            quote_now = await loans_service.get_settlement_quote(session, loan_id)
-            quote_future = await loans_service.get_settlement_quote(session, loan_id, as_of=future)
+            quote_now = await loans_service.get_settlement_quote(session, tid, loan_id)
+            quote_future = await loans_service.get_settlement_quote(
+                session, tid, loan_id, as_of=future
+            )
         assert quote_now.interest_due == Decimal("0.00")
         assert quote_future.interest_due == schedule[0].interest_due
         assert isinstance(future, date)

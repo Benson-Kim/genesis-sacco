@@ -9,7 +9,7 @@ contract; repayments through the documented P10 allocation service.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
 from functools import partial
 from typing import Annotated
@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from genesis.api.authz import RequirePermission
+from genesis.api.params import require_cash_channel, resolve_as_of
 from genesis.application import arrears as arrears_service
 from genesis.application import loans as loans_service
 from genesis.application.auth import AuthContext
@@ -25,7 +26,6 @@ from genesis.application.ledger import disburse_loan
 from genesis.domain.ledger import Channel
 from genesis.domain.lending import LoanClass, LoanStatus
 from genesis.domain.rbac import Action, Module
-from genesis.errors import InvalidInputError
 from genesis.infrastructure.db import get_sessionmaker
 from genesis.infrastructure.tenancy import tenant_session
 from genesis.settings import get_settings
@@ -41,32 +41,6 @@ BookViewCtx = Annotated[AuthContext, Depends(_book_view)]
 BookCreateCtx = Annotated[AuthContext, Depends(_book_create)]
 BookEditCtx = Annotated[AuthContext, Depends(_book_edit)]
 TxnCreateCtx = Annotated[AuthContext, Depends(_txn_create)]
-
-#: Channels on which money physically moves. Accrual/internal postings
-#: are made by jobs through their dedicated services, never these routes.
-_CASH_CHANNELS = frozenset({Channel.MPESA, Channel.BANK})
-
-
-def _require_cash_channel(channel: Channel) -> Channel:
-    if channel not in _CASH_CHANNELS:
-        raise InvalidInputError(f"channel must be one of: mpesa, bank; got '{channel.value}'")
-    return channel
-
-
-def _resolve_as_of(as_of: date | None) -> date:
-    """Default to today and reject future dates (gate 1.6).
-
-    A future as_of would let a caller inflate days-past-due (mass
-    reclassification and provisioning distortion via the arrears job) or
-    fabricate interest that is not yet due (settlement quotes).
-    Backdating stays allowed for reconciliation and idempotent re-runs.
-    """
-    today = datetime.now(UTC).date()
-    if as_of is None:
-        return today
-    if as_of > today:
-        raise InvalidInputError("as_of must not be in the future")
-    return as_of
 
 
 class DisburseBody(BaseModel):
@@ -198,11 +172,11 @@ async def disburse_application(
     ctx: BookCreateCtx,
 ) -> DisbursementOut:
     """Disburse an approved application via the P7 atomic contract."""
-    channel = _require_cash_channel(body.channel)
+    channel = require_cash_channel(body.channel)
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         result = await disburse_loan(session, ctx.tenant_id, application_id, channel, ctx.user_id)
-        schedule = await loans_service.get_schedule(session, result.loan_id)
+        schedule = await loans_service.get_schedule(session, ctx.tenant_id, result.loan_id)
     return DisbursementOut(
         loan_id=str(result.loan_id),
         txn_id=str(result.txn_id),
@@ -234,6 +208,7 @@ async def list_loans(
     async with tenant_session(factory, ctx.tenant_id) as session:
         items, next_cursor = await loans_service.list_loans(
             session,
+            ctx.tenant_id,
             status=status,
             classification=classification,
             cursor=cursor,
@@ -246,7 +221,7 @@ async def list_loans(
 async def get_loan(loan_id: uuid.UUID, ctx: BookViewCtx) -> LoanOut:
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        loan = await loans_service.get_loan(session, loan_id)
+        loan = await loans_service.get_loan(session, ctx.tenant_id, loan_id)
     return _loan_out(loan)
 
 
@@ -254,7 +229,7 @@ async def get_loan(loan_id: uuid.UUID, ctx: BookViewCtx) -> LoanOut:
 async def get_loan_schedule(loan_id: uuid.UUID, ctx: BookViewCtx) -> list[ScheduleRowOut]:
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        schedule = await loans_service.get_schedule(session, loan_id)
+        schedule = await loans_service.get_schedule(session, ctx.tenant_id, loan_id)
     return [_schedule_out(row) for row in schedule]
 
 
@@ -264,10 +239,12 @@ async def get_settlement_quote(
     ctx: BookViewCtx,
     as_of: date | None = None,
 ) -> SettlementQuoteOut:
-    quote_date = _resolve_as_of(as_of)
+    quote_date = resolve_as_of(as_of)
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        quote = await loans_service.get_settlement_quote(session, loan_id, as_of=quote_date)
+        quote = await loans_service.get_settlement_quote(
+            session, ctx.tenant_id, loan_id, as_of=quote_date
+        )
     return SettlementQuoteOut(
         as_of=quote_date.isoformat(),
         principal_balance=str(quote.principal_balance),
@@ -284,7 +261,7 @@ async def post_repayment(
     ctx: TxnCreateCtx,
 ) -> RepaymentOut:
     """Record a repayment allocated penalties -> interest -> principal."""
-    channel = _require_cash_channel(body.channel)
+    channel = require_cash_channel(body.channel)
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         result = await loans_service.record_repayment(
@@ -341,8 +318,14 @@ async def run_arrears(body: ArrearsRunBody, ctx: BookEditCtx) -> ArrearsRunOut:
     The nightly scheduler calls the same service per tenant; this route
     exists for operations and backfills. Each batch commits its own
     short transaction (gate 1.3).
+
+    Permission (P4 matrix, verified): loan_book x EDIT. Reclassifying
+    days-past-due/provisioning rewrites loan-book rows, so the job sits
+    with the roles the matrix grants loan_book:edit (System Admin,
+    Branch Manager) — not loan_book:approve (a committee decision
+    power) and not any transactions permission (no money moves here).
     """
-    as_of = _resolve_as_of(body.as_of)
+    as_of = resolve_as_of(body.as_of)
     factory = get_sessionmaker(get_settings().database_url)
     result = await arrears_service.run_arrears_for_tenant(
         partial(tenant_session, factory, ctx.tenant_id),
