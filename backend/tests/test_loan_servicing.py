@@ -257,9 +257,7 @@ def test_repayment_allocation_split_legs_and_balance() -> None:
             ).one()
             repay_amount = (
                 await session.execute(
-                    text(
-                        "SELECT amount FROM repayments WHERE transaction_id = CAST(:id AS uuid)"
-                    ),
+                    text("SELECT amount FROM repayments WHERE transaction_id = CAST(:id AS uuid)"),
                     {"id": str(result.txn_id)},
                 )
             ).scalar_one()
@@ -666,9 +664,7 @@ def test_arrears_job_recovery_reclassifies_downwards() -> None:
 def test_arrears_job_empty_tenant_and_bad_batch_size() -> None:
     async def run() -> None:
         tid, _ = await seed_user(unique_email())
-        result = await run_arrears_for_tenant(
-            _scope(tid), tid, as_of=datetime.now(UTC).date()
-        )
+        result = await run_arrears_for_tenant(_scope(tid), tid, as_of=datetime.now(UTC).date())
         assert result.scanned == 0
         assert result.updated == 0
         assert result.batches == 0
@@ -782,14 +778,10 @@ def test_loan_book_keyset_pagination_and_filters() -> None:
                 "/loans", params={"cursor": "not|a-cursor"}, headers=headers
             )
             assert bad_cursor.status_code == 400
-            by_status = await client.get(
-                "/loans", params={"status": "active"}, headers=headers
-            )
+            by_status = await client.get("/loans", params={"status": "active"}, headers=headers)
             assert by_status.status_code == 200
             assert len(by_status.json()["items"]) == 3
-            by_cls = await client.get(
-                "/loans", params={"classification": "loss"}, headers=headers
-            )
+            by_cls = await client.get("/loans", params={"classification": "loss"}, headers=headers)
             assert by_cls.status_code == 200
             assert by_cls.json()["items"] == []
 
@@ -964,9 +956,7 @@ def test_loan_book_rbac_enforced() -> None:
         _, _, committee_token = await _seed_actor("Credit Committee")
         committee = _headers(committee_token)
         async with api_client() as client:
-            assert (
-                await client.get("/portfolio/summary", headers=committee)
-            ).status_code == 200
+            assert (await client.get("/portfolio/summary", headers=committee)).status_code == 200
             res = await client.post("/jobs/arrears", json={}, headers=committee)
             assert res.status_code == 403  # loan_book:edit required
 
