@@ -40,6 +40,27 @@ class GuaranteeRecord:
     version: int
 
 
+async def live_pledged_total(session: AsyncSession, guarantor_member_id: uuid.UUID) -> Decimal:
+    """Sum of a member's live (pledged/active) guarantee amounts.
+
+    Callers must hold the guarantor's deposit-account row lock whenever
+    the result feeds a capacity decision (pledging or withdrawing), so
+    the computation can never interleave with a concurrent balance
+    change (gate 1.4). Shared by P9 pledging and P11 withdrawals.
+    """
+    value = (
+        await session.execute(
+            text(
+                "SELECT COALESCE(SUM(amount), 0) FROM guarantees "
+                "WHERE guarantor_member_id = CAST(:g AS uuid) "
+                "AND status IN ('pledged', 'active')"
+            ),
+            {"g": str(guarantor_member_id)},
+        )
+    ).scalar_one()
+    return Decimal(str(value))
+
+
 async def pledge_guarantee(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -100,20 +121,7 @@ async def pledge_guarantee(
     if balance_row is None:
         raise NotFoundError(f"guarantor {guarantor_member_id} has no deposit account")
     balance = Decimal(str(balance_row[0]))
-    pledged = Decimal(
-        str(
-            (
-                await session.execute(
-                    text(
-                        "SELECT COALESCE(SUM(amount), 0) FROM guarantees "
-                        "WHERE guarantor_member_id = CAST(:g AS uuid) "
-                        "AND status IN ('pledged', 'active')"
-                    ),
-                    {"g": str(guarantor_member_id)},
-                )
-            ).scalar_one()
-        )
-    )
+    pledged = await live_pledged_total(session, guarantor_member_id)
     available = balance - pledged
     if amount > available:
         # Least disclosure (gate 1.6): the available capacity derives from
