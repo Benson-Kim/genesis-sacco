@@ -417,9 +417,7 @@ def test_interest_basis_is_average_daily_balance() -> None:
             last = await txn_service.record_deposit(
                 session, tid, None, m_last_day, amount=Decimal("91000.00"), channel=Channel.BANK
             )
-        await _backdate_txn(
-            tid, last.txn_id, datetime.combine(period.end, time(12, 0), tzinfo=UTC)
-        )
+        await _backdate_txn(tid, last.txn_id, datetime.combine(period.end, time(12, 0), tzinfo=UTC))
 
         m_ten_days = await _seed_member(tid)
         async with tenant_session(factory(), tid) as session:
