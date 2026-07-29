@@ -248,13 +248,9 @@ def test_explicit_tenant_predicates_on_export_reads() -> None:
             info = await exports_service.get_artifact_info(session, tid, export_id)
             assert info is not None
             with pytest.raises(NotFoundError):
-                await exports_service.get_export(
-                    session, other_tenant, export_id, requester_id=uid
-                )
+                await exports_service.get_export(session, other_tenant, export_id, requester_id=uid)
             with pytest.raises(NotFoundError):
-                await exports_service.download_artifact(
-                    session, other_tenant, uid, info.csv_token
-                )
+                await exports_service.download_artifact(session, other_tenant, uid, info.csv_token)
             assert (
                 await exports_service.get_artifact_info(session, other_tenant, export_id)
             ) is None

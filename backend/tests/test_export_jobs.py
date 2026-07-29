@@ -228,8 +228,7 @@ def test_failed_job_is_marked_and_never_wedges_the_queue() -> None:
         assert (
             await count(
                 tid,
-                "SELECT count(*) FROM export_artifacts "
-                "WHERE export_id = CAST(:eid AS uuid)",
+                "SELECT count(*) FROM export_artifacts WHERE export_id = CAST(:eid AS uuid)",
                 eid=str(ghost_export),
             )
             == 0

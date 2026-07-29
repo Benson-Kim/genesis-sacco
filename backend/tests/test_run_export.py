@@ -151,9 +151,7 @@ def test_export_rendering_never_blocks_the_event_loop() -> None:
             await run_export(source.query(), 2, row_cap=100, on_batch=slow_render)
             done.set()
 
-        await asyncio.wait_for(
-            asyncio.gather(export(), heartbeat(), serve_requests()), timeout=10
-        )
+        await asyncio.wait_for(asyncio.gather(export(), heartbeat(), serve_requests()), timeout=10)
         # Threshold hand-picked at 0.15s: comfortably above scheduler
         # jitter, decisively below the 0.2s stall per batch that
         # on-loop rendering would impose.
