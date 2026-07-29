@@ -150,4 +150,3 @@ def test_p11_hot_path_queries_are_index_backed() -> None:
         OUT_PATH.write_text(f"{header}\n{body}\n")
 
     asyncio.run(run())
-io.run(run())
