@@ -124,6 +124,7 @@ async def list_members(
     async with tenant_session(factory, ctx.tenant_id) as session:
         page = await members_service.list_members(
             session,
+            ctx.tenant_id,
             cursor=cursor,
             limit=limit,
             status=status,
@@ -166,7 +167,7 @@ async def member_statement(
 async def get_member(member_id: uuid.UUID, ctx: ViewCtx) -> MemberOut:
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        record = await members_service.get_member(session, member_id)
+        record = await members_service.get_member(session, ctx.tenant_id, member_id)
     return _out(record)
 
 

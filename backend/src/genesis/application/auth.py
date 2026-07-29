@@ -4,6 +4,17 @@ Access tokens live at most 15 minutes. Refresh tokens are hashed at rest,
 rotate on every use, and belong to a family: any reuse of a spent token
 revokes the whole family. OTP delivery goes through the transactional
 outbox stub (gate 1.2). All verification runs under row locks (gate 1.4).
+
+Tenant-predicate exemption (documented per issue #17, gate 1.6 v1.1):
+authentication queries here deliberately do NOT carry an explicit bound
+tenant_id predicate. They run BEFORE a tenant context exists — the
+email lookup establishes which tenant the user belongs to, and the
+refresh/OTP lookups are keyed by unguessable secrets (token hashes,
+challenge rows found via the locked user id). Forced RLS still fences
+every one of these tables once app.tenant_id is set; pre-context
+sessions fail loudly (see test_missing_tenant_context_fails_loudly).
+Adding a tenant predicate here would require the caller to know the
+tenant before authenticating, which is the wrong trust direction.
 """
 
 from __future__ import annotations

@@ -218,14 +218,18 @@ async def create_member(
     )
 
 
-async def get_member(session: AsyncSession, member_id: uuid.UUID) -> MemberRecord:
+async def get_member(
+    session: AsyncSession, tenant_id: uuid.UUID, member_id: uuid.UUID
+) -> MemberRecord:
+    # Explicit tenant predicate on top of RLS (defence in depth,
+    # gate 1.6 v1.1; issue #17).
     row = (
         await session.execute(
             text(
                 "SELECT id, member_no, type, name, phone, email, status, version "
-                "FROM members WHERE id = CAST(:id AS uuid)"
+                "FROM members WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
             ),
-            {"id": str(member_id)},
+            {"id": str(member_id), "tid": str(tenant_id)},
         )
     ).first()
     if row is None:
@@ -235,6 +239,7 @@ async def get_member(session: AsyncSession, member_id: uuid.UUID) -> MemberRecor
 
 async def list_members(
     session: AsyncSession,
+    tenant_id: uuid.UUID,
     *,
     cursor: str | None = None,
     limit: int = 20,
@@ -247,8 +252,8 @@ async def list_members(
     Exactly one indexed query per page regardless of table size.
     """
     limit = max(1, min(limit, 100))
-    clauses: list[str] = []
-    params: dict[str, object] = {"limit": limit + 1}
+    clauses: list[str] = ["tenant_id = CAST(:tid AS uuid)"]
+    params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if cursor:
         clauses.append("member_no > :cursor")
         params["cursor"] = cursor
@@ -292,7 +297,7 @@ async def update_member(
     Omitted fields keep their current values; clearing a field is a
     deliberate follow-up feature, not an accidental null overwrite.
     """
-    current = await get_member(session, member_id)
+    current = await get_member(session, tenant_id, member_id)
     new_name = name if name is not None else current.name
     new_phone = phone if phone is not None else current.phone
     new_email = email if email is not None else current.email
@@ -300,15 +305,19 @@ async def update_member(
         CursorResult[Any],
         await session.execute(
             text(
+                # Explicit tenant predicate on the write, on top of RLS
+                # (defence in depth, gate 1.6 v1.1; issue #17).
                 "UPDATE members SET name = :name, phone = :phone, email = :email, "
                 "version = version + 1, updated_at = now() "
-                "WHERE id = CAST(:id AS uuid) AND version = :ver"
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "AND version = :ver"
             ),
             {
                 "name": new_name,
                 "phone": new_phone,
                 "email": new_email,
                 "id": str(member_id),
+                "tid": str(tenant_id),
                 "ver": version,
             },
         ),
@@ -420,7 +429,7 @@ async def change_member_status(
             "to": new_status.value,
         },
     )
-    return await get_member(session, member_id)
+    return await get_member(session, tenant_id, member_id)
 
 
 async def mark_member_exited(
@@ -521,6 +530,7 @@ async def mark_member_exited(
 
 async def member_statement(
     session: AsyncSession,
+    tenant_id: uuid.UUID,
     member_id: uuid.UUID,
     *,
     cursor: str | None = None,
@@ -535,9 +545,13 @@ async def member_statement(
     # Existence check keeps semantics consistent with GET /members/{id}:
     # unknown ids (including cross-tenant ids hidden by RLS) surface 404
     # instead of a misleading empty page, without leaking existence.
-    await get_member(session, member_id)
+    await get_member(session, tenant_id, member_id)
     limit = max(1, min(limit, 100))
-    params: dict[str, object] = {"mid": str(member_id), "limit": limit + 1}
+    params: dict[str, object] = {
+        "mid": str(member_id),
+        "tid": str(tenant_id),
+        "limit": limit + 1,
+    }
     keyset = ""
     if cursor:
         ts_raw, _, id_raw = cursor.partition("|")

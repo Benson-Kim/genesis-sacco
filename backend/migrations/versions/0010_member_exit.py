@@ -99,6 +99,7 @@ _DOWN = """
 DROP TABLE IF EXISTS exit_votes CASCADE;
 DROP INDEX IF EXISTS idx_exits_settlement_txn;
 DROP INDEX IF EXISTS idx_exits_requested_by;
+DROP INDEX IF EXISTS idx_exits_status_created_keyset;
 DROP INDEX IF EXISTS idx_exits_created_keyset;
 DROP INDEX IF EXISTS uq_member_exits_open;
 ALTER TABLE member_exits

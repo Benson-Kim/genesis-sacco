@@ -100,11 +100,18 @@ async def create_product(
     )
 
 
-async def get_product(session: AsyncSession, product_id: uuid.UUID) -> LoanProduct:
+async def get_product(
+    session: AsyncSession, tenant_id: uuid.UUID, product_id: uuid.UUID
+) -> LoanProduct:
+    # Explicit tenant predicate on top of RLS (defence in depth,
+    # gate 1.6 v1.1; issue #17).
     row = (
         await session.execute(
-            text(f"SELECT {_COLS} FROM loan_products WHERE id = CAST(:id AS uuid)"),  # noqa: S608
-            {"id": str(product_id)},
+            text(
+                f"SELECT {_COLS} FROM loan_products "  # noqa: S608
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"id": str(product_id), "tid": str(tenant_id)},
         )
     ).first()
     if row is None:
@@ -112,10 +119,14 @@ async def get_product(session: AsyncSession, product_id: uuid.UUID) -> LoanProdu
     return _row_to_product(row)
 
 
-async def list_products(session: AsyncSession) -> list[LoanProduct]:
+async def list_products(session: AsyncSession, tenant_id: uuid.UUID) -> list[LoanProduct]:
     rows = (
         await session.execute(
-            text(f"SELECT {_COLS} FROM loan_products ORDER BY name LIMIT 200")  # noqa: S608
+            text(
+                f"SELECT {_COLS} FROM loan_products "  # noqa: S608
+                "WHERE tenant_id = CAST(:tid AS uuid) ORDER BY name LIMIT 200"
+            ),
+            {"tid": str(tenant_id)},
         )
     ).all()
     return [_row_to_product(r) for r in rows]
@@ -134,7 +145,7 @@ async def update_product(
     active: bool | None = None,
 ) -> LoanProduct:
     """Optimistic-locked product edit; stale version surfaces 409 (gate 1.4)."""
-    current = await get_product(session, product_id)
+    current = await get_product(session, tenant_id, product_id)
     new_rate = rate_pct if rate_pct is not None else current.rate_pct
     new_mult = deposit_multiplier if deposit_multiplier is not None else current.deposit_multiplier
     new_term = max_term_months if max_term_months is not None else current.max_term_months
@@ -143,10 +154,13 @@ async def update_product(
         CursorResult[Any],
         await session.execute(
             text(
+                # Explicit tenant predicate on the write, on top of RLS
+                # (defence in depth, gate 1.6 v1.1; issue #17).
                 "UPDATE loan_products SET rate_pct = :rate, deposit_multiplier = :mult, "
                 "max_term_months = :term, active = :active, "
                 "version = version + 1, updated_at = now() "
-                "WHERE id = CAST(:id AS uuid) AND version = :ver"
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "AND version = :ver"
             ),
             {
                 "rate": str(new_rate),
@@ -154,6 +168,7 @@ async def update_product(
                 "term": new_term,
                 "active": new_active,
                 "id": str(product_id),
+                "tid": str(tenant_id),
                 "ver": version,
             },
         ),

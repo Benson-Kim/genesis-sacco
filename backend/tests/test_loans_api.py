@@ -1165,10 +1165,10 @@ def test_product_service_direct() -> None:
         assert updated.rate_pct == Decimal("11.00")
         assert updated.version == 2
         async with tenant_session(factory(), tid) as session:
-            got = await products_service.get_product(session, product.id)
+            got = await products_service.get_product(session, tid, product.id)
         assert got.rate_pct == Decimal("11.00")
         async with tenant_session(factory(), tid) as session:
-            listed = await products_service.list_products(session)
+            listed = await products_service.list_products(session, tid)
         assert any(p.id == product.id for p in listed)
 
     asyncio.run(run())

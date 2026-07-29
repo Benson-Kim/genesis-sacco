@@ -548,10 +548,13 @@ async def post_reversal(
     txn_row = (
         await session.execute(
             text(
+                # Explicit tenant predicate on the row-lock read, on top
+                # of RLS (defence in depth, gate 1.6 v1.1; issue #17).
                 "SELECT member_id, type, amount, channel, reversal_of_id "
-                "FROM transactions WHERE id = CAST(:id AS uuid) FOR UPDATE"
+                "FROM transactions WHERE id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
-            {"id": str(original_txn_id)},
+            {"id": str(original_txn_id), "tid": str(tenant_id)},
         )
     ).first()
     if txn_row is None:
@@ -567,8 +570,11 @@ async def post_reversal(
 
     existing_reversal = (
         await session.execute(
-            text("SELECT id FROM transactions WHERE reversal_of_id = CAST(:id AS uuid) LIMIT 1"),
-            {"id": str(original_txn_id)},
+            text(
+                "SELECT id FROM transactions WHERE reversal_of_id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) LIMIT 1"
+            ),
+            {"id": str(original_txn_id), "tid": str(tenant_id)},
         )
     ).first()
     if existing_reversal is not None:
@@ -579,9 +585,10 @@ async def post_reversal(
         await session.execute(
             text(
                 "SELECT account, side, amount FROM ledger_entries "
-                "WHERE transaction_id = CAST(:id AS uuid) ORDER BY created_at"
+                "WHERE transaction_id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) ORDER BY created_at"
             ),
-            {"id": str(original_txn_id)},
+            {"id": str(original_txn_id), "tid": str(tenant_id)},
         )
     ).all()
     if not line_rows:
@@ -717,9 +724,10 @@ async def disburse_loan(
             text(
                 "UPDATE loan_applications "
                 "SET stage = 'disbursed', version = version + 1, updated_at = :ts "
-                "WHERE id = CAST(:id AS uuid) AND version = :ver"
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "AND version = :ver"
             ),
-            {"ts": ts, "id": str(application_id), "ver": version},
+            {"ts": ts, "id": str(application_id), "tid": str(tenant_id), "ver": version},
         ),
     )
     if update_result.rowcount != 1:

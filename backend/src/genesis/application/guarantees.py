@@ -182,7 +182,7 @@ async def pledge_guarantee(
             "amount": str(amount),
         },
     )
-    await recompute_cover(session, application_id)
+    await recompute_cover(session, tenant_id, application_id)
     return GuaranteeRecord(
         id=guarantee_id,
         application_id=application_id,
