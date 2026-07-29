@@ -348,3 +348,32 @@ def build_reversal_posting(original: PostingSpec) -> PostingSpec:
         amount=original.amount,
         lines=reversed_lines,
     )
+
+
+# ---------------------------------------------------------------------------
+# Member-facing direction (P11 ledger listing)
+# ---------------------------------------------------------------------------
+
+#: Direction of each transaction type from the member's perspective:
+#: CREDIT = money into the member's position (deposits, share top-ups,
+#: repayments received, interest earned); DEBIT = money out
+#: (withdrawals, disbursements, exit settlements). A reversal carries
+#: the original type with mirrored legs, so callers must flip the
+#: direction when reversal_of_id is set (see member_direction).
+MEMBER_DIRECTION: dict[TxnType, Side] = {
+    TxnType.DEPOSIT: Side.CREDIT,
+    TxnType.SHARE_TOPUP: Side.CREDIT,
+    TxnType.LOAN_REPAYMENT: Side.CREDIT,
+    TxnType.INTEREST_POSTING: Side.CREDIT,
+    TxnType.WITHDRAWAL: Side.DEBIT,
+    TxnType.LOAN_DISBURSEMENT: Side.DEBIT,
+    TxnType.EXIT_SETTLEMENT: Side.DEBIT,
+}
+
+
+def member_direction(txn_type: TxnType, *, is_reversal: bool = False) -> Side:
+    """DR/CR pill for the prototype ledger columns (member perspective)."""
+    base = MEMBER_DIRECTION[txn_type]
+    if not is_reversal:
+        return base
+    return Side.CREDIT if base is Side.DEBIT else Side.DEBIT
