@@ -58,7 +58,7 @@ class TransactionRecord:
 
 
 async def _require_member(
-    session: AsyncSession, member_id: uuid.UUID, *, require_active: bool
+    session: AsyncSession, tenant_id: uuid.UUID, member_id: uuid.UUID, *, require_active: bool
 ) -> None:
     row = (
         await session.execute(
@@ -66,8 +66,13 @@ async def _require_member(
             # (which locks the row FOR UPDATE) until this mutation
             # commits, closing the TOCTOU window between the status
             # check and the posting (gate 1.4; P9 pledge precedent).
-            text("SELECT status FROM members WHERE id = CAST(:m AS uuid) FOR SHARE"),
-            {"m": str(member_id)},
+            # Explicit tenant predicate on top of RLS (defence in
+            # depth, gate 1.6).
+            text(
+                "SELECT status FROM members WHERE id = CAST(:m AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR SHARE"
+            ),
+            {"m": str(member_id), "tid": str(tenant_id)},
         )
     ).first()
     if row is None:
@@ -105,16 +110,24 @@ async def _lock_account(
 
 
 async def _set_balance(
-    session: AsyncSession, *, kind: str, account_id: uuid.UUID, balance: Decimal
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    kind: str,
+    account_id: uuid.UUID,
+    balance: Decimal,
 ) -> None:
     table = _ACCOUNT_TABLES[kind]
     await session.execute(
         text(
             # Table name from _ACCOUNT_TABLES, never user input.
+            # Explicit tenant predicate on the write, on top of RLS
+            # (defence in depth, gate 1.6 — second-pass finding 15).
             f"UPDATE {table} SET balance = :bal, version = version + 1, "  # noqa: S608
-            "updated_at = now() WHERE id = CAST(:id AS uuid)"
+            "updated_at = now() WHERE id = CAST(:id AS uuid) "
+            "AND tenant_id = CAST(:tid AS uuid)"
         ),
-        {"bal": str(balance), "id": str(account_id)},
+        {"bal": str(balance), "id": str(account_id), "tid": str(tenant_id)},
     )
 
 
@@ -135,13 +148,15 @@ async def record_deposit(
     amount = to_cents(amount)
     if amount <= ZERO:
         raise InvalidInputError("deposit amount must be positive")
-    await _require_member(session, member_id, require_active=False)
+    await _require_member(session, tenant_id, member_id, require_active=False)
     account_id, balance = await _lock_account(
         session, tenant_id, kind="deposit", member_id=member_id
     )
     posting = await post_deposit(session, tenant_id, member_id, amount, channel, actor_id)
     balance_after = to_cents(balance + amount)
-    await _set_balance(session, kind="deposit", account_id=account_id, balance=balance_after)
+    await _set_balance(
+        session, tenant_id, kind="deposit", account_id=account_id, balance=balance_after
+    )
     await record_audit(
         session,
         tenant_id,
@@ -177,7 +192,7 @@ async def record_withdrawal(
     amount = to_cents(amount)
     if amount <= ZERO:
         raise InvalidInputError("withdrawal amount must be positive")
-    await _require_member(session, member_id, require_active=True)
+    await _require_member(session, tenant_id, member_id, require_active=True)
     account_id, balance = await _lock_account(
         session, tenant_id, kind="deposit", member_id=member_id
     )
@@ -189,7 +204,9 @@ async def record_withdrawal(
         )
     posting = await post_withdrawal(session, tenant_id, member_id, amount, channel, actor_id)
     balance_after = to_cents(balance - amount)
-    await _set_balance(session, kind="deposit", account_id=account_id, balance=balance_after)
+    await _set_balance(
+        session, tenant_id, kind="deposit", account_id=account_id, balance=balance_after
+    )
     await record_audit(
         session,
         tenant_id,
@@ -220,11 +237,13 @@ async def record_share_topup(
     amount = to_cents(amount)
     if amount <= ZERO:
         raise InvalidInputError("share top-up amount must be positive")
-    await _require_member(session, member_id, require_active=False)
+    await _require_member(session, tenant_id, member_id, require_active=False)
     account_id, balance = await _lock_account(session, tenant_id, kind="share", member_id=member_id)
     posting = await post_share_topup(session, tenant_id, member_id, amount, channel, actor_id)
     balance_after = to_cents(balance + amount)
-    await _set_balance(session, kind="share", account_id=account_id, balance=balance_after)
+    await _set_balance(
+        session, tenant_id, kind="share", account_id=account_id, balance=balance_after
+    )
     await record_audit(
         session,
         tenant_id,

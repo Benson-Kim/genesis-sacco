@@ -264,12 +264,15 @@ async def release_guarantees_for_loan(
         CursorResult[Any],
         await session.execute(
             text(
+                # Explicit tenant predicate on the write, on top of RLS
+                # (defence in depth, gate 1.6 — finding 15).
                 "UPDATE guarantees SET status = 'released', "
                 "version = version + 1, updated_at = now() "
                 "WHERE loan_id = CAST(:lid AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) "
                 "AND status IN ('pledged', 'active')"
             ),
-            {"lid": str(loan_id)},
+            {"lid": str(loan_id), "tid": str(tenant_id)},
         ),
     )
     released = int(result.rowcount or 0)

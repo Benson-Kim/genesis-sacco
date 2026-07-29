@@ -366,10 +366,12 @@ async def record_repayment(
             pay = min(remaining, open_amount)
             await session.execute(
                 text(
+                    # Explicit tenant predicate on the write, on top of
+                    # RLS (defence in depth, gate 1.6 — finding 15).
                     "UPDATE loan_schedules SET paid_amount = paid_amount + :pay "
-                    "WHERE id = CAST(:id AS uuid)"
+                    "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
                 ),
-                {"pay": str(pay), "id": str(inst_id)},
+                {"pay": str(pay), "id": str(inst_id), "tid": str(tenant_id)},
             )
             remaining -= pay
 
@@ -377,11 +379,19 @@ async def record_repayment(
     penalty_after = to_cents(penalty_due - allocation.penalties)
     await session.execute(
         text(
+            # Explicit tenant predicate on the write, on top of RLS
+            # (defence in depth, gate 1.6 — finding 15).
             "UPDATE loans SET balance = :bal, penalty_due = :pen, "
             "version = version + 1, updated_at = :ts "
-            "WHERE id = CAST(:id AS uuid)"
+            "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
         ),
-        {"bal": str(balance_after), "pen": str(penalty_after), "ts": ts, "id": str(loan_id)},
+        {
+            "bal": str(balance_after),
+            "pen": str(penalty_after),
+            "ts": ts,
+            "id": str(loan_id),
+            "tid": str(tenant_id),
+        },
     )
     await record_audit(
         session,
@@ -436,10 +446,13 @@ async def _close_loan(
         CursorResult[Any],
         await session.execute(
             text(
+                # Explicit tenant predicate on the write, on top of RLS
+                # (defence in depth, gate 1.6 — finding 15).
                 "UPDATE loans SET status = :st, closed_at = :ts, days_past_due = 0, "
                 "classification = :cls, provision_pct = :prov, "
                 "version = version + 1, updated_at = :ts "
-                "WHERE id = CAST(:id AS uuid) AND status = 'active'"
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "AND status = 'active'"
             ),
             {
                 "st": target.value,
@@ -447,6 +460,7 @@ async def _close_loan(
                 "cls": healthy.label.value,
                 "prov": str(healthy.provision_pct),
                 "id": str(loan_id),
+                "tid": str(tenant_id),
             },
         ),
     )

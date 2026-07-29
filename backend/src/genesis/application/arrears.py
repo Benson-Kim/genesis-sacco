@@ -71,19 +71,23 @@ async def _process_batch(
     loan is never reclassified.
     """
     clause = "AND l.id > CAST(:after AS uuid) " if after_id is not None else ""
-    params: dict[str, object] = {"as_of": as_of, "limit": batch_size}
+    params: dict[str, object] = {"tid": str(tenant_id), "as_of": as_of, "limit": batch_size}
     if after_id is not None:
         params["after"] = str(after_id)
     rows = (
         await session.execute(
             text(
                 # Static fragments chosen in code; all values are bound parameters.
+                # Explicit tenant predicate on top of RLS (defence in
+                # depth, gate 1.6); also the leading column of
+                # idx_loans_active_scan.
                 "SELECT l.id, l.days_past_due, l.classification, l.provision_pct, "  # noqa: S608
                 "(SELECT MIN(s.due_date) FROM loan_schedules s "
                 " WHERE s.loan_id = l.id AND s.due_date <= :as_of "
                 " AND s.paid_amount < s.total_due) AS oldest_unpaid "
                 "FROM loans l "
-                f"WHERE l.status = 'active' {clause}"
+                "WHERE l.tenant_id = CAST(:tid AS uuid) "
+                f"AND l.status = 'active' {clause}"
                 "ORDER BY l.id LIMIT :limit "
                 "FOR UPDATE OF l SKIP LOCKED"
             ),
