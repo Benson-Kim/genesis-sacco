@@ -5,9 +5,11 @@ queries to backend/perf/explain_p12.txt (CI artifact, pasted into the
 MR description):
 
   1. exits keyset listing page (idx_exits_created_keyset, 0010)
-  2. open-settlement lookup by member (uq_member_exits_open, 0010 —
+  2. status-filtered exits keyset page (idx_exits_status_created_keyset,
+     0010 — the 0001 idx_exits_status cannot serve the keyset ORDER BY)
+  3. open-settlement lookup by member (uq_member_exits_open, 0010 —
      the partial unique doubles as the lookup index)
-  3. exit votes tally (idx_exit_votes_exit / the vote UNIQUE, 0010)
+  4. exit votes tally (idx_exit_votes_exit / the vote UNIQUE, 0010)
 
 Tiny CI tables make seqscan the cheaper plan; the capture disables it
 for the session to prove each query is servable by an index — i.e. the
@@ -39,6 +41,15 @@ EXITS_KEYSET_PAGE = """
 SELECT id, member_id, status, net_payable, created_at
 FROM member_exits
 WHERE tenant_id = CAST(:tid AS uuid)
+AND (created_at, id) < (:c_ts, CAST(:c_id AS uuid))
+ORDER BY created_at DESC, id DESC LIMIT 21
+"""
+
+EXITS_STATUS_KEYSET_PAGE = """
+SELECT id, member_id, status, net_payable, created_at
+FROM member_exits
+WHERE tenant_id = CAST(:tid AS uuid)
+AND status = :status
 AND (created_at, id) < (:c_ts, CAST(:c_id AS uuid))
 ORDER BY created_at DESC, id DESC LIMIT 21
 """
@@ -94,6 +105,16 @@ def test_p12_hot_path_queries_are_index_backed() -> None:
                 EXITS_KEYSET_PAGE,
                 {"tid": str(tid), "c_ts": datetime.now(UTC), "c_id": str(uuid.uuid4())},
             )
+            status_page_plan = await _explain(
+                session,
+                EXITS_STATUS_KEYSET_PAGE,
+                {
+                    "tid": str(tid),
+                    "status": "requested",
+                    "c_ts": datetime.now(UTC),
+                    "c_id": str(uuid.uuid4()),
+                },
+            )
             open_plan = await _explain(
                 session,
                 OPEN_SETTLEMENT_LOOKUP,
@@ -107,6 +128,8 @@ def test_p12_hot_path_queries_are_index_backed() -> None:
 
         assert "idx_exits_created_keyset" in page_plan
         assert "Seq Scan" not in page_plan
+        assert "idx_exits_status_created_keyset" in status_page_plan
+        assert "Seq Scan" not in status_page_plan
         assert "uq_member_exits_open" in open_plan
         assert "Seq Scan" not in open_plan
         # Either the tally index or the vote UNIQUE serves the tally.
@@ -122,6 +145,7 @@ def test_p12_hot_path_queries_are_index_backed() -> None:
         )
         sections = [
             ("exits keyset listing page", page_plan),
+            ("status-filtered exits keyset page", status_page_plan),
             ("open-settlement lookup by member", open_plan),
             ("exit votes tally", tally_plan),
         ]

@@ -19,9 +19,16 @@ migration adds what the P12 workflow needs on top:
   * idx_exits_created_keyset — the exits listing paginates on
     (created_at, id) DESC; leading with tenant_id matches the RLS
     predicate (gate 1.3: index shipped with the query).
+  * idx_exits_status_created_keyset — the same listing with a status
+    filter: (tenant_id, status, created_at DESC, id DESC) so the
+    filtered keyset page is index-backed too (gate 1.3; the 0001
+    idx_exits_status cannot serve the keyset ORDER BY).
   * exit_votes — committee approval reusing the P9 voting shape:
     UNIQUE (tenant_id, exit_id, voter_id) makes double-voting
     impossible at the database level (gate 1.4); RLS matches 0001.
+    exit_id is ON DELETE RESTRICT: votes are governance evidence and
+    must be non-erasable — deleting a decided exit must fail loudly,
+    never silently erase its vote trail.
   * tenant_settings.exit_fee — the exit fee comes exclusively from
     tenant configuration (0009 pattern; the P11 caller-rate lesson:
     money parameters never travel in request bodies). Tenants without
@@ -60,6 +67,9 @@ CREATE UNIQUE INDEX uq_member_exits_open
 CREATE INDEX idx_exits_created_keyset
     ON member_exits (tenant_id, created_at DESC, id DESC);
 
+CREATE INDEX idx_exits_status_created_keyset
+    ON member_exits (tenant_id, status, created_at DESC, id DESC);
+
 CREATE INDEX idx_exits_requested_by
     ON member_exits (tenant_id, requested_by);
 
@@ -69,7 +79,7 @@ CREATE INDEX idx_exits_settlement_txn
 CREATE TABLE exit_votes (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
-    exit_id uuid NOT NULL REFERENCES member_exits(id) ON DELETE CASCADE,
+    exit_id uuid NOT NULL REFERENCES member_exits(id) ON DELETE RESTRICT,
     voter_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     vote text NOT NULL CHECK (vote IN ('approve', 'reject')),
     created_at timestamptz NOT NULL DEFAULT now(),

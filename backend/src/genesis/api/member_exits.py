@@ -14,12 +14,16 @@ Permission gates (P4 matrix, decided and documented):
     grants members:edit and members:approve to the same roles, so
     role-level separation of duties is not available; the compensating
     controls are user-level and enforced server-side: the requesting
-    user can never vote on their own request, and the decision needs a
-    two-voter quorum (P9 machinery). Posting the settlement executes
-    an already-quorum-approved decision and additionally moves money,
-    so it stays at members:approve — deliberately NOT
-    transactions:create, which would let counter Tellers finalise a
-    member exit.
+    user can never vote on their own request, can never post its
+    money-moving settlement (both 403), and the decision needs a
+    two-voter quorum (P9 machinery). Voiding one's own request stays
+    allowed — it moves no money and is the documented request-
+    withdrawal path (see application.member_exits.void_exit). Posting
+    the settlement executes an already-quorum-approved decision and
+    additionally moves money, so it stays at members:approve —
+    deliberately NOT transactions:create, which would let counter
+    Tellers finalise a member exit — and must come from a different
+    approve-holder than the initiator.
   * view / list / statement — members x VIEW.
 
 Money parameters never travel in request bodies (P11 caller-rate

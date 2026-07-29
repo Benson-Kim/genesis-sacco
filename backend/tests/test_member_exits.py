@@ -13,6 +13,7 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from db_helpers import api_client, factory, seed_user, unique_email
 from genesis.application import member_exits as exits_service
@@ -303,8 +304,13 @@ async def _request(tid: uuid.UUID, actor: uuid.UUID | None, mid: uuid.UUID) -> u
     return record.id
 
 
-async def _approve(tid: uuid.UUID, exit_id: uuid.UUID) -> int:
-    """Two fresh approvers reach quorum; returns the approved version."""
+async def _approve(tid: uuid.UUID, exit_id: uuid.UUID) -> tuple[int, uuid.UUID]:
+    """Two fresh approvers reach quorum; returns (version, settler id).
+
+    The settler is one of the approve-holders and is DISTINCT from the
+    initiator: the user-level separation of duties bans the requesting
+    user from posting the settlement of their own request.
+    """
     v1, _ = await _add_user(tid, "System Admin")
     v2, _ = await _add_user(tid, "System Admin")
     async with tenant_session(factory(), tid) as session:
@@ -314,7 +320,7 @@ async def _approve(tid: uuid.UUID, exit_id: uuid.UUID) -> int:
     assert tally.status is ExitStatus.APPROVED
     async with tenant_session(factory(), tid) as session:
         record = await exits_service.get_exit(session, tid, exit_id)
-    return record.version
+    return record.version, v1
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +368,27 @@ def test_negative_settlement_rejected_with_nothing_persisted() -> None:
             count = (await session.execute(text("SELECT count(*) FROM member_exits"))).scalar_one()
         assert int(count) == 0
         assert await _member_status(tid, mid) == "active"
+
+    asyncio.run(run())
+
+
+def test_arrears_member_may_request_exit_allow_list() -> None:
+    """Status gate is an allow-list: 'active' OR 'arrears' may request.
+
+    An arrears member with no active loan (e.g. reclassified before the
+    loan was netted and closed) must still be able to leave and collect
+    their equity.
+    """
+
+    async def run() -> None:
+        tid, uid, _ = await _seed_actor()
+        mid = await _seed_member(tid, deposit="2500.00", status="arrears")
+        exit_id = await _request(tid, uid, mid)
+        async with tenant_session(factory(), tid) as session:
+            record = await exits_service.get_exit(session, tid, exit_id)
+        assert record.status is ExitStatus.REQUESTED
+        # Hand-computed: 2500 deposits + 0 shares - 0 loan - 0 fee.
+        assert record.net_payable == Decimal("2500.00")
 
     asyncio.run(run())
 
@@ -451,6 +478,109 @@ def test_votes_quorum_unique_initiator_ban_and_reject_path() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Separation of duties: the initiator can never settle their own request
+# ---------------------------------------------------------------------------
+
+
+def test_initiator_cannot_settle_own_request_distinct_approver_can() -> None:
+    """User-level separation of duties on the money-moving step.
+
+    The P4 matrix grants members:edit and members:approve to the same
+    roles, so without the user-level ban the initiator could execute
+    the settlement of their own request. Initiator attempt -> 403 with
+    ZERO side effects; a different approve-holder settles fine.
+    """
+
+    async def run() -> None:
+        tid, initiator, _ = await _seed_actor()
+        mid = await _seed_member(tid, deposit="4000.00")
+        exit_id = await _request(tid, initiator, mid)
+        version, settler = await _approve(tid, exit_id)
+
+        with pytest.raises(ForbiddenError, match="initiator"):
+            async with tenant_session(factory(), tid) as session:
+                await exits_service.post_settlement(
+                    session, tid, initiator, exit_id, version=version, channel=Channel.BANK
+                )
+        # Zero side effects: no posting, no transition, no balance move.
+        assert await _settlement_side_effects(tid) == (0, 0, 0, 0)
+        assert await _member_status(tid, mid) == "active"
+        assert await _balance(tid, mid, "deposit_accounts") == Decimal("4000.00")
+        async with tenant_session(factory(), tid) as session:
+            record = await exits_service.get_exit(session, tid, exit_id)
+        assert record.status is ExitStatus.APPROVED  # untouched
+
+        # A different approve-holder settles fine.
+        async with tenant_session(factory(), tid) as session:
+            result = await exits_service.post_settlement(
+                session, tid, settler, exit_id, version=version, channel=Channel.BANK
+            )
+        assert result.exit.status is ExitStatus.SETTLED
+        assert await _member_status(tid, mid) == "exited"
+        assert (await _settlement_side_effects(tid))[0] == 1
+
+    asyncio.run(run())
+
+
+def test_initiator_may_void_own_request_documented_withdrawal_path() -> None:
+    """Self-void is DELIBERATELY allowed (documented in void_exit).
+
+    Voiding moves no money and only narrows state — it is the request-
+    withdrawal path. The user-level bans apply to voting and settling.
+    """
+
+    async def run() -> None:
+        tid, initiator, _ = await _seed_actor()
+        mid = await _seed_member(tid, deposit="300.00")
+        exit_id = await _request(tid, initiator, mid)
+        async with tenant_session(factory(), tid) as session:
+            voided = await exits_service.void_exit(session, tid, initiator, exit_id, version=1)
+        assert voided.status is ExitStatus.REJECTED
+        assert await _member_status(tid, mid) == "active"  # nothing moved
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Governance evidence: exit votes are non-erasable (ON DELETE RESTRICT)
+# ---------------------------------------------------------------------------
+
+
+def test_exit_votes_are_non_erasable_delete_restrict() -> None:
+    """exit_votes.exit_id is ON DELETE RESTRICT (0010).
+
+    Votes are governance evidence: deleting a voted-on exit row must
+    fail loudly, never silently erase its vote trail (with CASCADE this
+    DELETE would succeed and drop the votes — falsifiable).
+    """
+
+    async def run() -> None:
+        tid, uid, _ = await _seed_actor()
+        mid = await _seed_member(tid, deposit="100.00")
+        exit_id = await _request(tid, uid, mid)
+        voter, _ = await _add_user(tid, "System Admin")
+        async with tenant_session(factory(), tid) as session:
+            await exits_service.cast_exit_vote(session, tid, voter, exit_id, Vote.APPROVE)
+        with pytest.raises(IntegrityError):
+            async with tenant_session(factory(), tid) as session:
+                await session.execute(
+                    text("DELETE FROM member_exits WHERE id = CAST(:id AS uuid)"),
+                    {"id": str(exit_id)},
+                )
+        # The vote row survives the refused delete.
+        async with tenant_session(factory(), tid) as session:
+            votes = (
+                await session.execute(
+                    text("SELECT count(*) FROM exit_votes WHERE exit_id = CAST(:id AS uuid)"),
+                    {"id": str(exit_id)},
+                )
+            ).scalar_one()
+        assert int(votes) == 1
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
 # Netted-loan settlement, hand-computed end to end
 # ---------------------------------------------------------------------------
 
@@ -492,10 +622,10 @@ def test_netted_loan_exit_full_flow_hand_computed() -> None:
         assert snap.fees == Decimal("500.00")
         assert snap.net_payable == Decimal("113000.00")
 
-        version = await _approve(tid, exit_id)
+        version, settler = await _approve(tid, exit_id)
         async with tenant_session(factory(), tid) as session:
             result = await exits_service.post_settlement(
-                session, tid, uid, exit_id, version=version, channel=Channel.BANK
+                session, tid, settler, exit_id, version=version, channel=Channel.BANK
             )
         assert result.txn_ref is not None and result.txn_ref.startswith("WD-")
         assert result.exit.status is ExitStatus.SETTLED
@@ -548,11 +678,24 @@ def test_netted_loan_exit_full_flow_hand_computed() -> None:
         assert Decimal(str(loan[2])) == Decimal("0.00")
         assert str(g_status) == "released"
 
+        # Audit trail reconstructs the cash rail (channel + the posting
+        # channel actually used — BANK here because net > 0).
+        async with tenant_session(factory(), tid) as session:
+            audit_channels = (
+                await session.execute(
+                    text(
+                        "SELECT after->>'channel', after->>'posting_channel' "
+                        "FROM audit_log WHERE action = 'member_exit.settled'"
+                    )
+                )
+            ).one()
+        assert (str(audit_channels[0]), str(audit_channels[1])) == ("bank", "bank")
+
         # A second posting attempt is refused; side effects stay single.
         with pytest.raises(ConflictError):
             async with tenant_session(factory(), tid) as session:
                 await exits_service.post_settlement(
-                    session, tid, uid, exit_id, version=version + 1, channel=Channel.BANK
+                    session, tid, settler, exit_id, version=version + 1, channel=Channel.BANK
                 )
         assert await _settlement_side_effects(tid) == (1, 7, 1, 1)
 
@@ -569,7 +712,7 @@ def test_toctou_drift_after_approval_returns_409_and_posts_nothing() -> None:
         tid, uid, _ = await _seed_actor()
         mid = await _seed_member(tid, deposit="5000.00")
         exit_id = await _request(tid, uid, mid)
-        version = await _approve(tid, exit_id)
+        version, settler = await _approve(tid, exit_id)
 
         # The classic exploit window: money moves after approval.
         async with tenant_session(factory(), tid) as session:
@@ -580,7 +723,7 @@ def test_toctou_drift_after_approval_returns_409_and_posts_nothing() -> None:
         with pytest.raises(ConflictError, match="stale"):
             async with tenant_session(factory(), tid) as session:
                 await exits_service.post_settlement(
-                    session, tid, uid, exit_id, version=version, channel=Channel.BANK
+                    session, tid, settler, exit_id, version=version, channel=Channel.BANK
                 )
         # Nothing posted, nothing transitioned.
         assert await _settlement_side_effects(tid) == (0, 0, 0, 0)
@@ -591,16 +734,19 @@ def test_toctou_drift_after_approval_returns_409_and_posts_nothing() -> None:
         assert record.status is ExitStatus.APPROVED  # untouched
 
         # Documented recovery: void the drifted snapshot, request afresh.
+        # The initiator voids their own request — the documented
+        # request-withdrawal path (self-void is deliberately allowed;
+        # only voting and settling are user-separated).
         async with tenant_session(factory(), tid) as session:
             voided = await exits_service.void_exit(
                 session, tid, uid, exit_id, version=record.version
             )
         assert voided.status is ExitStatus.REJECTED
         new_exit = await _request(tid, uid, mid)
-        new_version = await _approve(tid, new_exit)
+        new_version, new_settler = await _approve(tid, new_exit)
         async with tenant_session(factory(), tid) as session:
             result = await exits_service.post_settlement(
-                session, tid, uid, new_exit, version=new_version, channel=Channel.BANK
+                session, tid, new_settler, new_exit, version=new_version, channel=Channel.BANK
             )
         # Hand-computed: 5000 + 100 deposited after approval = 5100.
         assert result.exit.net_payable == Decimal("5100.00")
@@ -631,13 +777,13 @@ def test_concurrent_settlement_vs_withdrawal_exactly_one_wins() -> None:
         tid, uid, _ = await _seed_actor()
         mid = await _seed_member(tid, deposit="5000.00")
         exit_id = await _request(tid, uid, mid)
-        version = await _approve(tid, exit_id)
+        version, settler = await _approve(tid, exit_id)
 
         async def settle() -> bool:
             try:
                 async with tenant_session(factory(), tid) as session:
                     await exits_service.post_settlement(
-                        session, tid, uid, exit_id, version=version, channel=Channel.BANK
+                        session, tid, settler, exit_id, version=version, channel=Channel.BANK
                     )
             except ConflictError:
                 return False
@@ -688,7 +834,7 @@ def test_kill_switch_mid_settlement_leaves_zero_partial_state() -> None:
             tid, mid, balance="8000.00", penalty_due="100.00", due_interest="400.00"
         )
         exit_id = await _request(tid, uid, mid)
-        version = await _approve(tid, exit_id)
+        version, settler = await _approve(tid, exit_id)
         before = await _settlement_side_effects(tid)
         async with tenant_session(factory(), tid) as session:
             audit_before = (
@@ -701,7 +847,7 @@ def test_kill_switch_mid_settlement_leaves_zero_partial_state() -> None:
         with pytest.raises(_KillSwitchError):
             async with tenant_session(factory(), tid) as session:
                 await exits_service.post_settlement(
-                    session, tid, uid, exit_id, version=version, channel=Channel.BANK
+                    session, tid, settler, exit_id, version=version, channel=Channel.BANK
                 )
                 raise _KillSwitchError()  # crash inside the transaction
 
@@ -739,7 +885,7 @@ def test_kill_switch_mid_settlement_leaves_zero_partial_state() -> None:
         # 25000 equity - (8000 + 400 + 100) payoff - 250 fee = 16250.
         async with tenant_session(factory(), tid) as session:
             result = await exits_service.post_settlement(
-                session, tid, uid, exit_id, version=version, channel=Channel.BANK
+                session, tid, settler, exit_id, version=version, channel=Channel.BANK
             )
         assert result.exit.net_payable == Decimal("16250.00")
         assert await _member_status(tid, mid) == "exited"
@@ -758,10 +904,10 @@ def test_zero_equity_exit_settles_without_posting() -> None:
         tid, uid, _ = await _seed_actor()
         mid = await _seed_member(tid)  # all balances zero
         exit_id = await _request(tid, uid, mid)
-        version = await _approve(tid, exit_id)
+        version, settler = await _approve(tid, exit_id)
         async with tenant_session(factory(), tid) as session:
             result = await exits_service.post_settlement(
-                session, tid, uid, exit_id, version=version, channel=Channel.BANK
+                session, tid, settler, exit_id, version=version, channel=Channel.BANK
             )
         assert result.txn_ref is None  # documented: no money moved
         assert result.exit.status is ExitStatus.SETTLED
@@ -782,10 +928,10 @@ def test_exited_member_resurrection_paths_all_rejected() -> None:
         mid = await _seed_member(tid, deposit="1000.00")
         other = await _seed_member(tid)
         exit_id = await _request(tid, uid, mid)
-        version = await _approve(tid, exit_id)
+        version, settler = await _approve(tid, exit_id)
         async with tenant_session(factory(), tid) as session:
             await exits_service.post_settlement(
-                session, tid, uid, exit_id, version=version, channel=Channel.BANK
+                session, tid, settler, exit_id, version=version, channel=Channel.BANK
             )
         assert await _member_status(tid, mid) == "exited"
 
@@ -954,7 +1100,9 @@ def test_exit_api_rbac_no_money_in_body_and_statement() -> None:
 
             # Settlement: members:approve required (a Teller with
             # transactions:create must NOT be able to finalise an exit);
-            # extra money fields refused; accrual channel refused.
+            # extra money fields refused; accrual channel refused; the
+            # admin INITIATOR is refused by the user-level separation
+            # rule — a distinct approve-holder must post it.
             assert (
                 await client.post(
                     f"/member-exits/{exit_id}/settlement",
@@ -976,11 +1124,18 @@ def test_exit_api_rbac_no_money_in_body_and_statement() -> None:
                     headers=admin,
                 )
             ).status_code == 400
+            assert (
+                await client.post(
+                    f"/member-exits/{exit_id}/settlement",
+                    json={"version": 2, "channel": "bank"},
+                    headers=admin,
+                )
+            ).status_code == 403  # initiator cannot settle own request
 
             settled = await client.post(
                 f"/member-exits/{exit_id}/settlement",
                 json={"version": 2, "channel": "bank"},
-                headers=admin,
+                headers={"authorization": f"Bearer {voter1}"},
             )
             assert settled.status_code == 201, settled.text
             assert settled.json()["txn_ref"].startswith("WD-")

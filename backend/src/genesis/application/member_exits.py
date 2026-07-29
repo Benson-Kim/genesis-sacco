@@ -7,6 +7,13 @@ Workflow (mirrors the prototype's Governance > Member exit screen):
   2. cast_exit_vote — committee approval reusing the P9 voting
      machinery (quorum -> approved/rejected, one vote per voter by DB
      UNIQUE, the initiator may never vote on their own request)
+
+User-level separation of duties (the P4 matrix grants members:edit and
+members:approve to the same roles, so the separation is per user, not
+per role): the requesting user can never VOTE on their own request and
+can never POST the money-moving SETTLEMENT of it (both 403). Voiding
+one's own request IS allowed — it moves no money and is the documented
+request-withdrawal path (see void_exit).
   3. post_settlement — ONE application-service transaction: re-verify
      every snapshot component under the full lock set (quote/approve/
      post TOCTOU defence, drift -> 409), post the balanced P7 set-off,
@@ -323,6 +330,12 @@ async def request_exit(
     status, _ = await _lock_member(session, tenant_id, member_id)
     if status == "exited":
         raise ConflictError(f"member {member_id} has already exited")
+    if status not in ("active", "arrears"):
+        # Allow-list, not deny-list: only members in good standing or in
+        # arrears may request an exit. Any other (or future) status is
+        # refused with a least-disclosure message (gate 1.6) instead of
+        # silently passing through a deny-list gap.
+        raise ConflictError(f"member {member_id} is not eligible to request an exit")
     ts = datetime.now(UTC)
     computation, _, _, _ = await _compute_under_locks(session, tenant_id, member_id, ts)
     if computation.net_payable < ZERO:
@@ -420,7 +433,9 @@ async def list_exits(
     """Keyset-paginated exits listing, newest first, page cap 100 (gate 1.3).
 
     Backed by idx_exits_created_keyset (tenant_id, created_at DESC,
-    id DESC) shipped in 0010 with this query.
+    id DESC) shipped in 0010 with this query; the status-filtered page
+    by idx_exits_status_created_keyset (tenant_id, status, created_at
+    DESC, id DESC), also 0010.
     """
     limit = max(1, min(limit, 100))
     clauses: list[str] = ["tenant_id = CAST(:tid AS uuid)"]
@@ -528,14 +543,22 @@ async def cast_exit_vote(
     if decision is not None:
         target = ExitStatus.APPROVED if decision is Decision.APPROVED else ExitStatus.REJECTED
         exit_transition(current, target)
-        await session.execute(
-            text(
-                "UPDATE member_exits SET status = :st, decided_at = now(), "
-                "version = version + 1, updated_at = now() "
-                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+        decided = cast(
+            CursorResult[Any],
+            await session.execute(
+                text(
+                    "UPDATE member_exits SET status = :st, decided_at = now(), "
+                    "version = version + 1, updated_at = now() "
+                    "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+                ),
+                {"st": target.value, "id": str(exit_id), "tid": str(tenant_id)},
             ),
-            {"st": target.value, "id": str(exit_id), "tid": str(tenant_id)},
         )
+        if decided.rowcount != 1:  # pragma: no cover - unreachable under the row lock
+            # Codebase invariant: every guarded write verifies its
+            # rowcount. The exit row is locked FOR UPDATE above, so a
+            # mismatch means a logic error, not a user-facing state.
+            raise ConflictError(f"exit settlement {exit_id} changed during voting; retry")
         status = target
         await record_audit(
             session,
@@ -581,6 +604,14 @@ async def void_exit(
     returned 409) or governance withdraws the request: voiding frees
     the one-open-settlement slot so a fresh request can capture the
     current balances.
+
+    Separation-of-duties decision (documented, deliberate): the
+    initiator MAY void their own request. A void moves no money and
+    only ever narrows state (open -> rejected); it is the request-
+    withdrawal path, the natural counterpart of creating the request.
+    The user-level bans apply where value can be extracted: the
+    initiator can never VOTE on (cast_exit_vote) nor SETTLE
+    (post_settlement) their own request.
     """
     row = (
         await session.execute(
@@ -649,7 +680,10 @@ async def post_settlement(
 
     All in the caller's transaction, under the full lock set:
 
-      1. lock the exit row; require status approved + matching version
+      1. lock the exit row; refuse the requesting user (user-level
+         separation of duties — the initiator can never execute the
+         money-moving settlement of their own request, 403); require
+         status approved + matching version
       2. lock the member row (serialisation point), then deposit ->
          share accounts -> loan rows (documented lock order)
       3. recompute every settlement component and compare with the
@@ -679,6 +713,13 @@ async def post_settlement(
     if exit_row is None:
         raise NotFoundError(f"exit settlement {exit_id} not found")
     snapshot = _row_to_exit(exit_row)
+    if snapshot.requested_by is not None and actor_id == snapshot.requested_by:
+        # User-level separation of duties (mirror of the vote ban): the
+        # P4 matrix grants members:edit and members:approve to the same
+        # roles, so without this check the requester could execute the
+        # money-moving settlement of their own request. A different
+        # members:approve holder must post it.
+        raise ForbiddenError("the initiator of an exit request cannot post its settlement")
     try:
         exit_transition(snapshot.status, ExitStatus.SETTLED)
     except InvalidExitTransitionError as exc:
@@ -715,6 +756,7 @@ async def post_settlement(
 
     txn_ref: str | None = None
     txn_id: uuid.UUID | None = None
+    posting_channel: Channel | None = None
     if computation.equity > ZERO:
         posting_channel = channel if computation.net_payable > ZERO else Channel.INTERNAL
         posting = await post_exit_settlement(
@@ -855,6 +897,11 @@ async def post_settlement(
             "status": ExitStatus.SETTLED.value,
             "txn_ref": txn_ref,
             "net_payable": str(computation.net_payable),
+            # Cash-trail reconstruction: the channel the caller chose and
+            # the channel the posting actually used (INTERNAL for a
+            # zero-net set-off; null when zero equity moved no money).
+            "channel": channel.value,
+            "posting_channel": posting_channel.value if posting_channel is not None else None,
         },
     )
     await enqueue_event(
