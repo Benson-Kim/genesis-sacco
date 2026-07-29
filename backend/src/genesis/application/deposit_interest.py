@@ -6,19 +6,27 @@ caller injects a session scope (e.g. functools.partial(tenant_session,
 factory, tenant_id)) so this module stays free of infrastructure
 imports (P10 arrears precedent).
 
-Interest basis (review finding 1): interest is computed from the
-balance **as of the period end**, never from today's balance. The
-historical balance is reconstructed authoritatively from the ledger:
-every deposit-balance change posts a member.deposits leg through the
-P7 contract, so
+Interest basis (review findings 1 and 14): interest is computed from
+the **average daily balance (ADB)** over the accrued period, never
+from today's balance and never from a single point-in-time snapshot.
+A period-end snapshot basis would still let a member deposit on the
+last day of the quarter, collect a full quarter's interest and
+withdraw the next day; the ADB pays that deposit exactly 1/N of the
+quarter (N = days in the period). The daily balances are reconstructed
+authoritatively from the ledger under the account row lock: every
+deposit-balance change posts a member.deposits leg through the P7
+contract, so
 
     balance_at_period_end = current_balance
                             - net(member.deposits legs after the period)
 
-computed under the account row lock. A deposit made after the period
-ended earns nothing for that period; an account emptied after the
-period ended still earns what its quarter-end balance deserved (which
-is why the scan covers every account, not only positive balances).
+and walking backwards day by day from period.end to period.start,
+undoing each day's net in-period movement, yields every end-of-day
+balance; the basis is the cent-rounded mean of those (positive-clamped)
+balances. A deposit made after the period ended earns nothing for that
+period; an account emptied after the period ended still earns what its
+in-period balances deserved (which is why the scan covers every
+account, not only positive balances).
 
 Rate and period (review finding 2): the annual rate comes exclusively
 from tenant_settings, and the accrued period is resolved server-side
@@ -214,6 +222,72 @@ async def _balance_as_of_period_end(
     return historical if historical > ZERO else ZERO
 
 
+async def _average_daily_balance(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    member_id: uuid.UUID,
+    *,
+    current_balance: Decimal,
+    period: QuarterPeriod,
+) -> Decimal:
+    """Average daily balance over the period, reconstructed from the ledger.
+
+    All reads happen under the account row lock taken by the caller
+    (gate 1.4), inside the same transaction. Starting from the balance
+    as of the period end (see _balance_as_of_period_end), the walk
+    undoes each day's net member.deposits movement backwards from
+    period.end to period.start, producing every end-of-day balance in
+    the period; the basis is the cent-rounded mean of those balances,
+    each clamped at zero (guard for directly seeded fixtures without
+    ledger history). A deposit parked on the account for only the last
+    day of the quarter therefore earns exactly 1/N of the quarter
+    (review finding 14) instead of the full quarter a point-in-time
+    snapshot would have paid.
+    """
+    period_start_at = datetime.combine(period.start, time.min, tzinfo=UTC)
+    cutoff = datetime.combine(period.end + timedelta(days=1), time.min, tzinfo=UTC)
+    end_balance = await _balance_as_of_period_end(
+        session, tenant_id, member_id, current_balance=current_balance, cutoff=cutoff
+    )
+    rows = (
+        await session.execute(
+            text(
+                "SELECT (t.occurred_at AT TIME ZONE 'UTC')::date AS day, "
+                "SUM(CASE WHEN le.side = 'credit' "
+                "THEN le.amount ELSE -le.amount END) "
+                "FROM ledger_entries le "
+                "JOIN transactions t ON t.id = le.transaction_id "
+                "AND t.tenant_id = le.tenant_id "
+                "WHERE le.tenant_id = CAST(:tid AS uuid) "
+                "AND t.member_id = CAST(:m AS uuid) "
+                "AND le.account = :acct "
+                "AND t.occurred_at >= :p_start AND t.occurred_at < :cutoff "
+                "GROUP BY 1"
+            ),
+            {
+                "tid": str(tenant_id),
+                "m": str(member_id),
+                "acct": Account.MEMBER_DEPOSITS.value,
+                "p_start": period_start_at,
+                "cutoff": cutoff,
+            },
+        )
+    ).all()
+    movements: dict[date, Decimal] = {row[0]: Decimal(str(row[1])) for row in rows}
+    total = ZERO
+    balance = end_balance
+    day = period.end
+    while day >= period.start:
+        if balance > ZERO:
+            total += balance
+        # End-of-day balance for the previous day = this day's
+        # end-of-day balance minus this day's net movement.
+        balance -= movements.get(day, ZERO)
+        day -= timedelta(days=1)
+    days_in_period = (period.end - period.start).days + 1
+    return to_cents(total / days_in_period)
+
+
 async def _process_batch(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -227,7 +301,7 @@ async def _process_batch(
 
     The scan walks idx_deposit_accounts_keyset (tenant_id, id) over
     *every* account: an account emptied after the period end still
-    earned interest on its quarter-end balance. Interest is computed
+    earned interest on its in-period average daily balance. Interest is computed
     and posted under the account row lock (gate 1.4); the accrual row
     is claimed with ON CONFLICT DO NOTHING for every scanned account —
     including zero-interest ones — so the period can never be
@@ -257,15 +331,14 @@ async def _process_batch(
     # (review finding 5): 23:59:59.999999 UTC on the period's last day
     # sorts after that day's real transactions and inside the period.
     posted_at = datetime.combine(period.end, time.max, tzinfo=UTC)
-    # Ledger movements at/after the first instant of the following day
-    # happened after the period and are excluded from the basis.
-    cutoff = datetime.combine(period.end + timedelta(days=1), time.min, tzinfo=UTC)
     for account_id_raw, member_id_raw, balance_raw in rows:
         account_id = str(account_id_raw)
         member_id = uuid.UUID(str(member_id_raw))
         balance = Decimal(str(balance_raw))
-        basis = await _balance_as_of_period_end(
-            session, tenant_id, member_id, current_balance=balance, cutoff=cutoff
+        # Average daily balance over the period (review finding 14):
+        # a last-day deposit earns 1/N of the quarter, not all of it.
+        basis = await _average_daily_balance(
+            session, tenant_id, member_id, current_balance=balance, period=period
         )
         interest = quarterly_interest(basis, annual_rate_pct)
         accrual_id = str(uuid.uuid4())

@@ -3,7 +3,7 @@
 import asyncio
 import os
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from functools import partial
 
@@ -111,6 +111,15 @@ async def _seed_accrual_row(
                 "pe": period_end,
                 "rate": rate,
             },
+        )
+
+
+async def _backdate_txn(tid: uuid.UUID, txn_id: uuid.UUID, occurred_at: datetime) -> None:
+    """Move a posted transaction into a past period (ADB basis fixtures)."""
+    async with tenant_session(factory(), tid) as session:
+        await session.execute(
+            text("UPDATE transactions SET occurred_at = :ts WHERE id = CAST(:id AS uuid)"),
+            {"ts": occurred_at, "id": str(txn_id)},
         )
 
 
@@ -323,12 +332,13 @@ def test_interest_job_posts_once_and_rerun_changes_nothing() -> None:
 
 
 def test_interest_accrues_on_period_end_balance_not_current() -> None:
-    """Review finding 1: the basis is the balance as of period.end.
+    """Review findings 1 + 14: the basis is ledger-reconstructed, in-period.
 
     A deposit made after the period ended earns nothing for that
     period (the deposit-then-collect-then-withdraw exploit); an account
-    emptied after the period ended still earns what its quarter-end
-    balance deserved.
+    emptied after the period ended still earns what its in-period
+    balances deserved. Both fixtures held a constant balance across the
+    quarter, so the average daily balance equals that constant.
     """
 
     async def run() -> None:
@@ -380,6 +390,72 @@ def test_interest_accrues_on_period_end_balance_not_current() -> None:
         assert occurred.date() == period.end
         assert occurred.hour == 23
         assert occurred.minute == 59
+
+    asyncio.run(run())
+
+
+def test_interest_basis_is_average_daily_balance() -> None:
+    """Second-pass finding 14: the basis is the ADB, never a snapshot.
+
+    Q2-2026 (Apr 1 - Jun 30, 91 days) at 8% p.a., hand-computed:
+
+      * 91000.00 deposited on the LAST day of the quarter with zero
+        prior balance -> ADB = 91000/91 = 1000.00 -> interest
+        1000*8/400 = 20.00 — not the 1820.00 a period-end snapshot
+        would have paid (deposit-on-the-last-day exploit).
+      * 9100.00 deposited 10 days before quarter end -> the balance is
+        9100.00 for 10 days -> ADB = 9100*10/91 = 1000.00 -> 20.00.
+    """
+
+    async def run() -> None:
+        tid, _ = await seed_user(unique_email())
+        period = quarter_of(date(2026, 4, 1))  # Q2-2026: Apr 1 - Jun 30
+        assert (period.end - period.start).days + 1 == 91
+
+        m_last_day = await _seed_member(tid)
+        async with tenant_session(factory(), tid) as session:
+            last = await txn_service.record_deposit(
+                session, tid, None, m_last_day, amount=Decimal("91000.00"), channel=Channel.BANK
+            )
+        await _backdate_txn(
+            tid, last.txn_id, datetime.combine(period.end, time(12, 0), tzinfo=UTC)
+        )
+
+        m_ten_days = await _seed_member(tid)
+        async with tenant_session(factory(), tid) as session:
+            ten = await txn_service.record_deposit(
+                session, tid, None, m_ten_days, amount=Decimal("9100.00"), channel=Channel.BANK
+            )
+        await _backdate_txn(
+            tid,
+            ten.txn_id,
+            datetime.combine(period.end - timedelta(days=9), time(12, 0), tzinfo=UTC),
+        )
+
+        scope = partial(tenant_session, factory(), tid)
+        result = await interest_service.run_deposit_interest_for_tenant(
+            scope, tid, period=period, annual_rate_pct=Decimal("8.00")
+        )
+        assert result.posted == 2
+        assert result.total_interest == Decimal("40.00")  # 20.00 + 20.00
+        assert await _balance(tid, m_last_day) == Decimal("91020.00")
+        assert await _balance(tid, m_ten_days) == Decimal("9120.00")
+
+        # The audit rows carry the ADB basis (1000.00 for both).
+        async with tenant_session(factory(), tid) as session:
+            bases = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT after->>'basis' FROM audit_log "
+                            "WHERE action = 'deposit_account.interest'"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert sorted(str(b) for b in bases) == ["1000.00", "1000.00"]
 
     asyncio.run(run())
 
