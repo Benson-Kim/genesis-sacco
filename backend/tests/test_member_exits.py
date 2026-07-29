@@ -246,7 +246,10 @@ async def _balance(tid: uuid.UUID, mid: uuid.UUID, table: str) -> Decimal:
         val = (
             await session.execute(
                 # Table name from test code, never user input.
-                text(f"SELECT balance FROM {table} WHERE member_id = CAST(:m AS uuid)"),  # noqa: S608
+                text(
+                    f"SELECT balance FROM {table} "  # noqa: S608
+                    "WHERE member_id = CAST(:m AS uuid)"
+                ),
                 {"m": str(mid)},
             )
         ).scalar_one()

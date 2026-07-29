@@ -260,7 +260,10 @@ async def create_application(
 async def get_application(session: AsyncSession, application_id: uuid.UUID) -> ApplicationRecord:
     row = (
         await session.execute(
-            text(f"SELECT {_COLS} FROM loan_applications WHERE id = CAST(:id AS uuid)"),  # noqa: S608
+            text(
+                f"SELECT {_COLS} FROM loan_applications "  # noqa: S608
+                "WHERE id = CAST(:id AS uuid)"
+            ),
             {"id": str(application_id)},
         )
     ).first()
