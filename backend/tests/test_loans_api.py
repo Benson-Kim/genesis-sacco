@@ -15,9 +15,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from db_helpers import api_client, factory, seed_user, unique_email
+from genesis.application import loan_applications as applications_service
+from genesis.application import loan_products as products_service
 from genesis.application.auth import AuthContext, issue_access_token
-from genesis.application.guarantees import pledge_guarantee
+from genesis.application.guarantees import consent_guarantee, pledge_guarantee
 from genesis.application.rbac import seed_permissions
+from genesis.domain.committee import Decision, Vote
+from genesis.domain.lending import ApplicationStage
 from genesis.errors import ConflictError
 from genesis.infrastructure.tenancy import tenant_session
 
