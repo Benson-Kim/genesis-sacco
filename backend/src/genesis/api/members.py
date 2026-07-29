@@ -144,6 +144,7 @@ async def member_statement(
     async with tenant_session(factory, ctx.tenant_id) as session:
         page = await members_service.member_statement(
             session,
+            ctx.tenant_id,
             member_id,
             cursor=cursor,
             limit=limit,

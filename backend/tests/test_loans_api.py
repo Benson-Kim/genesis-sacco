@@ -1049,11 +1049,11 @@ def test_application_service_direct_flow() -> None:
         assert record.cover_pct == Decimal("50.00")
 
         async with tenant_session(factory(), tid) as session:
-            fetched = await applications_service.get_application(session, record.id)
+            fetched = await applications_service.get_application(session, tid, record.id)
         assert fetched.version == 1
 
         async with tenant_session(factory(), tid) as session:
-            items, next_cur = await applications_service.list_applications(session, limit=10)
+            items, next_cur = await applications_service.list_applications(session, tid, limit=10)
         assert next_cur is None
         assert any(a.id == record.id for a in items)
 
