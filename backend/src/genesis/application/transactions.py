@@ -1,0 +1,326 @@
+"""Member transactions: deposits, withdrawals, share top-ups, ledger listing (P11).
+
+Every money movement reuses the P7 posting contract (gate 1.1) and runs
+inside the caller's transaction: lock the account row -> validate ->
+post balanced legs -> update the balance -> audit; notifications are
+outbox-only via the posting services (gates 1.2, 1.4, 1.5).
+
+Withdrawal capacity honours guarantorship: withdrawable funds are the
+deposit balance minus the member's live pledges. Pledging computes
+capacity under the same deposit-account row lock (P9), so the two paths
+can never interleave into an over-pledge or an over-withdrawal.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from genesis.application.audit import record_audit
+from genesis.application.guarantees import live_pledged_total
+from genesis.application.ledger import post_deposit, post_share_topup, post_withdrawal
+from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
+from genesis.domain.ledger import MEMBER_DIRECTION, Channel, Side, TxnType, member_direction
+from genesis.domain.money import ZERO, to_cents
+from genesis.errors import ConflictError, InvalidInputError, NotFoundError
+
+#: The two account tables this module maintains. Table names are always
+#: taken from this mapping (never from user input) before interpolation.
+_ACCOUNT_TABLES = {"deposit": "deposit_accounts", "share": "share_accounts"}
+
+_TXN_COLS = "id, txn_ref, member_id, type, amount, channel, occurred_at, reversal_of_id"
+
+
+@dataclass(frozen=True)
+class AccountTxnResult:
+    txn_id: uuid.UUID
+    txn_ref: str
+    amount: Decimal
+    balance_after: Decimal
+
+
+@dataclass(frozen=True)
+class TransactionRecord:
+    id: uuid.UUID
+    txn_ref: str
+    member_id: uuid.UUID | None
+    txn_type: TxnType
+    amount: Decimal
+    channel: Channel
+    occurred_at: datetime
+    direction: Side
+    is_reversal: bool
+
+
+async def _require_member(
+    session: AsyncSession, member_id: uuid.UUID, *, require_active: bool
+) -> None:
+    row = (
+        await session.execute(
+            text("SELECT status FROM members WHERE id = CAST(:m AS uuid)"),
+            {"m": str(member_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"member {member_id} not found")
+    status = str(row[0])
+    if status == "exited":
+        raise ConflictError(f"member {member_id} has exited and cannot transact")
+    if require_active and status != "active":
+        raise ConflictError(f"member {member_id} is '{status}': only active members may withdraw")
+
+
+async def _lock_account(
+    session: AsyncSession, *, kind: str, member_id: uuid.UUID
+) -> tuple[uuid.UUID, Decimal]:
+    """Row-lock the member's account; every balance writer takes this lock."""
+    table = _ACCOUNT_TABLES[kind]
+    row = (
+        await session.execute(
+            text(
+                # Table name from _ACCOUNT_TABLES, never user input.
+                f"SELECT id, balance FROM {table} "  # noqa: S608
+                "WHERE member_id = CAST(:m AS uuid) FOR UPDATE"
+            ),
+            {"m": str(member_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"member {member_id} has no {kind} account")
+    return uuid.UUID(str(row[0])), Decimal(str(row[1]))
+
+
+async def _set_balance(
+    session: AsyncSession, *, kind: str, account_id: uuid.UUID, balance: Decimal
+) -> None:
+    table = _ACCOUNT_TABLES[kind]
+    await session.execute(
+        text(
+            # Table name from _ACCOUNT_TABLES, never user input.
+            f"UPDATE {table} SET balance = :bal, version = version + 1, "  # noqa: S608
+            "updated_at = now() WHERE id = CAST(:id AS uuid)"
+        ),
+        {"bal": str(balance), "id": str(account_id)},
+    )
+
+
+async def record_deposit(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+    member_id: uuid.UUID,
+    *,
+    amount: Decimal,
+    channel: Channel,
+) -> AccountTxnResult:
+    """Post a deposit and credit the account atomically (gates 1.4, 1.5).
+
+    Arrears members may deposit (money in reduces risk); exited members
+    may not transact.
+    """
+    amount = to_cents(amount)
+    if amount <= ZERO:
+        raise InvalidInputError("deposit amount must be positive")
+    await _require_member(session, member_id, require_active=False)
+    account_id, balance = await _lock_account(session, kind="deposit", member_id=member_id)
+    posting = await post_deposit(session, tenant_id, member_id, amount, channel, actor_id)
+    balance_after = to_cents(balance + amount)
+    await _set_balance(session, kind="deposit", account_id=account_id, balance=balance_after)
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="deposit_account.credit",
+        entity="deposit_accounts",
+        entity_id=str(account_id),
+        before={"balance": str(balance)},
+        after={"balance": str(balance_after), "txn_ref": posting.txn_ref},
+    )
+    return AccountTxnResult(posting.txn_id, posting.txn_ref, amount, balance_after)
+
+
+async def record_withdrawal(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+    member_id: uuid.UUID,
+    *,
+    amount: Decimal,
+    channel: Channel,
+) -> AccountTxnResult:
+    """Withdraw under the account row lock; never overdraws (gate 1.4).
+
+    Withdrawable funds exclude live guarantee pledges: a guarantor can
+    never withdraw collateral that backs someone else's application or
+    loan. The teller is serving the member's own account, so echoing
+    the withdrawable amount is legitimate counter information (unlike a
+    guarantor's capacity, which P9 deliberately never reveals to the
+    pledging staff).
+    """
+    amount = to_cents(amount)
+    if amount <= ZERO:
+        raise InvalidInputError("withdrawal amount must be positive")
+    await _require_member(session, member_id, require_active=True)
+    account_id, balance = await _lock_account(session, kind="deposit", member_id=member_id)
+    pledged = await live_pledged_total(session, member_id)
+    available = balance - pledged
+    if amount > available:
+        raise ConflictError(
+            f"insufficient available funds: requested {amount}, withdrawable {available} "
+            f"({pledged} pledged as guarantees)"
+        )
+    posting = await post_withdrawal(session, tenant_id, member_id, amount, channel, actor_id)
+    balance_after = to_cents(balance - amount)
+    await _set_balance(session, kind="deposit", account_id=account_id, balance=balance_after)
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="deposit_account.debit",
+        entity="deposit_accounts",
+        entity_id=str(account_id),
+        before={"balance": str(balance)},
+        after={
+            "balance": str(balance_after),
+            "txn_ref": posting.txn_ref,
+            "pledged": str(pledged),
+        },
+    )
+    return AccountTxnResult(posting.txn_id, posting.txn_ref, amount, balance_after)
+
+
+async def record_share_topup(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+    member_id: uuid.UUID,
+    *,
+    amount: Decimal,
+    channel: Channel,
+) -> AccountTxnResult:
+    """Post a share top-up and credit the share account atomically."""
+    amount = to_cents(amount)
+    if amount <= ZERO:
+        raise InvalidInputError("share top-up amount must be positive")
+    await _require_member(session, member_id, require_active=False)
+    account_id, balance = await _lock_account(session, kind="share", member_id=member_id)
+    posting = await post_share_topup(session, tenant_id, member_id, amount, channel, actor_id)
+    balance_after = to_cents(balance + amount)
+    await _set_balance(session, kind="share", account_id=account_id, balance=balance_after)
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="share_account.credit",
+        entity="share_accounts",
+        entity_id=str(account_id),
+        before={"balance": str(balance)},
+        after={"balance": str(balance_after), "txn_ref": posting.txn_ref},
+    )
+    return AccountTxnResult(posting.txn_id, posting.txn_ref, amount, balance_after)
+
+
+def _row_to_txn(row: object) -> TransactionRecord:
+    txn_type = TxnType(str(row[3]))  # type: ignore[index]
+    is_reversal = row[7] is not None  # type: ignore[index]
+    return TransactionRecord(
+        id=uuid.UUID(str(row[0])),  # type: ignore[index]
+        txn_ref=str(row[1]),  # type: ignore[index]
+        member_id=uuid.UUID(str(row[2])) if row[2] is not None else None,  # type: ignore[index]
+        txn_type=txn_type,
+        amount=Decimal(str(row[4])),  # type: ignore[index]
+        channel=Channel(str(row[5])),  # type: ignore[index]
+        occurred_at=row[6],  # type: ignore[index]
+        direction=member_direction(txn_type, is_reversal=is_reversal),
+        is_reversal=is_reversal,
+    )
+
+
+def _direction_clause(direction: Side) -> str:
+    """SQL predicate for the DR/CR filter.
+
+    Values interpolated here come exclusively from the TxnType enum,
+    never from user input. Reversals carry the original type with
+    mirrored legs, so their member-facing direction is flipped.
+    """
+    same = sorted(t.value for t, s in MEMBER_DIRECTION.items() if s is direction)
+    flipped = sorted(t.value for t, s in MEMBER_DIRECTION.items() if s is not direction)
+    same_list = ", ".join(f"'{v}'" for v in same)
+    flipped_list = ", ".join(f"'{v}'" for v in flipped)
+    return (
+        f"((type IN ({same_list}) AND reversal_of_id IS NULL) "
+        f"OR (type IN ({flipped_list}) AND reversal_of_id IS NOT NULL))"
+    )
+
+
+async def list_transactions(
+    session: AsyncSession,
+    *,
+    member_id: uuid.UUID | None = None,
+    txn_type: TxnType | None = None,
+    channel: Channel | None = None,
+    direction: Side | None = None,
+    ref: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> tuple[list[TransactionRecord], str | None]:
+    """Keyset-paginated ledger listing, newest first, page cap 100 (gate 1.3).
+
+    Filters mirror the prototype columns (date, ref, member, type,
+    DR/CR, channel). Backed by idx_txns_occurred_keyset and, for the
+    member-filtered page, idx_txns_member_keyset.
+    """
+    limit = max(1, min(limit, 100))
+    clauses: list[str] = []
+    params: dict[str, object] = {"limit": limit + 1}
+    if member_id is not None:
+        clauses.append("member_id = CAST(:mid AS uuid)")
+        params["mid"] = str(member_id)
+    if txn_type is not None:
+        clauses.append("type = :type")
+        params["type"] = txn_type.value
+    if channel is not None:
+        clauses.append("channel = :channel")
+        params["channel"] = channel.value
+    if direction is not None:
+        clauses.append(_direction_clause(direction))
+    if ref is not None:
+        clauses.append("txn_ref = :ref")
+        params["ref"] = ref
+    if date_from is not None:
+        clauses.append("occurred_at >= :d_from")
+        params["d_from"] = date_from
+    if date_to is not None:
+        if date_from is not None and date_to < date_from:
+            raise InvalidInputError("date_to must not precede date_from")
+        clauses.append("occurred_at < :d_to")
+        params["d_to"] = date_to + timedelta(days=1)  # inclusive end date
+    if cursor:
+        params["c_ts"], params["c_id"] = parse_created_id_cursor(cursor, entity="transaction")
+        clauses.append("(occurred_at, id) < (:c_ts, CAST(:c_id AS uuid))")
+    where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+    # Static fragments chosen in code; all values are bound parameters.
+    rows = (
+        await session.execute(
+            text(
+                f"SELECT {_TXN_COLS} FROM transactions "  # noqa: S608
+                f"{where}"
+                "ORDER BY occurred_at DESC, id DESC LIMIT :limit"
+            ),
+            params,
+        )
+    ).all()
+    page_rows = rows[:limit]
+    items = [_row_to_txn(r) for r in page_rows]
+    next_cursor = None
+    if len(rows) > limit and page_rows:
+        last = page_rows[-1]
+        next_cursor = build_created_id_cursor(last[6], last[0])
+    return items, next_cursor
