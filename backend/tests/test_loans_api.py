@@ -930,9 +930,7 @@ def test_committee_rejection_releases_pledges() -> None:
         product_id = await _make_product(headers, "Quorum Release Product")
         guarantor = await _make_member(headers, "Quorum Release Guarantor")
         await _set_deposit_balance(tid, guarantor, "10000.00")
-        aid = await _application_in_committee(
-            headers, tid, "Quorum Release Borrower", product_id
-        )
+        aid = await _application_in_committee(headers, tid, "Quorum Release Borrower", product_id)
         async with api_client() as client:
             pledge = await client.post(
                 f"/applications/{aid}/guarantees",
