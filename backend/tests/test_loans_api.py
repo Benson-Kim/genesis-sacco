@@ -1104,9 +1104,7 @@ def test_vote_service_direct_quorum_approval() -> None:
         tid, role_id, token = await _seed_actor()
         headers = _headers(token)
         product_id = await _make_product(headers, "Direct Vote Product")
-        aid = await _application_in_committee(
-            headers, tid, "Direct Vote Borrower", product_id
-        )
+        aid = await _application_in_committee(headers, tid, "Direct Vote Borrower", product_id)
         application_id = uuid.UUID(aid)
 
         async def add_voter() -> uuid.UUID:
