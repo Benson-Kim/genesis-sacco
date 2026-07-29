@@ -289,7 +289,7 @@ async def portfolio_summary(ctx: BookViewCtx) -> PortfolioSummaryOut:
     """NPL / PAR-30 / provisioning aggregates feeding the dashboard."""
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        summary = await loans_service.portfolio_summary(session)
+        summary = await loans_service.portfolio_summary(session, ctx.tenant_id)
     return PortfolioSummaryOut(
         active_loans=summary.active_loans,
         outstanding_balance=str(summary.outstanding_balance),

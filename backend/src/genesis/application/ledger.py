@@ -38,6 +38,7 @@ from genesis.domain.ledger import (
     build_deposit_interest_posting,
     build_deposit_posting,
     build_disbursement_posting,
+    build_exit_settlement_posting,
     build_loan_interest_accrual_posting,
     build_repayment_posting,
     build_reversal_posting,
@@ -476,6 +477,56 @@ async def post_deposit_interest(
     return result
 
 
+async def post_exit_settlement(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    member_id: uuid.UUID,
+    *,
+    shares: Decimal,
+    deposits: Decimal,
+    loan_principal: Decimal,
+    loan_interest: Decimal,
+    loan_penalties: Decimal,
+    fee: Decimal,
+    channel: Channel,
+    actor_id: uuid.UUID | None = None,
+    occurred_at: datetime | None = None,
+) -> PostingResult:
+    """Post the P12 exit set-off (WD- ref) and enqueue the notification event.
+
+    One balanced posting: the member's equity is debited, the netted
+    loan payoff, exit fee and net cash refund are credited. Runs in the
+    caller's transaction; the P12 settlement service owns the full
+    atomic unit (gate 1.5). Payload carries ids and amounts only —
+    never names or contact details (gate 1.6).
+    """
+    spec = build_exit_settlement_posting(
+        shares=shares,
+        deposits=deposits,
+        loan_principal=loan_principal,
+        loan_interest=loan_interest,
+        loan_penalties=loan_penalties,
+        fee=fee,
+        channel=channel,
+    )
+    result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
+    net = spec.amount - loan_principal - loan_interest - loan_penalties - fee
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="ledger.exit_settlement_posted",
+        payload={
+            "txn_id": str(result.txn_id),
+            "txn_ref": result.txn_ref,
+            "member_id": str(member_id),
+            "equity": str(spec.amount),
+            "net_payable": str(net),
+            "channel": channel.value,
+        },
+    )
+    return result
+
+
 async def post_reversal(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -497,10 +548,13 @@ async def post_reversal(
     txn_row = (
         await session.execute(
             text(
+                # Explicit tenant predicate on the row-lock read, on top
+                # of RLS (defence in depth, gate 1.6 v1.1; issue #17).
                 "SELECT member_id, type, amount, channel, reversal_of_id "
-                "FROM transactions WHERE id = CAST(:id AS uuid) FOR UPDATE"
+                "FROM transactions WHERE id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
-            {"id": str(original_txn_id)},
+            {"id": str(original_txn_id), "tid": str(tenant_id)},
         )
     ).first()
     if txn_row is None:
@@ -516,8 +570,11 @@ async def post_reversal(
 
     existing_reversal = (
         await session.execute(
-            text("SELECT id FROM transactions WHERE reversal_of_id = CAST(:id AS uuid) LIMIT 1"),
-            {"id": str(original_txn_id)},
+            text(
+                "SELECT id FROM transactions WHERE reversal_of_id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) LIMIT 1"
+            ),
+            {"id": str(original_txn_id), "tid": str(tenant_id)},
         )
     ).first()
     if existing_reversal is not None:
@@ -528,9 +585,10 @@ async def post_reversal(
         await session.execute(
             text(
                 "SELECT account, side, amount FROM ledger_entries "
-                "WHERE transaction_id = CAST(:id AS uuid) ORDER BY created_at"
+                "WHERE transaction_id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) ORDER BY created_at"
             ),
-            {"id": str(original_txn_id)},
+            {"id": str(original_txn_id), "tid": str(tenant_id)},
         )
     ).all()
     if not line_rows:
@@ -626,12 +684,14 @@ async def disburse_loan(
     app_row = (
         await session.execute(
             text(
+                # Explicit tenant predicate on the row-lock read, on top
+                # of RLS (defence in depth, gate 1.6 v1.1; issue #17).
                 "SELECT id, member_id, product_id, amount, term_months, "
                 "rate_pct, stage, version "
                 "FROM loan_applications "
-                "WHERE id = CAST(:id AS uuid) FOR UPDATE"
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
-            {"id": str(application_id)},
+            {"id": str(application_id), "tid": str(tenant_id)},
         )
     ).first()
     if app_row is None:
@@ -666,9 +726,10 @@ async def disburse_loan(
             text(
                 "UPDATE loan_applications "
                 "SET stage = 'disbursed', version = version + 1, updated_at = :ts "
-                "WHERE id = CAST(:id AS uuid) AND version = :ver"
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "AND version = :ver"
             ),
-            {"ts": ts, "id": str(application_id), "ver": version},
+            {"ts": ts, "id": str(application_id), "tid": str(tenant_id), "ver": version},
         ),
     )
     if update_result.rowcount != 1:

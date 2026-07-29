@@ -32,6 +32,7 @@ TENANT_TABLES = [
     "repayments",
     "guarantees",
     "member_exits",
+    "exit_votes",
     "outbox_events",
     "audit_log",
     "idempotency_keys",

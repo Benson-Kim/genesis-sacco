@@ -112,15 +112,20 @@ async def _process_batch(
             CursorResult[Any],
             await session.execute(
                 text(
+                    # Explicit tenant predicate on the write, on top of
+                    # RLS (defence in depth, gate 1.6 v1.1; issue #17) —
+                    # the batch scan is tenant-scoped; the write matches.
                     "UPDATE loans SET days_past_due = :dpd, classification = :cls, "
                     "provision_pct = :prov, updated_at = now() "
-                    "WHERE id = CAST(:id AS uuid) AND status = 'active'"
+                    "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                    "AND status = 'active'"
                 ),
                 {
                     "dpd": dpd,
                     "cls": computed.label.value,
                     "prov": str(computed.provision_pct),
                     "id": loan_id,
+                    "tid": str(tenant_id),
                 },
             ),
         )

@@ -192,8 +192,50 @@ loop, set `X-Export-Truncated`/`X-Export-Limit`, enforce row caps (1.3).
 Build reports: member statements, trial balance, loan book with
 classification/provisions, disbursement & collections, NPL trend (monthly
 series as in prototype bars). CSV + PDF rendered in worker via outbox jobs.
-EXIT: truncation-header tests green; event-loop blocking test (export while
-serving latency-checked requests) passes.
+Hardened requirements (P11/P12 deep-review lessons — each is a merge
+blocker, not guidance):
+(a) Callers NEVER supply money, cost, or filesystem-path parameters:
+formats, row limits, and storage locations come exclusively from
+server-side configuration; request bodies `extra="forbid"` (1.6, the
+P11 caller-rate / P12 exit-fee lesson).
+(b) CSV formula-injection escaping: any cell whose value begins with
+`=`, `+`, `-`, `@` (or tab/CR-prefixed variants) is quoted/prefixed so
+spreadsheet apps treat it as text — mandatory test exporting a member
+named `=HYPERLINK(...)` and asserting the emitted cell is inert.
+(c) Every export route carries `RequirePermission` per the P4 matrix,
+and every read carries an explicit bound `tenant_id` predicate on top
+of forced RLS (1.6 v1.1; issue #17 precedent).
+(d) Keyset streaming only, with hard server-side row caps and the
+truncation headers — never OFFSET, never an unbounded scan (1.3).
+(e) Export artifacts contain no PII beyond the caller's entitlement
+(column allow-lists per role); storage paths are unguessable (random
+tokens, never enumerable ids); download links expire.
+(f) An audit row for EVERY export capturing who exported what scope
+(report, filters, row count, truncation) — exports are the
+exfiltration channel, so the audit IS the control (1.5).
+(g) Export jobs are idempotent by `Idempotency-Key`; re-submission
+proven by side-effect row counts (one artifact, one audit row, one
+outbox event), never by return values alone (1.4).
+(h) Snapshot-consistent reads: each export renders from a single
+transaction (or explicit as-of semantics) so it can never interleave
+with a concurrent settlement and show partial state — the P12
+quote/approve/post TOCTOU precedent applied to reads.
+(i) Kill-switch atomicity test for the export job runner: abort
+mid-job and prove zero partial state (no artifact, no claim row, no
+audit, no outbox event) (§4).
+(j) EXPLAIN assertions for every report query, with the indexes that
+back them shipped in the same migration (1.3; P10–P12 precedent).
+(k) Wire the P12 exit statement onto the export path (CSV/PDF of the
+`GET /member-exits/{id}/statement` document) per blocker issue #16 and
+close it — the JSON endpoint stays the canonical data source.
+(l) Standing anti-reward-hacking rules: hand-computed oracles in test
+comments, no tautological tests (every guard test must fail with the
+guard removed), honest DoD per §5.8.
+EXIT: truncation-header tests green; event-loop blocking test (export
+while serving latency-checked requests) passes; formula-injection test
+green; export-audit and idempotency side-effect tests green; kill-switch
+job test green; EXPLAIN artifact captured in CI; issue #16 closed with
+the exit-statement export tested end to end.
 
 ---
 

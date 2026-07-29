@@ -83,9 +83,10 @@ async def pledge_guarantee(
         await session.execute(
             text(
                 "SELECT member_id, stage FROM loan_applications "
-                "WHERE id = CAST(:id AS uuid) FOR UPDATE"
+                "WHERE id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
-            {"id": str(application_id)},
+            {"id": str(application_id), "tid": str(tenant_id)},
         )
     ).first()
     if app_row is None:
@@ -102,8 +103,11 @@ async def pledge_guarantee(
             # (which locks the row FOR UPDATE) until this pledge commits,
             # closing the TOCTOU window between the status check and the
             # insert (gate 1.4).
-            text("SELECT status FROM members WHERE id = CAST(:m AS uuid) FOR SHARE"),
-            {"m": str(guarantor_member_id)},
+            text(
+                "SELECT status FROM members WHERE id = CAST(:m AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR SHARE"
+            ),
+            {"m": str(guarantor_member_id), "tid": str(tenant_id)},
         )
     ).first()
     if guarantor_row is None:
@@ -118,9 +122,10 @@ async def pledge_guarantee(
     balance_row = (
         await session.execute(
             text(
-                "SELECT balance FROM deposit_accounts WHERE member_id = CAST(:m AS uuid) FOR UPDATE"
+                "SELECT balance FROM deposit_accounts WHERE member_id = CAST(:m AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
-            {"m": str(guarantor_member_id)},
+            {"m": str(guarantor_member_id), "tid": str(tenant_id)},
         )
     ).first()
     if balance_row is None:
@@ -177,7 +182,7 @@ async def pledge_guarantee(
             "amount": str(amount),
         },
     )
-    await recompute_cover(session, application_id)
+    await recompute_cover(session, tenant_id, application_id)
     return GuaranteeRecord(
         id=guarantee_id,
         application_id=application_id,
@@ -203,9 +208,10 @@ async def consent_guarantee(
             text(
                 "SELECT application_id, guarantor_member_id, borrower_member_id, "
                 "amount, status, version FROM guarantees "
-                "WHERE id = CAST(:id AS uuid) FOR UPDATE"
+                "WHERE id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
-            {"id": str(guarantee_id)},
+            {"id": str(guarantee_id), "tid": str(tenant_id)},
         )
     ).first()
     if row is None:
@@ -217,11 +223,14 @@ async def consent_guarantee(
         CursorResult[Any],
         await session.execute(
             text(
+                # Explicit tenant predicate on the write, on top of RLS
+                # (defence in depth, gate 1.6).
                 "UPDATE guarantees SET status = 'active', "
                 "version = version + 1, updated_at = now() "
-                "WHERE id = CAST(:id AS uuid) AND version = :ver"
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "AND version = :ver"
             ),
-            {"id": str(guarantee_id), "ver": version},
+            {"id": str(guarantee_id), "tid": str(tenant_id), "ver": version},
         ),
     )
     if result.rowcount != 1:

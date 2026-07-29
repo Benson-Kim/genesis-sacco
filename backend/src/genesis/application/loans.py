@@ -486,12 +486,14 @@ async def _close_loan(
     return target
 
 
-async def portfolio_summary(session: AsyncSession) -> PortfolioSummary:
+async def portfolio_summary(session: AsyncSession, tenant_id: uuid.UUID) -> PortfolioSummary:
     """Dashboard aggregates over the active book, exact to the cent.
 
     Provisions are rounded per loan (ROUND(balance * provision_pct / 100, 2))
     before summing — the same rule the loan book rows display — so the
-    dashboard total always equals the sum of the visible rows.
+    dashboard total always equals the sum of the visible rows. Explicit
+    tenant predicates on top of RLS (defence in depth, gate 1.6 v1.1;
+    issue #17).
     """
     totals = (
         await session.execute(
@@ -503,8 +505,10 @@ async def portfolio_summary(session: AsyncSession) -> PortfolioSummary:
                 "COALESCE(SUM(balance) FILTER (WHERE days_past_due > 30), 0), "
                 "COALESCE(SUM(ROUND(balance * provision_pct / 100, 2)), 0), "
                 "COALESCE(SUM(penalty_due), 0) "
-                "FROM loans WHERE status = 'active'"
-            )
+                "FROM loans WHERE status = 'active' "
+                "AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"tid": str(tenant_id)},
         )
     ).one()
     active_loans = int(totals[0])
@@ -520,8 +524,10 @@ async def portfolio_summary(session: AsyncSession) -> PortfolioSummary:
                 "SELECT classification, count(*), COALESCE(SUM(balance), 0), "
                 "COALESCE(SUM(ROUND(balance * provision_pct / 100, 2)), 0) "
                 "FROM loans WHERE status = 'active' "
+                "AND tenant_id = CAST(:tid AS uuid) "
                 "GROUP BY classification ORDER BY classification"
-            )
+            ),
+            {"tid": str(tenant_id)},
         )
     ).all()
 

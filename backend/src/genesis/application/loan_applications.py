@@ -80,25 +80,35 @@ def _row_to_application(row: Any) -> ApplicationRecord:
     )
 
 
-async def _deposit_balance(session: AsyncSession, member_id: uuid.UUID) -> Decimal:
+async def _deposit_balance(
+    session: AsyncSession, tenant_id: uuid.UUID, member_id: uuid.UUID
+) -> Decimal:
+    # Explicit tenant predicate on top of RLS (defence in depth,
+    # gate 1.6 v1.1; issue #17).
     row = (
         await session.execute(
-            text("SELECT balance FROM deposit_accounts WHERE member_id = CAST(:m AS uuid)"),
-            {"m": str(member_id)},
+            text(
+                "SELECT balance FROM deposit_accounts WHERE member_id = CAST(:m AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"m": str(member_id), "tid": str(tenant_id)},
         )
     ).first()
     return Decimal(str(row[0])) if row is not None else ZERO
 
 
-async def _guarantee_total(session: AsyncSession, application_id: uuid.UUID) -> Decimal:
+async def _guarantee_total(
+    session: AsyncSession, tenant_id: uuid.UUID, application_id: uuid.UUID
+) -> Decimal:
     value = (
         await session.execute(
             text(
                 "SELECT COALESCE(SUM(amount), 0) FROM guarantees "
                 "WHERE application_id = CAST(:a AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) "
                 "AND status IN ('pledged', 'active')"
             ),
-            {"a": str(application_id)},
+            {"a": str(application_id), "tid": str(tenant_id)},
         )
     ).scalar_one()
     return Decimal(str(value))
@@ -126,12 +136,15 @@ async def _release_application_pledges(
         CursorResult[Any],
         await session.execute(
             text(
+                # Explicit tenant predicate on the write, on top of RLS
+                # (defence in depth, gate 1.6 v1.1; issue #17).
                 "UPDATE guarantees SET status = 'released', "
                 "version = version + 1, updated_at = now() "
                 "WHERE application_id = CAST(:aid AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) "
                 "AND status IN ('pledged', 'active')"
             ),
-            {"aid": str(application_id)},
+            {"aid": str(application_id), "tid": str(tenant_id)},
         ),
     )
     released = int(result.rowcount or 0)
@@ -174,7 +187,7 @@ async def create_application(
     amount = to_cents(amount)
     if amount <= ZERO:
         raise InvalidInputError("amount must be positive")
-    product = await get_product(session, product_id)
+    product = await get_product(session, tenant_id, product_id)
     if not product.active:
         raise InvalidInputError(f"loan product {product_id} is inactive")
     if term_months <= 0 or term_months > product.max_term_months:
@@ -183,8 +196,11 @@ async def create_application(
         )
     member_row = (
         await session.execute(
-            text("SELECT status FROM members WHERE id = CAST(:m AS uuid)"),
-            {"m": str(member_id)},
+            text(
+                "SELECT status FROM members WHERE id = CAST(:m AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"m": str(member_id), "tid": str(tenant_id)},
         )
     ).first()
     if member_row is None:
@@ -193,7 +209,7 @@ async def create_application(
         raise ConflictError(
             f"member {member_id} is '{member_row[0]}': only active members may apply"
         )
-    deposits = await _deposit_balance(session, member_id)
+    deposits = await _deposit_balance(session, tenant_id, member_id)
     cover = _cover_pct(deposits, ZERO, amount)
     application_id = uuid.uuid4()
     await session.execute(
@@ -257,11 +273,18 @@ async def create_application(
     )
 
 
-async def get_application(session: AsyncSession, application_id: uuid.UUID) -> ApplicationRecord:
+async def get_application(
+    session: AsyncSession, tenant_id: uuid.UUID, application_id: uuid.UUID
+) -> ApplicationRecord:
+    # Explicit tenant predicate on top of RLS (defence in depth,
+    # gate 1.6 v1.1; issue #17).
     row = (
         await session.execute(
-            text(f"SELECT {_COLS} FROM loan_applications WHERE id = CAST(:id AS uuid)"),  # noqa: S608
-            {"id": str(application_id)},
+            text(
+                f"SELECT {_COLS} FROM loan_applications "  # noqa: S608
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"id": str(application_id), "tid": str(tenant_id)},
         )
     ).first()
     if row is None:
@@ -271,6 +294,7 @@ async def get_application(session: AsyncSession, application_id: uuid.UUID) -> A
 
 async def list_applications(
     session: AsyncSession,
+    tenant_id: uuid.UUID,
     *,
     stage: ApplicationStage | None = None,
     cursor: str | None = None,
@@ -278,15 +302,15 @@ async def list_applications(
 ) -> tuple[list[ApplicationRecord], str | None]:
     """Keyset-paginated listing, newest first (gate 1.3)."""
     limit = max(1, min(limit, 100))
-    clauses: list[str] = []
-    params: dict[str, object] = {"limit": limit + 1}
+    clauses: list[str] = ["tenant_id = CAST(:tid AS uuid)"]
+    params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if stage is not None:
         clauses.append("stage = :stage")
         params["stage"] = stage.value
     if cursor:
         params["c_ts"], params["c_id"] = parse_created_id_cursor(cursor, entity="application")
         clauses.append("(created_at, id) < (:c_ts, CAST(:c_id AS uuid))")
-    where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+    where = f"WHERE {' AND '.join(clauses)} "
     # Static fragments chosen in code; all values are bound parameters.
     rows = (
         await session.execute(
@@ -325,10 +349,12 @@ async def transition_stage(
     row = (
         await session.execute(
             text(
+                # Explicit tenant predicate on the row-lock read, on top
+                # of RLS (defence in depth, gate 1.6 v1.1; issue #17).
                 "SELECT stage, version FROM loan_applications "
-                "WHERE id = CAST(:id AS uuid) FOR UPDATE"
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
-            {"id": str(application_id)},
+            {"id": str(application_id), "tid": str(tenant_id)},
         )
     ).first()
     if row is None:
@@ -344,9 +370,10 @@ async def transition_stage(
             text(
                 "UPDATE loan_applications SET stage = :st, "
                 "version = version + 1, updated_at = now() "
-                "WHERE id = CAST(:id AS uuid) AND version = :ver"
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "AND version = :ver"
             ),
-            {"st": target.value, "id": str(application_id), "ver": version},
+            {"st": target.value, "id": str(application_id), "tid": str(tenant_id), "ver": version},
         ),
     )
     if result.rowcount != 1:
@@ -374,7 +401,7 @@ async def transition_stage(
     if target is ApplicationStage.REJECTED:
         # Terminal rejection frees the guarantors' capacity immediately.
         await _release_application_pledges(session, tenant_id, actor_id, application_id)
-    return await get_application(session, application_id)
+    return await get_application(session, tenant_id, application_id)
 
 
 async def cast_vote(
@@ -392,8 +419,13 @@ async def cast_vote(
     """
     row = (
         await session.execute(
-            text("SELECT stage FROM loan_applications WHERE id = CAST(:id AS uuid) FOR UPDATE"),
-            {"id": str(application_id)},
+            text(
+                # Explicit tenant predicate on the row-lock read, on top
+                # of RLS (defence in depth, gate 1.6 v1.1; issue #17).
+                "SELECT stage FROM loan_applications "
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
+            ),
+            {"id": str(application_id), "tid": str(tenant_id)},
         )
     ).first()
     if row is None:
@@ -422,9 +454,10 @@ async def cast_vote(
         await session.execute(
             text(
                 "SELECT vote, count(*) FROM committee_votes "
-                "WHERE application_id = CAST(:aid AS uuid) GROUP BY vote"
+                "WHERE application_id = CAST(:aid AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) GROUP BY vote"
             ),
-            {"aid": str(application_id)},
+            {"aid": str(application_id), "tid": str(tenant_id)},
         )
     ).all()
     counts = {str(r[0]): int(r[1]) for r in tally_rows}
@@ -452,9 +485,9 @@ async def cast_vote(
             text(
                 "UPDATE loan_applications SET stage = :st, "
                 "version = version + 1, updated_at = now() "
-                "WHERE id = CAST(:id AS uuid)"
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
             ),
-            {"st": target.value, "id": str(application_id)},
+            {"st": target.value, "id": str(application_id), "tid": str(tenant_id)},
         )
         stage = target
         await record_audit(
@@ -493,27 +526,37 @@ async def cast_vote(
     )
 
 
-async def recompute_cover(session: AsyncSession, application_id: uuid.UUID) -> Decimal:
+async def recompute_cover(
+    session: AsyncSession, tenant_id: uuid.UUID, application_id: uuid.UUID
+) -> Decimal:
     """Refresh the derived cover%% after guarantee changes.
 
     cover_pct is derived data, so this deliberately does not bump the
     optimistic version - it must never invalidate a concurrent edit.
+    Every read and the write carry an explicit tenant predicate on top
+    of RLS (defence in depth, gate 1.6 v1.1; issue #17).
     """
     row = (
         await session.execute(
-            text("SELECT member_id, amount FROM loan_applications WHERE id = CAST(:id AS uuid)"),
-            {"id": str(application_id)},
+            text(
+                "SELECT member_id, amount FROM loan_applications "
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"id": str(application_id), "tid": str(tenant_id)},
         )
     ).first()
     if row is None:
         raise NotFoundError(f"loan application {application_id} not found")
     member_id = uuid.UUID(str(row[0]))
     amount = Decimal(str(row[1]))
-    deposits = await _deposit_balance(session, member_id)
-    guarantees = await _guarantee_total(session, application_id)
+    deposits = await _deposit_balance(session, tenant_id, member_id)
+    guarantees = await _guarantee_total(session, tenant_id, application_id)
     cover = _cover_pct(deposits, guarantees, amount)
     await session.execute(
-        text("UPDATE loan_applications SET cover_pct = :c WHERE id = CAST(:id AS uuid)"),
-        {"c": str(cover), "id": str(application_id)},
+        text(
+            "UPDATE loan_applications SET cover_pct = :c "
+            "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+        ),
+        {"c": str(cover), "id": str(application_id), "tid": str(tenant_id)},
     )
     return cover

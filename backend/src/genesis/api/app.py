@@ -14,6 +14,7 @@ from genesis.api.idempotency import IdempotencyMiddleware
 from genesis.api.loan_book import router as loan_book_router
 from genesis.api.loans import router as loans_router
 from genesis.api.me import router as me_router
+from genesis.api.member_exits import router as member_exits_router
 from genesis.api.members import router as members_router
 from genesis.api.transactions import router as transactions_router
 from genesis.errors import AppError, ErrorCategory
@@ -32,6 +33,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(members_router)
+    app.include_router(member_exits_router)
     app.include_router(loans_router)
     app.include_router(loan_book_router)
     app.include_router(transactions_router)

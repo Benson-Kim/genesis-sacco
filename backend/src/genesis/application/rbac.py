@@ -1,4 +1,15 @@
-"""RBAC use-cases: seeding, queries, and audited updates (gates 1.5, 1.6)."""
+"""RBAC use-cases: seeding, queries, and audited updates (gates 1.5, 1.6).
+
+Tenant-predicate exemption (documented per issue #17, gate 1.6 v1.1):
+role/permission queries here filter by role_id — an unguessable UUID
+taken from the authenticated caller's JWT (or resolved via a name
+lookup inside the tenant session), never from request input that could
+name another tenant's role. Forced RLS on roles/permissions is the
+tenant fence; a bound tenant predicate would add nothing because
+role_id is already scoped to the token's tenant by issuance. Writes
+that mutate permissions run inside the caller's tenant session and are
+audited in-transaction.
+"""
 
 from __future__ import annotations
 
