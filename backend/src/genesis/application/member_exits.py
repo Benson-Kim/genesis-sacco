@@ -394,9 +394,7 @@ async def request_exit(
     return await get_exit(session, tenant_id, exit_id)
 
 
-async def get_exit(
-    session: AsyncSession, tenant_id: uuid.UUID, exit_id: uuid.UUID
-) -> ExitRecord:
+async def get_exit(session: AsyncSession, tenant_id: uuid.UUID, exit_id: uuid.UUID) -> ExitRecord:
     row = (
         await session.execute(
             text(

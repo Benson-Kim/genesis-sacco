@@ -330,16 +330,12 @@ def test_exit_blocked_by_live_guarantee_given_until_released() -> None:
         tid, uid, _ = await _seed_actor()
         guarantor = await _seed_member(tid, deposit="10000.00")
         borrower = await _seed_member(tid)
-        gid = await _seed_guarantee(
-            tid, guarantor=guarantor, borrower=borrower, amount="4000.00"
-        )
+        gid = await _seed_guarantee(tid, guarantor=guarantor, borrower=borrower, amount="4000.00")
         with pytest.raises(ConflictError, match="guarantee obligations"):
             await _request(tid, uid, guarantor)
         # Nothing persisted by the rejected request.
         async with tenant_session(factory(), tid) as session:
-            count = (
-                await session.execute(text("SELECT count(*) FROM member_exits"))
-            ).scalar_one()
+            count = (await session.execute(text("SELECT count(*) FROM member_exits"))).scalar_one()
         assert int(count) == 0
         # Released obligation unblocks the exit.
         async with tenant_session(factory(), tid) as session:
@@ -366,9 +362,7 @@ def test_negative_settlement_rejected_with_nothing_persisted() -> None:
         with pytest.raises(ConflictError, match="exceeds the member's equity"):
             await _request(tid, uid, mid)
         async with tenant_session(factory(), tid) as session:
-            count = (
-                await session.execute(text("SELECT count(*) FROM member_exits"))
-            ).scalar_one()
+            count = (await session.execute(text("SELECT count(*) FROM member_exits"))).scalar_one()
         assert int(count) == 0
         assert await _member_status(tid, mid) == "active"
 
@@ -432,9 +426,7 @@ def test_votes_quorum_unique_initiator_ban_and_reject_path() -> None:
         # Separation of duties: the initiator can never vote.
         with pytest.raises(ForbiddenError, match="initiator"):
             async with tenant_session(factory(), tid) as session:
-                await exits_service.cast_exit_vote(
-                    session, tid, initiator, exit_id, Vote.APPROVE
-                )
+                await exits_service.cast_exit_vote(session, tid, initiator, exit_id, Vote.APPROVE)
 
         v1, _ = await _add_user(tid, "System Admin")
         v2, _ = await _add_user(tid, "System Admin")
@@ -544,8 +536,7 @@ def test_netted_loan_exit_full_flow_hand_computed() -> None:
             loan = (
                 await session.execute(
                     text(
-                        "SELECT status, balance, penalty_due FROM loans "
-                        "WHERE id = CAST(:l AS uuid)"
+                        "SELECT status, balance, penalty_due FROM loans WHERE id = CAST(:l AS uuid)"
                     ),
                     {"l": str(loan_id)},
                 )
@@ -553,8 +544,7 @@ def test_netted_loan_exit_full_flow_hand_computed() -> None:
             g_status = (
                 await session.execute(
                     text(
-                        "SELECT status FROM guarantees "
-                        "WHERE borrower_member_id = CAST(:m AS uuid)"
+                        "SELECT status FROM guarantees WHERE borrower_member_id = CAST(:m AS uuid)"
                     ),
                     {"m": str(mid)},
                 )
@@ -731,8 +721,7 @@ def test_kill_switch_mid_settlement_leaves_zero_partial_state() -> None:
             loan = (
                 await session.execute(
                     text(
-                        "SELECT status, balance, penalty_due FROM loans "
-                        "WHERE id = CAST(:l AS uuid)"
+                        "SELECT status, balance, penalty_due FROM loans WHERE id = CAST(:l AS uuid)"
                     ),
                     {"l": str(loan_id)},
                 )
@@ -1003,9 +992,7 @@ def test_exit_api_rbac_no_money_in_body_and_statement() -> None:
             assert settled.json()["txn_ref"].startswith("WD-")
 
             # Statement document (members:view — the Teller may read it).
-            statement = await client.get(
-                f"/member-exits/{exit_id}/statement", headers=teller
-            )
+            statement = await client.get(f"/member-exits/{exit_id}/statement", headers=teller)
             assert statement.status_code == 200
             doc = statement.json()
             assert doc["shares_amount"] == "100.00"
