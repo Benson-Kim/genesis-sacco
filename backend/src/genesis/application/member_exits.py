@@ -216,10 +216,11 @@ async def _open_application_count(
     value = (
         await session.execute(
             text(
-                "SELECT count(*) FROM loan_applications "
+                # _OPEN_STAGES is a static literal chosen in code.
+                "SELECT count(*) FROM loan_applications "  # noqa: S608
                 "WHERE member_id = CAST(:m AS uuid) "
                 "AND tenant_id = CAST(:tid AS uuid) "
-                f"AND stage IN {_OPEN_STAGES}"  # noqa: S608 - static literal
+                f"AND stage IN {_OPEN_STAGES}"
             ),
             {"m": str(member_id), "tid": str(tenant_id)},
         )

@@ -691,7 +691,7 @@ def test_concurrent_settlement_vs_withdrawal_exactly_one_wins() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _KillSwitch(RuntimeError):
+class _KillSwitchError(RuntimeError):
     """Simulated crash after the settlement service ran, before commit."""
 
 
@@ -714,12 +714,12 @@ def test_kill_switch_mid_settlement_leaves_zero_partial_state() -> None:
                 await session.execute(text("SELECT count(*) FROM outbox_events"))
             ).scalar_one()
 
-        with pytest.raises(_KillSwitch):
+        with pytest.raises(_KillSwitchError):
             async with tenant_session(factory(), tid) as session:
                 await exits_service.post_settlement(
                     session, tid, uid, exit_id, version=version, channel=Channel.BANK
                 )
-                raise _KillSwitch()  # crash inside the transaction
+                raise _KillSwitchError()  # crash inside the transaction
 
         # ZERO partial state: no posting, no balance change, no loan
         # change, no member/exit transition, no audit, no outbox row.
