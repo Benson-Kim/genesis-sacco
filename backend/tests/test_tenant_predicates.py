@@ -229,8 +229,7 @@ def test_reversal_refuses_foreign_tenant_argument() -> None:
             reversals = (
                 await session.execute(
                     text(
-                        "SELECT count(*) FROM transactions "
-                        "WHERE reversal_of_id = CAST(:t AS uuid)"
+                        "SELECT count(*) FROM transactions WHERE reversal_of_id = CAST(:t AS uuid)"
                     ),
                     {"t": str(posted.txn_id)},
                 )
