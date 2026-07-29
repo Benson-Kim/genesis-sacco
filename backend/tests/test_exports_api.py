@@ -173,9 +173,7 @@ def test_expired_and_unknown_tokens_are_not_found() -> None:
             fetched = await client.get(f"/exports/{export_id}", headers=headers)
             token_path = fetched.json()["artifact"]["csv_download"]
 
-            unknown = await client.get(
-                f"/exports/downloads/{uuid.uuid4().hex}", headers=headers
-            )
+            unknown = await client.get(f"/exports/downloads/{uuid.uuid4().hex}", headers=headers)
             assert unknown.status_code == 404
 
             live = await client.get(token_path, headers=headers)

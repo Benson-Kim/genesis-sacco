@@ -54,6 +54,7 @@ from genesis.application.outbox import enqueue_event
 from genesis.application.reports import (
     REPORTS,
     ExportFilters,
+    ReportCursor,
     ReportDefinition,
     ReportName,
     ReportQuery,
@@ -159,7 +160,7 @@ async def run_export(
         raise ValueError("row_cap must be positive")
     rows: list[tuple[Cell, ...]] = []
     truncated = False
-    cursor = None
+    cursor: ReportCursor | None = None
     while True:
         want = min(batch_size, row_cap - len(rows))
         raw = await query.fetch(cursor, want + 1)
@@ -381,9 +382,7 @@ async def run_export_job(session: AsyncSession, tenant_id: uuid.UUID) -> ExportJ
     read, render, artifact, status, audit, outbox (P13 blocker i).
     Returns None when no job is pending.
     """
-    claim = (
-        await session.execute(text(CLAIM_SQL), {"tid": str(tenant_id)})
-    ).first()
+    claim = (await session.execute(text(CLAIM_SQL), {"tid": str(tenant_id)})).first()
     if claim is None:
         return None
     record = _row_to_export(claim)
@@ -412,9 +411,9 @@ async def run_export_job(session: AsyncSession, tenant_id: uuid.UUID) -> ExportJ
     except AppError as exc:
         raise ExportJobError(record.id, exc) from exc
 
-    truncation_note = " · TRUNCATED" if run.truncated else ""
+    truncation_note = " | TRUNCATED" if run.truncated else ""
     meta = (
-        f"As of {record.as_of.isoformat()} · rows {run.row_count} "
+        f"As of {record.as_of.isoformat()} | rows {run.row_count} "
         f"(limit {run.row_limit}){truncation_note}"
     )
     csv_bytes = csv_builder.finish()
@@ -502,7 +501,7 @@ def _ttl() -> timedelta:
 
 
 def _is_serialization_failure(exc: DBAPIError) -> bool:
-    return getattr(exc.orig, "sqlstate", None) == "40001"
+    return bool(getattr(exc.orig, "sqlstate", None) == "40001")
 
 
 @dataclass(frozen=True)
@@ -546,9 +545,7 @@ async def run_pending_exports(
     return ExportCycleSummary(completed=completed, failed=failed)
 
 
-async def _mark_failed(
-    session: AsyncSession, tenant_id: uuid.UUID, error: ExportJobError
-) -> None:
+async def _mark_failed(session: AsyncSession, tenant_id: uuid.UUID, error: ExportJobError) -> None:
     result = cast(
         CursorResult[Any],
         await session.execute(
@@ -608,11 +605,7 @@ async def download_artifact(
     row = (
         await session.execute(text(DOWNLOAD_SQL), {"token": token, "tid": str(tenant_id)})
     ).first()
-    if (
-        row is None
-        or uuid.UUID(str(row[3])) != requester_id
-        or row[7] <= datetime.now(UTC)
-    ):
+    if row is None or uuid.UUID(str(row[3])) != requester_id or row[7] <= datetime.now(UTC):
         raise NotFoundError("export artifact not found")
     export_id = uuid.UUID(str(row[0]))
     is_csv = bool(row[8])

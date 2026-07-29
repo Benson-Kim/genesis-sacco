@@ -10,7 +10,6 @@ import csv
 import io
 import os
 import uuid
-from decimal import Decimal
 
 import pytest
 from sqlalchemy import text

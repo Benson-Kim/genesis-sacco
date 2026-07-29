@@ -107,7 +107,7 @@ class ExportFilters:
         }
 
     @staticmethod
-    def from_json(raw: Mapping[str, str]) -> "ExportFilters":
+    def from_json(raw: Mapping[str, str]) -> ExportFilters:
         return ExportFilters(
             member_id=uuid.UUID(raw["member_id"]) if "member_id" in raw else None,
             exit_id=uuid.UUID(raw["exit_id"]) if "exit_id" in raw else None,
@@ -300,20 +300,13 @@ async def _build_member_statement(
         page_params["limit"] = limit
         if cursor is not None:
             page_params["c_ts"], page_params["c_id"] = cast(tuple[datetime, str], cursor)
-        return list(
-            (
-                await session.execute(
-                    text(
-                        member_statement_page_sql(
-                            with_from=filters.date_from is not None,
-                            with_to=filters.date_to is not None,
-                            with_cursor=cursor is not None,
-                        )
-                    ),
-                    page_params,
-                )
-            ).all()
+        page_sql = member_statement_page_sql(
+            with_from=filters.date_from is not None,
+            with_to=filters.date_to is not None,
+            with_cursor=cursor is not None,
         )
+        result = await session.execute(text(page_sql), page_params)
+        return list(result.all())
 
     def cursor_key(raw: Any) -> ReportCursor:
         return (raw[4], str(raw[0]))
@@ -424,13 +417,9 @@ async def _build_loan_book(
         params: dict[str, object] = {"tid": str(tenant_id), "limit": limit}
         if cursor is not None:
             params["c_ts"], params["c_id"] = cast(tuple[datetime, str], cursor)
-        return list(
-            (
-                await session.execute(
-                    text(loan_book_page_sql(with_cursor=cursor is not None)), params
-                )
-            ).all()
-        )
+        page_sql = loan_book_page_sql(with_cursor=cursor is not None)
+        result = await session.execute(text(page_sql), params)
+        return list(result.all())
 
     def cursor_key(raw: Any) -> ReportCursor:
         return (raw[11], str(raw[0]))
@@ -464,9 +453,7 @@ async def _build_loan_book(
 # ---------------------------------------------------------------------------
 
 
-def disbursement_collections_page_sql(
-    *, with_from: bool, with_to: bool, with_cursor: bool
-) -> str:
+def disbursement_collections_page_sql(*, with_from: bool, with_to: bool, with_cursor: bool) -> str:
     """Keyset page over disbursement/repayment transactions (gate 1.3).
 
     Served by idx_txns_type_occurred (0013, shipped with this query).
@@ -512,20 +499,13 @@ async def _build_disbursement_collections(
         page_params["limit"] = limit
         if cursor is not None:
             page_params["c_ts"], page_params["c_id"] = cast(tuple[datetime, str], cursor)
-        return list(
-            (
-                await session.execute(
-                    text(
-                        disbursement_collections_page_sql(
-                            with_from=filters.date_from is not None,
-                            with_to=filters.date_to is not None,
-                            with_cursor=cursor is not None,
-                        )
-                    ),
-                    page_params,
-                )
-            ).all()
+        page_sql = disbursement_collections_page_sql(
+            with_from=filters.date_from is not None,
+            with_to=filters.date_to is not None,
+            with_cursor=cursor is not None,
         )
+        result = await session.execute(text(page_sql), page_params)
+        return list(result.all())
 
     def cursor_key(raw: Any) -> ReportCursor:
         return (raw[5], str(raw[0]))
@@ -625,9 +605,8 @@ async def _build_npl_trend(
     months = get_settings().export_npl_trend_months
     rows: list[tuple[Cell, ...]] = []
     for month_end in npl_trend_month_ends(as_of, months):
-        d_next = datetime(month_end.year, month_end.month, month_end.day, tzinfo=UTC) + timedelta(
-            days=1
-        )
+        cutoff = datetime(month_end.year, month_end.month, month_end.day, tzinfo=UTC)
+        d_next = cutoff + timedelta(days=1)
         raw = (
             await session.execute(
                 text(NPL_TREND_MONTH_SQL),
@@ -641,9 +620,7 @@ async def _build_npl_trend(
         ).one()
         gross = Decimal(str(raw[1]))
         npl_balance = Decimal(str(raw[3]))
-        ratio = (
-            to_cents(npl_balance * Decimal("100") / gross) if gross > ZERO else Decimal("0.00")
-        )
+        ratio = to_cents(npl_balance * Decimal("100") / gross) if gross > ZERO else Decimal("0.00")
         rows.append(
             (f"{month_end.year:04d}-{month_end.month:02d}", gross, npl_balance, int(raw[2]), ratio)
         )

@@ -35,9 +35,7 @@ class _KillSwitchError(RuntimeError):
     """Simulated crash after the job rendered, before commit."""
 
 
-async def _request_statement_export(
-    token: str, mid: uuid.UUID
-) -> tuple[str, datetime]:
+async def _request_statement_export(token: str, mid: uuid.UUID) -> tuple[str, datetime]:
     async with api_client() as client:
         created = await client.post(
             "/exports",

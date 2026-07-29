@@ -89,9 +89,7 @@ def test_p13_report_and_export_queries_are_index_backed() -> None:
             )
             disb_coll = await _explain(
                 session,
-                disbursement_collections_page_sql(
-                    with_from=True, with_to=True, with_cursor=True
-                ),
+                disbursement_collections_page_sql(with_from=True, with_to=True, with_cursor=True),
                 {
                     **base,
                     "t_disbursement": TxnType.LOAN_DISBURSEMENT.value,
@@ -121,17 +119,20 @@ def test_p13_report_and_export_queries_are_index_backed() -> None:
         # Deterministic single-index paths assert their backing index
         # (shipped in the same MR as the query, gate 1.3); every plan
         # must be servable without a sequential scan.
-        assert "idx_txns_member_keyset" in statement_page or (
-            "idx_transactions_member" in statement_page
+        assert (
+            "idx_txns_member_keyset" in statement_page
+            or "idx_transactions_member" in statement_page
         )
-        assert "idx_txns_member_keyset" in statement_opening or (
-            "idx_transactions_member" in statement_opening
+        assert (
+            "idx_txns_member_keyset" in statement_opening
+            or "idx_transactions_member" in statement_opening
         )
         assert "idx_loans_created_keyset" in loan_book
         assert "idx_txns_type_occurred" in disb_coll
         assert "idx_schedules_due" in npl_month
         assert "idx_exports_requested" in claim
-        assert "csv_token" in download and "pdf_token" in download
+        assert "csv_token" in download
+        assert "pdf_token" in download
         for name, plan in (
             ("member statement page", statement_page),
             ("member statement opening", statement_opening),

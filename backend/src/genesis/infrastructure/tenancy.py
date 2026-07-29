@@ -44,9 +44,7 @@ async def tenant_snapshot_session(
     on return.
     """
     async with session_factory() as session:
-        await session.connection(
-            execution_options={"isolation_level": "REPEATABLE READ"}
-        )
+        await session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
         try:
             await session.execute(
                 text("SELECT set_config('app.tenant_id', :tid, true)"),
@@ -54,6 +52,7 @@ async def tenant_snapshot_session(
             )
             yield session
             await session.commit()
-        except BaseException:
+        finally:
+            # No-op after a successful commit; undoes everything when
+            # the block above raised (the kill-switch guarantee).
             await session.rollback()
-            raise
