@@ -325,8 +325,13 @@ def test_interest_job_posts_once_and_rerun_changes_nothing() -> None:
         second = await interest_service.run_deposit_interest_for_tenant(
             scope, tid, period=period, annual_rate_pct=Decimal("8.00"), batch_size=1
         )
+        # Second-pass finding 16: already-accrued accounts are excluded
+        # by the scan's NOT EXISTS anti-join, so a fully accrued re-run
+        # scans (and locks) nothing at all.
+        assert second.scanned == 0
+        assert second.batches == 0
         assert second.posted == 0
-        assert second.skipped_existing == 3
+        assert second.skipped_existing == 0
         assert second.rate_mismatches == 0
         assert second.total_interest == Decimal("0.00")
         # Idempotency proven by side effects: ledger, audit, outbox and
@@ -564,7 +569,12 @@ def test_interest_job_endpoint_config_permissions_and_no_caller_rate() -> None:
 
 
 def test_interest_rate_mismatch_is_surfaced_not_reposted() -> None:
-    """Review finding 13: a skip at a different stored rate is counted and logged."""
+    """Findings 13 + 16: rate drift is surfaced by the per-run aggregate check.
+
+    The already-accrued account is no longer even scanned (NOT EXISTS
+    anti-join), yet the run still reports that its stored rate differs
+    from the configured one.
+    """
 
     async def run() -> None:
         tid, _ = await seed_user(unique_email())
@@ -575,10 +585,11 @@ def test_interest_rate_mismatch_is_surfaced_not_reposted() -> None:
         result = await interest_service.run_deposit_interest_for_tenant(
             scope, tid, period=period, annual_rate_pct=Decimal("8.00")
         )
-        # Idempotency wins — nothing is re-posted — but the mismatch is
-        # visible instead of being conflated with a plain skip.
+        # Idempotency wins — nothing is re-posted, nothing is scanned —
+        # but the mismatch is visible instead of silently invisible.
         assert result.posted == 0
-        assert result.skipped_existing == 1
+        assert result.scanned == 0
+        assert result.skipped_existing == 0
         assert result.rate_mismatches == 1
         assert await _balance(tid, mid) == Decimal("10000.00")
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -58,6 +58,11 @@ ORDER BY occurred_at DESC, id DESC LIMIT 21
 INTEREST_ACCRUAL_SCAN = """
 SELECT d.id, d.member_id, d.balance FROM deposit_accounts d
 WHERE d.tenant_id = CAST(:tid AS uuid) AND d.id > CAST(:after AS uuid)
+AND NOT EXISTS (
+  SELECT 1 FROM deposit_interest_accruals a
+  WHERE a.tenant_id = d.tenant_id AND a.account_id = d.id
+  AND a.period_start = :ps
+)
 ORDER BY d.id LIMIT 200
 """
 
@@ -112,7 +117,11 @@ def test_p11_hot_path_queries_are_index_backed() -> None:
             accrual_plan = await _explain(
                 session,
                 INTEREST_ACCRUAL_SCAN,
-                {"tid": str(tid), "after": "00000000-0000-0000-0000-000000000000"},
+                {
+                    "tid": str(tid),
+                    "after": "00000000-0000-0000-0000-000000000000",
+                    "ps": date(2026, 4, 1),
+                },
             )
         sections.append(("ledger listing keyset page", page_plan))
         sections.append(("member-filtered ledger page", member_plan))
@@ -141,3 +150,4 @@ def test_p11_hot_path_queries_are_index_backed() -> None:
         OUT_PATH.write_text(f"{header}\n{body}\n")
 
     asyncio.run(run())
+io.run(run())

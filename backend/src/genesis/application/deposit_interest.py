@@ -38,12 +38,17 @@ an arbitrary period.
 Idempotent at the database level (gates 1.4, 1.5): exactly one
 deposit_interest_accruals row per (tenant, account, period_start),
 claimed with INSERT ... ON CONFLICT DO NOTHING (no race window, no
-IntegrityError mid-batch — review finding 4); rowcount 0 means the
-period is already accrued and the account is skipped. A skipped row
-whose stored rate differs from the configured rate is surfaced as
-rate_mismatches with a warning log, without breaking idempotency
-(review finding 13). Zero-interest accounts claim their row without a
-posting, so re-runs skip them too.
+IntegrityError mid-batch — review finding 4); rowcount 0 means a
+concurrent worker claimed the period between the scan and the insert
+and the account is skipped. The scan itself excludes accounts whose
+accrual row for the period already exists (NOT EXISTS anti-join —
+second-pass finding 16), so a fully accrued re-run scans, locks and
+reconstructs nothing; the ON CONFLICT claim remains the authoritative
+guard. Accruals stored at a rate different from the configured one are
+surfaced as rate_mismatches by one aggregate check per run, with a
+warning log, without breaking idempotency (review finding 13).
+Zero-interest accounts claim their row without a posting, so re-runs
+skip them too.
 
 Accounts are read FOR UPDATE SKIP LOCKED: the INT- posting and the
 balance credit happen under the same deposit-account row lock taken by
@@ -296,19 +301,23 @@ async def _process_batch(
     annual_rate_pct: Decimal,
     after_id: uuid.UUID | None,
     batch_size: int,
-) -> tuple[int, uuid.UUID | None, tuple[int, int, int, Decimal]]:
-    """Accrue one keyset batch; returns (scanned, last_id, (posted, skipped, mismatches, total)).
+) -> tuple[int, uuid.UUID | None, tuple[int, int, Decimal]]:
+    """Accrue one keyset batch; returns (scanned, last_id, (posted, skipped, total)).
 
     The scan walks idx_deposit_accounts_keyset (tenant_id, id) over
-    *every* account: an account emptied after the period end still
-    earned interest on its in-period average daily balance. Interest is computed
-    and posted under the account row lock (gate 1.4); the accrual row
-    is claimed with ON CONFLICT DO NOTHING for every scanned account —
+    every account without an accrual row for the period yet — emptied
+    accounts included (they still earned interest on their in-period
+    average daily balance). The NOT EXISTS anti-join makes a re-run of
+    a fully accrued period a cheap no-op (second-pass finding 16): no
+    rows are locked, no ledger walks happen. Interest is computed and
+    posted under the account row lock (gate 1.4); the accrual row is
+    claimed with ON CONFLICT DO NOTHING for every scanned account —
     including zero-interest ones — so the period can never be
-    double-processed.
+    double-processed even if a concurrent run claims between the scan
+    and the insert (the claim stays the authoritative guard).
     """
     clause = "AND d.id > CAST(:after AS uuid) " if after_id is not None else ""
-    params: dict[str, object] = {"tid": str(tenant_id), "limit": batch_size}
+    params: dict[str, object] = {"tid": str(tenant_id), "ps": period.start, "limit": batch_size}
     if after_id is not None:
         params["after"] = str(after_id)
     rows = (
@@ -317,6 +326,11 @@ async def _process_batch(
                 # Static fragments chosen in code; all values are bound parameters.
                 "SELECT d.id, d.member_id, d.balance FROM deposit_accounts d "  # noqa: S608
                 f"WHERE d.tenant_id = CAST(:tid AS uuid) {clause}"
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM deposit_interest_accruals a "
+                "  WHERE a.tenant_id = d.tenant_id AND a.account_id = d.id "
+                "  AND a.period_start = :ps"
+                ") "
                 "ORDER BY d.id LIMIT :limit "
                 "FOR UPDATE OF d SKIP LOCKED"
             ),
@@ -325,7 +339,6 @@ async def _process_batch(
     ).all()
     posted = 0
     skipped = 0
-    mismatches = 0
     total = ZERO
     # Interest belongs to the very end of the period it was earned in
     # (review finding 5): 23:59:59.999999 UTC on the period's last day
@@ -369,31 +382,11 @@ async def _process_batch(
             ),
         )
         if claim.rowcount == 0:
-            skipped += 1  # idempotency: this period is already accrued
-            stored_rate = (
-                await session.execute(
-                    text(
-                        "SELECT annual_rate_pct FROM deposit_interest_accruals "
-                        "WHERE tenant_id = CAST(:tid AS uuid) "
-                        "AND account_id = CAST(:a AS uuid) AND period_start = :ps"
-                    ),
-                    {"tid": str(tenant_id), "a": account_id, "ps": period.start},
-                )
-            ).scalar_one()
-            if Decimal(str(stored_rate)) != annual_rate_pct:
-                # Already accrued at a different rate: never re-posted
-                # (idempotency wins), but surfaced instead of silently
-                # conflated with a plain skip (review finding 13).
-                mismatches += 1
-                logger.warning(
-                    "deposit interest accrual rate mismatch: tenant=%s account=%s "
-                    "period_start=%s stored_rate=%s configured_rate=%s",
-                    tenant_id,
-                    account_id,
-                    period.start,
-                    stored_rate,
-                    annual_rate_pct,
-                )
+            # A concurrent run claimed this account between the
+            # NOT EXISTS scan and the insert; idempotency wins. Rate
+            # drift is surfaced by the per-run aggregate check
+            # (findings 13 + 16), not per row.
+            skipped += 1
             continue
         if interest > ZERO:
             posting = await post_deposit_interest(
@@ -433,7 +426,35 @@ async def _process_batch(
             posted += 1
             total += interest
     last_id = uuid.UUID(str(rows[-1][0])) if rows else None
-    return len(rows), last_id, (posted, skipped, mismatches, total)
+    return len(rows), last_id, (posted, skipped, total)
+
+
+async def _count_rate_mismatches(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    period: QuarterPeriod,
+    annual_rate_pct: Decimal,
+) -> int:
+    """Accruals stored for the period at a rate other than the configured one.
+
+    One aggregate query per run (findings 13 + 16): the NOT EXISTS scan
+    no longer visits already-accrued accounts, so rate drift is checked
+    against the accrual table directly instead of per skipped row.
+    Idempotency still wins — mismatched rows are never re-posted, only
+    surfaced.
+    """
+    count = (
+        await session.execute(
+            text(
+                "SELECT count(*) FROM deposit_interest_accruals "
+                "WHERE tenant_id = CAST(:tid AS uuid) AND period_start = :ps "
+                "AND annual_rate_pct <> CAST(:rate AS numeric)"
+            ),
+            {"tid": str(tenant_id), "ps": period.start, "rate": str(annual_rate_pct)},
+        )
+    ).scalar_one()
+    return int(count)
 
 
 async def run_deposit_interest_for_tenant(
@@ -467,8 +488,20 @@ async def run_deposit_interest_for_tenant(
     scanned, batches, payloads = await run_in_batches(session_scope, process, batch_size=batch_size)
     posted = sum(p[0] for p in payloads)
     skipped = sum(p[1] for p in payloads)
-    mismatches = sum(p[2] for p in payloads)
-    total = sum((p[3] for p in payloads), ZERO)
+    total = sum((p[2] for p in payloads), ZERO)
+    async with session_scope() as session:
+        mismatches = await _count_rate_mismatches(
+            session, tenant_id, period=period, annual_rate_pct=annual_rate_pct
+        )
+    if mismatches:
+        logger.warning(
+            "deposit interest accruals stored at a different rate: tenant=%s "
+            "period_start=%s configured_rate=%s count=%d",
+            tenant_id,
+            period.start,
+            annual_rate_pct,
+            mismatches,
+        )
     return InterestRunResult(
         scanned=scanned,
         posted=posted,
@@ -487,7 +520,7 @@ async def _process_one(
     period: QuarterPeriod,
     annual_rate_pct: Decimal,
     batch_size: int,
-) -> tuple[int, uuid.UUID | None, tuple[int, int, int, Decimal]]:
+) -> tuple[int, uuid.UUID | None, tuple[int, int, Decimal]]:
     """Adapter matching the shared BatchProcessor signature."""
     return await _process_batch(
         session,
