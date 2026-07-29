@@ -257,6 +257,49 @@ def build_repayment_posting(amount: Decimal, channel: Channel) -> PostingSpec:
     )
 
 
+def build_allocated_repayment_posting(
+    penalties: Decimal,
+    interest: Decimal,
+    principal: Decimal,
+    channel: Channel,
+) -> PostingSpec:
+    """Split-leg repayment posting for the P10 allocation contract.
+
+    DR cash for the full amount received; CR one leg per non-zero
+    allocation component:
+      * penalties -> income.penalties
+      * interest  -> income.interest (recognised on receipt; the P11
+        accrual job owns interest.receivable postings)
+      * principal -> loans.receivable
+    Balanced by construction; at least one component must be positive.
+    """
+    penalties = to_cents(penalties)
+    interest = to_cents(interest)
+    principal = to_cents(principal)
+    if penalties < ZERO or interest < ZERO or principal < ZERO:
+        raise ValueError("allocation components must not be negative")
+    total = to_cents(penalties + interest + principal)
+    if total <= ZERO:
+        raise ValueError("allocated repayment must have a positive total")
+    lines: list[LedgerLine] = [
+        LedgerLine(account=_cash_account(channel), side=Side.DEBIT, amount=total)
+    ]
+    if penalties > ZERO:
+        lines.append(LedgerLine(account=Account.PENALTY_INCOME, side=Side.CREDIT, amount=penalties))
+    if interest > ZERO:
+        lines.append(LedgerLine(account=Account.INTEREST_INCOME, side=Side.CREDIT, amount=interest))
+    if principal > ZERO:
+        lines.append(
+            LedgerLine(account=Account.LOANS_RECEIVABLE, side=Side.CREDIT, amount=principal)
+        )
+    return PostingSpec(
+        txn_type=TxnType.LOAN_REPAYMENT,
+        channel=channel,
+        amount=total,
+        lines=tuple(lines),
+    )
+
+
 def build_loan_interest_accrual_posting(amount: Decimal) -> PostingSpec:
     """Accrue interest earned on a loan: DR interest receivable / CR interest income."""
     amt = to_cents(amount)

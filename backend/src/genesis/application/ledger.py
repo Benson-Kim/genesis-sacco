@@ -34,6 +34,7 @@ from genesis.domain.ledger import (
     PostingSpec,
     Side,
     TxnType,
+    build_allocated_repayment_posting,
     build_deposit_interest_posting,
     build_deposit_posting,
     build_disbursement_posting,
@@ -47,6 +48,7 @@ from genesis.domain.ledger import (
 from genesis.domain.lending import (
     ApplicationStage,
     InvalidTransitionError,
+    RepaymentAllocation,
     ScheduledInstallment,
     build_schedule,
     transition,
@@ -389,6 +391,61 @@ async def post_repayment(
             "member_id": str(member_id),
             "loan_id": str(loan_id),
             "amount": str(amount),
+            "channel": channel.value,
+        },
+    )
+    return result
+
+
+async def post_allocated_repayment(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    member_id: uuid.UUID,
+    loan_id: uuid.UUID,
+    allocation: RepaymentAllocation,
+    channel: Channel,
+    actor_id: uuid.UUID | None = None,
+    occurred_at: datetime | None = None,
+) -> PostingResult:
+    """Post a repayment with split legs per the P10 allocation contract.
+
+    The allocation (penalties -> interest -> principal) is computed by
+    the loan servicing service; this primitive writes the balanced
+    split-leg posting, the repayments row, and the outbox event. Loan
+    balance/schedule updates are owned by the caller in the same
+    transaction.
+    """
+    spec = build_allocated_repayment_posting(
+        allocation.penalties, allocation.interest, allocation.principal, channel
+    )
+    result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
+    await session.execute(
+        text(
+            "INSERT INTO repayments (id, tenant_id, loan_id, transaction_id, amount) "
+            "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), "
+            "CAST(:lid AS uuid), CAST(:txn AS uuid), :amount)"
+        ),
+        {
+            "id": str(uuid.uuid4()),
+            "tid": str(tenant_id),
+            "lid": str(loan_id),
+            "txn": str(result.txn_id),
+            "amount": str(allocation.total),
+        },
+    )
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="ledger.repayment_posted",
+        payload={
+            "txn_id": str(result.txn_id),
+            "txn_ref": result.txn_ref,
+            "member_id": str(member_id),
+            "loan_id": str(loan_id),
+            "amount": str(allocation.total),
+            "penalties": str(allocation.penalties),
+            "interest": str(allocation.interest),
+            "principal": str(allocation.principal),
             "channel": channel.value,
         },
     )

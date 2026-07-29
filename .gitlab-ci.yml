@@ -98,11 +98,17 @@ backend:test:
       PYEOF
     - export DATABASE_URL="postgresql+psycopg://genesis_app@postgres:5432/genesis_test"
     - pytest --cov=src --cov-fail-under=85 --junitxml=report.xml
+  # Surface captured EXPLAIN plans in the job log so MR authors can copy
+  # them into the description (artifact download needs an api-scope token).
+  after_script:
+    - cat backend/perf/explain_p10.txt || true
   coverage: '/TOTAL.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
   artifacts:
     when: always
     reports:
       junit: backend/report.xml
+    paths:
+      - backend/perf/
 
 backend:migrate-check:
   extends: .backend

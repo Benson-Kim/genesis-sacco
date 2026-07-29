@@ -8,10 +8,14 @@ from genesis.domain.lending import (
     ApplicationStage,
     InvalidTransitionError,
     LoanClass,
+    LoanStatus,
+    allocate_repayment,
     allowed_transitions,
     build_schedule,
     classify,
     installment_amount,
+    loan_transition,
+    settlement_quote,
     transition,
 )
 
@@ -105,3 +109,137 @@ def test_full_transition_matrix() -> None:
 def test_terminal_stages_have_no_exits() -> None:
     assert allowed_transitions(ApplicationStage.REJECTED) == frozenset()
     assert allowed_transitions(ApplicationStage.DISBURSED) == frozenset()
+
+
+# ---------------------------------------------------------------------------
+# P10: loan status machine
+# ---------------------------------------------------------------------------
+
+
+def test_loan_status_full_matrix() -> None:
+    allowed = {
+        (LoanStatus.ACTIVE, LoanStatus.CLOSED),
+        (LoanStatus.ACTIVE, LoanStatus.WRITTEN_OFF),
+    }
+    for current in LoanStatus:
+        for target in LoanStatus:
+            if (current, target) in allowed:
+                assert loan_transition(current, target) == target
+            else:
+                with pytest.raises(InvalidTransitionError):
+                    loan_transition(current, target)
+
+
+# ---------------------------------------------------------------------------
+# P10: repayment allocation (penalties -> interest -> principal)
+# ---------------------------------------------------------------------------
+
+amounts = st.decimals(
+    min_value=Decimal("0.01"),
+    max_value=Decimal("100000"),
+    places=2,
+    allow_nan=False,
+    allow_infinity=False,
+)
+buckets = st.decimals(
+    min_value=Decimal("0"),
+    max_value=Decimal("100000"),
+    places=2,
+    allow_nan=False,
+    allow_infinity=False,
+)
+
+
+@given(amount=amounts, penalties=buckets, interest=buckets, principal=buckets)
+def test_allocation_invariants(
+    amount: Decimal, penalties: Decimal, interest: Decimal, principal: Decimal
+) -> None:
+    payoff = penalties + interest + principal
+    if amount > payoff:
+        with pytest.raises(ValueError, match="payoff"):
+            allocate_repayment(
+                amount,
+                penalties_due=penalties,
+                interest_due=interest,
+                principal_outstanding=principal,
+            )
+        return
+    result = allocate_repayment(
+        amount,
+        penalties_due=penalties,
+        interest_due=interest,
+        principal_outstanding=principal,
+    )
+    # Components always sum to the amount received, to the cent.
+    assert result.total == amount
+    # Documented order: penalties first, then interest, then principal.
+    assert result.penalties == min(amount, penalties)
+    assert result.interest == min(amount - result.penalties, interest)
+    assert result.principal == amount - result.penalties - result.interest
+    assert result.principal <= principal
+
+
+def test_allocation_order_is_penalties_interest_principal() -> None:
+    result = allocate_repayment(
+        Decimal("1000.00"),
+        penalties_due=Decimal("150.00"),
+        interest_due=Decimal("240.00"),
+        principal_outstanding=Decimal("24000.00"),
+    )
+    assert result.penalties == Decimal("150.00")
+    assert result.interest == Decimal("240.00")
+    assert result.principal == Decimal("610.00")
+
+
+def test_allocation_partial_payment_stops_at_penalties() -> None:
+    result = allocate_repayment(
+        Decimal("100.00"),
+        penalties_due=Decimal("150.00"),
+        interest_due=Decimal("240.00"),
+        principal_outstanding=Decimal("24000.00"),
+    )
+    assert result.penalties == Decimal("100.00")
+    assert result.interest == Decimal("0.00")
+    assert result.principal == Decimal("0.00")
+
+
+def test_allocation_rejects_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        allocate_repayment(
+            Decimal("0"),
+            penalties_due=Decimal("0"),
+            interest_due=Decimal("0"),
+            principal_outstanding=Decimal("100"),
+        )
+    with pytest.raises(ValueError, match="negative"):
+        allocate_repayment(
+            Decimal("10"),
+            penalties_due=Decimal("-1"),
+            interest_due=Decimal("0"),
+            principal_outstanding=Decimal("100"),
+        )
+    with pytest.raises(ValueError, match="payoff"):
+        allocate_repayment(
+            Decimal("101"),
+            penalties_due=Decimal("0"),
+            interest_due=Decimal("0"),
+            principal_outstanding=Decimal("100"),
+        )
+
+
+# ---------------------------------------------------------------------------
+# P10: early settlement quote
+# ---------------------------------------------------------------------------
+
+
+def test_settlement_quote_totals_the_three_buckets() -> None:
+    quote = settlement_quote(Decimal("1000.00"), Decimal("10.00"), Decimal("5.00"))
+    assert quote.total == Decimal("1015.00")
+    assert quote.principal_balance == Decimal("1000.00")
+    assert quote.interest_due == Decimal("10.00")
+    assert quote.penalties_due == Decimal("5.00")
+
+
+def test_settlement_quote_rejects_negative_buckets() -> None:
+    with pytest.raises(ValueError, match="negative"):
+        settlement_quote(Decimal("-1"), Decimal("0"), Decimal("0"))

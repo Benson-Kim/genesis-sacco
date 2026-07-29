@@ -12,6 +12,7 @@ from genesis.domain.ledger import (
     PostingSpec,
     Side,
     TxnType,
+    build_allocated_repayment_posting,
     build_deposit_interest_posting,
     build_deposit_posting,
     build_disbursement_posting,
@@ -112,6 +113,42 @@ def test_disbursement_posting_is_balanced() -> None:
 
 def test_repayment_posting_is_balanced() -> None:
     build_repayment_posting(Decimal("5000.00"), Channel.MPESA).assert_balanced()
+
+
+def test_allocated_repayment_posting_is_balanced_with_split_legs() -> None:
+    spec = build_allocated_repayment_posting(
+        Decimal("150.00"), Decimal("240.00"), Decimal("610.00"), Channel.MPESA
+    )
+    spec.assert_balanced()
+    assert spec.amount == Decimal("1000.00")
+    assert spec.txn_type is TxnType.LOAN_REPAYMENT
+    dr = [ln for ln in spec.lines if ln.side is Side.DEBIT]
+    cr = {ln.account: ln.amount for ln in spec.lines if ln.side is Side.CREDIT}
+    assert dr[0].account is Account.CASH_MPESA
+    assert dr[0].amount == Decimal("1000.00")
+    assert cr[Account.PENALTY_INCOME] == Decimal("150.00")
+    assert cr[Account.INTEREST_INCOME] == Decimal("240.00")
+    assert cr[Account.LOANS_RECEIVABLE] == Decimal("610.00")
+
+
+def test_allocated_repayment_posting_skips_zero_legs() -> None:
+    spec = build_allocated_repayment_posting(
+        Decimal("0"), Decimal("0"), Decimal("500.00"), Channel.BANK
+    )
+    spec.assert_balanced()
+    assert len(spec.lines) == 2
+    accounts = {ln.account for ln in spec.lines}
+    assert Account.PENALTY_INCOME not in accounts
+    assert Account.INTEREST_INCOME not in accounts
+
+
+def test_allocated_repayment_posting_rejects_bad_inputs() -> None:
+    with pytest.raises(ValueError, match="negative"):
+        build_allocated_repayment_posting(
+            Decimal("-1"), Decimal("0"), Decimal("100"), Channel.MPESA
+        )
+    with pytest.raises(ValueError, match="positive total"):
+        build_allocated_repayment_posting(Decimal("0"), Decimal("0"), Decimal("0"), Channel.MPESA)
 
 
 def test_loan_interest_accrual_posting_is_balanced() -> None:
