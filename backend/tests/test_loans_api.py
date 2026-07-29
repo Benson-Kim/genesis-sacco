@@ -1016,3 +1016,161 @@ def test_exited_member_cannot_apply_or_guarantee() -> None:
         assert pledge.status_code == 409
 
     asyncio.run(run())
+
+
+def test_application_service_direct_flow() -> None:
+    """Service-layer flow: create, list, pledge, consent, reject, release.
+
+    Exercises the application layer directly (not through the ASGI app),
+    following the test_ledger_integration convention, so the coverage
+    gate reflects these paths.
+    """
+
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        headers = _headers(token)
+        borrower = await _make_member(headers, "Direct Borrower")
+        guarantor = await _make_member(headers, "Direct Guarantor")
+        await _set_deposit_balance(tid, borrower, "5000.00")
+        await _set_deposit_balance(tid, guarantor, "10000.00")
+        product_id = await _make_product(headers, "Direct Product")
+
+        async with tenant_session(factory(), tid) as session:
+            record = await applications_service.create_application(
+                session,
+                tid,
+                None,
+                member_id=uuid.UUID(borrower),
+                product_id=uuid.UUID(product_id),
+                amount=Decimal("10000.00"),
+                term_months=12,
+            )
+        assert record.stage is ApplicationStage.SUBMITTED
+        assert record.cover_pct == Decimal("50.00")
+
+        async with tenant_session(factory(), tid) as session:
+            fetched = await applications_service.get_application(session, record.id)
+        assert fetched.version == 1
+
+        async with tenant_session(factory(), tid) as session:
+            items, next_cur = await applications_service.list_applications(session, limit=10)
+        assert next_cur is None
+        assert any(a.id == record.id for a in items)
+
+        async with tenant_session(factory(), tid) as session:
+            guarantee = await pledge_guarantee(
+                session,
+                tid,
+                None,
+                application_id=record.id,
+                guarantor_member_id=uuid.UUID(guarantor),
+                amount=Decimal("2000.00"),
+            )
+        async with tenant_session(factory(), tid) as session:
+            consented = await consent_guarantee(session, tid, None, guarantee.id, version=1)
+        assert consented.status == "active"
+
+        async with tenant_session(factory(), tid) as session:
+            moved = await applications_service.transition_stage(
+                session, tid, None, record.id, version=1, target=ApplicationStage.APPRAISAL
+            )
+        assert moved.stage is ApplicationStage.APPRAISAL
+        async with tenant_session(factory(), tid) as session:
+            moved = await applications_service.transition_stage(
+                session, tid, None, record.id, version=2, target=ApplicationStage.COMMITTEE
+            )
+        assert moved.stage is ApplicationStage.COMMITTEE
+        async with tenant_session(factory(), tid) as session:
+            rejected = await applications_service.transition_stage(
+                session, tid, None, record.id, version=3, target=ApplicationStage.REJECTED
+            )
+        assert rejected.stage is ApplicationStage.REJECTED
+        async with tenant_session(factory(), tid) as session:
+            status = (
+                await session.execute(
+                    text("SELECT status FROM guarantees WHERE id = CAST(:g AS uuid)"),
+                    {"g": str(guarantee.id)},
+                )
+            ).scalar_one()
+        assert status == "released"
+
+    asyncio.run(run())
+
+
+def test_vote_service_direct_quorum_approval() -> None:
+    """Service-layer voting: two approvals reach quorum and approve."""
+
+    async def run() -> None:
+        tid, role_id, token = await _seed_actor()
+        headers = _headers(token)
+        product_id = await _make_product(headers, "Direct Vote Product")
+        aid = await _application_in_committee(
+            headers, tid, "Direct Vote Borrower", product_id
+        )
+        application_id = uuid.UUID(aid)
+
+        async def add_voter() -> uuid.UUID:
+            user_id = uuid.uuid4()
+            async with tenant_session(factory(), tid) as session:
+                await session.execute(
+                    text(
+                        "INSERT INTO users (id, tenant_id, role_id, full_name, email) "
+                        "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), "
+                        "CAST(:rid AS uuid), 'Direct Voter', :email)"
+                    ),
+                    {
+                        "id": str(user_id),
+                        "tid": str(tid),
+                        "rid": str(role_id),
+                        "email": unique_email(),
+                    },
+                )
+            return user_id
+
+        voter1 = await add_voter()
+        voter2 = await add_voter()
+        async with tenant_session(factory(), tid) as session:
+            first = await applications_service.cast_vote(
+                session, tid, voter1, application_id, Vote.APPROVE
+            )
+        assert first.decision is None
+        assert first.stage is ApplicationStage.COMMITTEE
+        async with tenant_session(factory(), tid) as session:
+            second = await applications_service.cast_vote(
+                session, tid, voter2, application_id, Vote.APPROVE
+            )
+        assert second.decision is Decision.APPROVED
+        assert second.stage is ApplicationStage.APPROVED
+
+    asyncio.run(run())
+
+
+def test_product_service_direct() -> None:
+    """Service-layer product CRUD with optimistic locking."""
+
+    async def run() -> None:
+        tid, _, _token = await _seed_actor()
+        async with tenant_session(factory(), tid) as session:
+            product = await products_service.create_product(
+                session,
+                tid,
+                None,
+                name="Direct Service Product",
+                rate_pct=Decimal("10.00"),
+                deposit_multiplier=Decimal("2.00"),
+                max_term_months=24,
+            )
+        async with tenant_session(factory(), tid) as session:
+            updated = await products_service.update_product(
+                session, tid, None, product.id, version=1, rate_pct=Decimal("11.00")
+            )
+        assert updated.rate_pct == Decimal("11.00")
+        assert updated.version == 2
+        async with tenant_session(factory(), tid) as session:
+            got = await products_service.get_product(session, product.id)
+        assert got.rate_pct == Decimal("11.00")
+        async with tenant_session(factory(), tid) as session:
+            listed = await products_service.list_products(session)
+        assert any(p.id == product.id for p in listed)
+
+    asyncio.run(run())
