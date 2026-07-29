@@ -1,6 +1,7 @@
 """Nightly arrears job: days-past-due -> classification -> provisioning (P10).
 
-Runs per tenant in bounded batches, each batch inside its own short
+Runs per tenant in bounded batches through the shared batch runner
+(genesis.application.batch_runner), each batch inside its own short
 transaction (gate 1.3: no long transactions). The caller injects a
 session scope (e.g. functools.partial(tenant_session, factory, tenant_id))
 so this module stays free of infrastructure imports; the worker or an
@@ -20,21 +21,21 @@ edit (documented precedent from P9).
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from functools import partial
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application.audit import record_audit
+from genesis.application.batch_runner import SessionScope, run_in_batches
 from genesis.application.outbox import enqueue_event
 from genesis.domain.lending import classify
 
-SessionScope = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+__all__ = ["DEFAULT_BATCH_SIZE", "ArrearsRunResult", "SessionScope", "run_arrears_for_tenant"]
 
 #: Loans reclassified per transaction. Small enough to keep each
 #: transaction short; large enough to keep round trips reasonable.
@@ -55,8 +56,8 @@ async def _process_batch(
     as_of: date,
     after_id: uuid.UUID | None,
     batch_size: int,
-) -> tuple[int, int, uuid.UUID | None]:
-    """Classify one keyset batch of active loans; returns (scanned, updated, last_id).
+) -> tuple[int, uuid.UUID | None, int]:
+    """Classify one keyset batch of active loans; returns (scanned, last_id, updated).
 
     The scan walks idx_loans_active_scan (tenant_id, id WHERE status =
     'active'); the oldest-unpaid-installment subquery is served by
@@ -154,7 +155,21 @@ async def _process_batch(
             )
         updated += 1
     last_id = uuid.UUID(str(rows[-1][0])) if rows else None
-    return len(rows), updated, last_id
+    return len(rows), last_id, updated
+
+
+async def _process_one(
+    session: AsyncSession,
+    after_id: uuid.UUID | None,
+    *,
+    tenant_id: uuid.UUID,
+    as_of: date,
+    batch_size: int,
+) -> tuple[int, uuid.UUID | None, int]:
+    """Adapter matching the shared BatchProcessor signature."""
+    return await _process_batch(
+        session, tenant_id, as_of=as_of, after_id=after_id, batch_size=batch_size
+    )
 
 
 async def run_arrears_for_tenant(
@@ -165,24 +180,6 @@ async def run_arrears_for_tenant(
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> ArrearsRunResult:
     """Reclassify every active loan of one tenant in short batches."""
-    if batch_size < 1:
-        raise ValueError("batch_size must be positive")
-    scanned = 0
-    updated = 0
-    batches = 0
-    after_id: uuid.UUID | None = None
-    while True:
-        async with session_scope() as session:
-            batch_scanned, batch_updated, after_id = await _process_batch(
-                session,
-                tenant_id,
-                as_of=as_of,
-                after_id=after_id,
-                batch_size=batch_size,
-            )
-        scanned += batch_scanned
-        updated += batch_updated
-        if batch_scanned:
-            batches += 1
-        if batch_scanned < batch_size:
-            return ArrearsRunResult(scanned=scanned, updated=updated, batches=batches)
+    process = partial(_process_one, tenant_id=tenant_id, as_of=as_of, batch_size=batch_size)
+    scanned, batches, updates = await run_in_batches(session_scope, process, batch_size=batch_size)
+    return ArrearsRunResult(scanned=scanned, updated=sum(updates), batches=batches)

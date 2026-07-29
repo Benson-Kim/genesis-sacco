@@ -36,6 +36,11 @@ def quarter_of(d: date) -> QuarterPeriod:
     return QuarterPeriod(start=start, end=next_start - timedelta(days=1))
 
 
+def next_quarter(period: QuarterPeriod) -> QuarterPeriod:
+    """The calendar quarter immediately after period (catch-up ordering)."""
+    return quarter_of(period.end + timedelta(days=1))
+
+
 def previous_quarter(as_of: date) -> QuarterPeriod:
     """The last completed calendar quarter strictly before as_of's quarter.
 

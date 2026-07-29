@@ -80,18 +80,23 @@ async def _require_member(
 
 
 async def _lock_account(
-    session: AsyncSession, *, kind: str, member_id: uuid.UUID
+    session: AsyncSession, tenant_id: uuid.UUID, *, kind: str, member_id: uuid.UUID
 ) -> tuple[uuid.UUID, Decimal]:
-    """Row-lock the member's account; every balance writer takes this lock."""
+    """Row-lock the member's account; every balance writer takes this lock.
+
+    The explicit tenant predicate doubles the RLS fence on this money
+    path (defence in depth, gate 1.6).
+    """
     table = _ACCOUNT_TABLES[kind]
     row = (
         await session.execute(
             text(
                 # Table name from _ACCOUNT_TABLES, never user input.
                 f"SELECT id, balance FROM {table} "  # noqa: S608
-                "WHERE member_id = CAST(:m AS uuid) FOR UPDATE"
+                "WHERE member_id = CAST(:m AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
-            {"m": str(member_id)},
+            {"m": str(member_id), "tid": str(tenant_id)},
         )
     ).first()
     if row is None:
@@ -131,7 +136,9 @@ async def record_deposit(
     if amount <= ZERO:
         raise InvalidInputError("deposit amount must be positive")
     await _require_member(session, member_id, require_active=False)
-    account_id, balance = await _lock_account(session, kind="deposit", member_id=member_id)
+    account_id, balance = await _lock_account(
+        session, tenant_id, kind="deposit", member_id=member_id
+    )
     posting = await post_deposit(session, tenant_id, member_id, amount, channel, actor_id)
     balance_after = to_cents(balance + amount)
     await _set_balance(session, kind="deposit", account_id=account_id, balance=balance_after)
@@ -161,22 +168,24 @@ async def record_withdrawal(
 
     Withdrawable funds exclude live guarantee pledges: a guarantor can
     never withdraw collateral that backs someone else's application or
-    loan. The teller is serving the member's own account, so echoing
-    the withdrawable amount is legitimate counter information (unlike a
-    guarantor's capacity, which P9 deliberately never reveals to the
-    pledging staff).
+    loan. The rejection message is deliberately generic (least
+    disclosure, gate 1.6, matching the P9 pledge-capacity error): the
+    withdrawable amount derives from the member's pledge exposure, and
+    the audit row already records the exact figures for staff who are
+    entitled to them.
     """
     amount = to_cents(amount)
     if amount <= ZERO:
         raise InvalidInputError("withdrawal amount must be positive")
     await _require_member(session, member_id, require_active=True)
-    account_id, balance = await _lock_account(session, kind="deposit", member_id=member_id)
-    pledged = await live_pledged_total(session, member_id)
+    account_id, balance = await _lock_account(
+        session, tenant_id, kind="deposit", member_id=member_id
+    )
+    pledged = await live_pledged_total(session, tenant_id, member_id)
     available = balance - pledged
     if amount > available:
         raise ConflictError(
-            f"insufficient available funds: requested {amount}, withdrawable {available} "
-            f"({pledged} pledged as guarantees)"
+            "insufficient available funds: the requested amount exceeds the withdrawable balance"
         )
     posting = await post_withdrawal(session, tenant_id, member_id, amount, channel, actor_id)
     balance_after = to_cents(balance - amount)
@@ -212,7 +221,9 @@ async def record_share_topup(
     if amount <= ZERO:
         raise InvalidInputError("share top-up amount must be positive")
     await _require_member(session, member_id, require_active=False)
-    account_id, balance = await _lock_account(session, kind="share", member_id=member_id)
+    account_id, balance = await _lock_account(
+        session, tenant_id, kind="share", member_id=member_id
+    )
     posting = await post_share_topup(session, tenant_id, member_id, amount, channel, actor_id)
     balance_after = to_cents(balance + amount)
     await _set_balance(session, kind="share", account_id=account_id, balance=balance_after)
@@ -245,25 +256,35 @@ def _row_to_txn(row: object) -> TransactionRecord:
     )
 
 
-def _direction_clause(direction: Side) -> str:
-    """SQL predicate for the DR/CR filter.
+def _direction_clause(direction: Side, params: dict[str, object]) -> str:
+    """SQL predicate for the DR/CR filter — every value a bound parameter.
 
-    Values interpolated here come exclusively from the TxnType enum,
-    never from user input. Reversals carry the original type with
-    mirrored legs, so their member-facing direction is flipped.
+    Only the numbered placeholder names are interpolated; the enum
+    values themselves travel as bound parameters (no value is ever
+    string-interpolated into SQL). Reversals carry the original type
+    with mirrored legs, so their member-facing direction is flipped.
     """
     same = sorted(t.value for t, s in MEMBER_DIRECTION.items() if s is direction)
     flipped = sorted(t.value for t, s in MEMBER_DIRECTION.items() if s is not direction)
-    same_list = ", ".join(f"'{v}'" for v in same)
-    flipped_list = ", ".join(f"'{v}'" for v in flipped)
+    same_keys: list[str] = []
+    for i, value in enumerate(same):
+        key = f"dir_same_{i}"
+        params[key] = value
+        same_keys.append(f":{key}")
+    flipped_keys: list[str] = []
+    for i, value in enumerate(flipped):
+        key = f"dir_flip_{i}"
+        params[key] = value
+        flipped_keys.append(f":{key}")
     return (
-        f"((type IN ({same_list}) AND reversal_of_id IS NULL) "
-        f"OR (type IN ({flipped_list}) AND reversal_of_id IS NOT NULL))"
+        f"((type IN ({', '.join(same_keys)}) AND reversal_of_id IS NULL) "
+        f"OR (type IN ({', '.join(flipped_keys)}) AND reversal_of_id IS NOT NULL))"
     )
 
 
 async def list_transactions(
     session: AsyncSession,
+    tenant_id: uuid.UUID,
     *,
     member_id: uuid.UUID | None = None,
     txn_type: TxnType | None = None,
@@ -282,8 +303,10 @@ async def list_transactions(
     member-filtered page, idx_txns_member_keyset.
     """
     limit = max(1, min(limit, 100))
-    clauses: list[str] = []
-    params: dict[str, object] = {"limit": limit + 1}
+    # Explicit tenant predicate on top of RLS (defence in depth, gate
+    # 1.6); also the leading column of both keyset indexes.
+    clauses: list[str] = ["tenant_id = CAST(:tid AS uuid)"]
+    params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if member_id is not None:
         clauses.append("member_id = CAST(:mid AS uuid)")
         params["mid"] = str(member_id)
@@ -294,7 +317,7 @@ async def list_transactions(
         clauses.append("channel = :channel")
         params["channel"] = channel.value
     if direction is not None:
-        clauses.append(_direction_clause(direction))
+        clauses.append(_direction_clause(direction, params))
     if ref is not None:
         clauses.append("txn_ref = :ref")
         params["ref"] = ref

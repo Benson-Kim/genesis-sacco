@@ -15,14 +15,13 @@ from functools import partial
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from genesis.api.authz import RequirePermission
-from genesis.api.params import require_cash_channel, resolve_as_of
+from genesis.api.params import require_cash_channel
 from genesis.application import deposit_interest as interest_service
 from genesis.application import transactions as txn_service
 from genesis.application.auth import AuthContext
-from genesis.domain.deposits import previous_quarter
 from genesis.domain.ledger import Channel, Side, TxnType
 from genesis.domain.rbac import Action, Module
 from genesis.infrastructure.db import get_sessionmaker
@@ -48,8 +47,16 @@ class MoneyBody(BaseModel):
 
 
 class InterestRunBody(BaseModel):
-    annual_rate_pct: Decimal = Field(gt=0, le=100, decimal_places=2)
-    as_of: date | None = None
+    """Only the batch size is caller-tunable (review finding 2).
+
+    The annual rate comes exclusively from tenant configuration and the
+    accrued period is resolved server-side in strict quarter order —
+    extra="forbid" rejects any attempt to supply annual_rate_pct or
+    as_of with a clear 422 instead of silently ignoring it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     batch_size: int = Field(default=interest_service.DEFAULT_BATCH_SIZE, ge=1, le=1000)
 
 
@@ -84,6 +91,7 @@ class InterestRunOut(BaseModel):
     scanned: int
     posted: int
     skipped_existing: int
+    rate_mismatches: int
     total_interest: str
     batches: int
 
@@ -177,6 +185,7 @@ async def list_ledger(
     async with tenant_session(factory, ctx.tenant_id) as session:
         items, next_cursor = await txn_service.list_transactions(
             session,
+            ctx.tenant_id,
             member_id=member_id,
             txn_type=txn_type,
             channel=channel,
@@ -192,31 +201,47 @@ async def list_ledger(
 
 @router.post("/jobs/deposit-interest")
 async def run_deposit_interest(body: InterestRunBody, ctx: TxnEditCtx) -> InterestRunOut:
-    """Accrue deposit interest for the last completed quarter (batched, idempotent).
+    """Accrue deposit interest for the next unaccrued quarter (batched, idempotent).
 
     The quarterly scheduler calls the same service per tenant; this
-    route exists for operations and backfills. Each batch commits its
-    own short transaction (gate 1.3). The accrued period is the last
-    completed calendar quarter relative to as_of — never the running
-    quarter, because interest is recognised only once earned.
+    route exists for operations and catch-up. Each batch commits its
+    own short transaction (gate 1.3).
+
+    Rate and period are resolved server-side (review finding 2): the
+    annual rate comes from tenant_settings (409 when unconfigured) and
+    the period advances in strict order — the earliest quarter not yet
+    fully accrued, never past the most recent completed quarter, and
+    never an arbitrary caller-chosen historical period. Re-running a
+    fully accrued tenant is an idempotent no-op (DB UNIQUE); a
+    concurrent run at worst re-resolves an already finished period,
+    which the UNIQUE claim turns into skips.
+
+    Permission (P4 matrix, verified): Transactions × EDIT. Posting
+    interest is back-office ledger maintenance, so it belongs to the
+    roles the matrix grants transactions:edit (System Admin, Branch
+    Manager, Accountant) — deliberately not transactions:create, which
+    would let counter Tellers trigger tenant-wide accrual runs.
     """
-    as_of = resolve_as_of(body.as_of)
-    period = previous_quarter(as_of)
     factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        period, annual_rate_pct = await interest_service.resolve_run_parameters(
+            session, ctx.tenant_id
+        )
     result = await interest_service.run_deposit_interest_for_tenant(
         partial(tenant_session, factory, ctx.tenant_id),
         ctx.tenant_id,
         period=period,
-        annual_rate_pct=body.annual_rate_pct,
+        annual_rate_pct=annual_rate_pct,
         batch_size=body.batch_size,
     )
     return InterestRunOut(
         period_start=period.start.isoformat(),
         period_end=period.end.isoformat(),
-        annual_rate_pct=str(body.annual_rate_pct),
+        annual_rate_pct=str(annual_rate_pct),
         scanned=result.scanned,
         posted=result.posted,
         skipped_existing=result.skipped_existing,
+        rate_mismatches=result.rate_mismatches,
         total_interest=str(result.total_interest),
         batches=result.batches,
     )

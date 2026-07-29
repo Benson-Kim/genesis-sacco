@@ -137,11 +137,16 @@ def _row_to_loan(row: Any) -> LoanRecord:
     )
 
 
-async def get_loan(session: AsyncSession, loan_id: uuid.UUID) -> LoanRecord:
+async def get_loan(session: AsyncSession, tenant_id: uuid.UUID, loan_id: uuid.UUID) -> LoanRecord:
     row = (
         await session.execute(
-            text(f"SELECT {_LOAN_COLS} FROM loans WHERE id = CAST(:id AS uuid)"),  # noqa: S608
-            {"id": str(loan_id)},
+            # Explicit tenant predicate on top of RLS: defence in depth
+            # on the money path (gate 1.6).
+            text(
+                f"SELECT {_LOAN_COLS} FROM loans "  # noqa: S608
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"id": str(loan_id), "tid": str(tenant_id)},
         )
     ).first()
     if row is None:
@@ -151,6 +156,7 @@ async def get_loan(session: AsyncSession, loan_id: uuid.UUID) -> LoanRecord:
 
 async def list_loans(
     session: AsyncSession,
+    tenant_id: uuid.UUID,
     *,
     status: LoanStatus | None = None,
     classification: LoanClass | None = None,
@@ -163,8 +169,10 @@ async def list_loans(
     id DESC) so page depth never degrades the scan.
     """
     limit = max(1, min(limit, 100))
-    clauses: list[str] = []
-    params: dict[str, object] = {"limit": limit + 1}
+    # Explicit tenant predicate on top of RLS (defence in depth, gate
+    # 1.6); also the leading column of idx_loans_created_keyset.
+    clauses: list[str] = ["tenant_id = CAST(:tid AS uuid)"]
+    params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if status is not None:
         clauses.append("status = :status")
         params["status"] = status.value
@@ -195,17 +203,20 @@ async def list_loans(
     return items, next_cursor
 
 
-async def get_schedule(session: AsyncSession, loan_id: uuid.UUID) -> list[ScheduleRow]:
+async def get_schedule(
+    session: AsyncSession, tenant_id: uuid.UUID, loan_id: uuid.UUID
+) -> list[ScheduleRow]:
     """Full amortisation schedule; bounded by the loan term (<= 120 rows)."""
-    await get_loan(session, loan_id)  # 404 before returning an empty list
+    await get_loan(session, tenant_id, loan_id)  # 404 before returning an empty list
     rows = (
         await session.execute(
             text(
                 "SELECT installment_no, due_date, principal_due, interest_due, "
                 "total_due, paid_amount FROM loan_schedules "
-                "WHERE loan_id = CAST(:id AS uuid) ORDER BY installment_no"
+                "WHERE loan_id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "ORDER BY installment_no"
             ),
-            {"id": str(loan_id)},
+            {"id": str(loan_id), "tid": str(tenant_id)},
         )
     ).all()
     return [
@@ -221,23 +232,28 @@ async def get_schedule(session: AsyncSession, loan_id: uuid.UUID) -> list[Schedu
     ]
 
 
-async def _interest_due(session: AsyncSession, loan_id: uuid.UUID, as_of: date) -> Decimal:
+async def _interest_due(
+    session: AsyncSession, tenant_id: uuid.UUID, loan_id: uuid.UUID, as_of: date
+) -> Decimal:
     """Accrued unpaid interest on installments due on or before as_of.
 
     paid_amount covers interest before principal within an installment
     (mirror of the allocation order), so the unpaid interest of one
-    installment is GREATEST(interest_due - paid_amount, 0). Served by
-    the partial index idx_schedules_unpaid.
+    installment is GREATEST(interest_due - paid_amount, 0). Correct only
+    because repayment cash is never applied to installments due after
+    the payment date (see record_repayment): a prepayment that touched
+    future rows would silently erase interest that was never collected.
+    Served by the partial index idx_schedules_unpaid.
     """
     value = (
         await session.execute(
             text(
                 "SELECT COALESCE(SUM(GREATEST(interest_due - paid_amount, 0)), 0) "
                 "FROM loan_schedules "
-                "WHERE loan_id = CAST(:id AS uuid) "
+                "WHERE loan_id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
                 "AND due_date <= :as_of AND paid_amount < total_due"
             ),
-            {"id": str(loan_id), "as_of": as_of},
+            {"id": str(loan_id), "tid": str(tenant_id), "as_of": as_of},
         )
     ).scalar_one()
     return Decimal(str(value))
@@ -245,6 +261,7 @@ async def _interest_due(session: AsyncSession, loan_id: uuid.UUID, as_of: date) 
 
 async def get_settlement_quote(
     session: AsyncSession,
+    tenant_id: uuid.UUID,
     loan_id: uuid.UUID,
     *,
     as_of: date | None = None,
@@ -255,10 +272,10 @@ async def get_settlement_quote(
     domain SettlementQuote contract).
     """
     quote_date = as_of or datetime.now(UTC).date()
-    loan = await get_loan(session, loan_id)
+    loan = await get_loan(session, tenant_id, loan_id)
     if loan.status is not LoanStatus.ACTIVE:
         raise ConflictError(f"loan {loan_id} is '{loan.status.value}': nothing to settle")
-    interest = await _interest_due(session, loan_id, quote_date)
+    interest = await _interest_due(session, tenant_id, loan_id, quote_date)
     return settlement_quote(loan.balance, interest, loan.penalty_due)
 
 
@@ -288,9 +305,10 @@ async def record_repayment(
         await session.execute(
             text(
                 "SELECT member_id, balance, penalty_due, status "
-                "FROM loans WHERE id = CAST(:id AS uuid) FOR UPDATE"
+                "FROM loans WHERE id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
-            {"id": str(loan_id)},
+            {"id": str(loan_id), "tid": str(tenant_id)},
         )
     ).first()
     if row is None:
@@ -302,7 +320,7 @@ async def record_repayment(
     if status is not LoanStatus.ACTIVE:
         raise ConflictError(f"loan {loan_id} is '{status.value}' and cannot accept repayments")
 
-    interest_due = await _interest_due(session, loan_id, ts.date())
+    interest_due = await _interest_due(session, tenant_id, loan_id, ts.date())
     try:
         allocation = allocate_repayment(
             amount,
@@ -318,18 +336,27 @@ async def record_repayment(
     )
 
     # Apply the cash received (interest + principal) to open installments
-    # oldest first; paid_amount is servicing bookkeeping feeding the
-    # arrears scan (penalties live on the loan row, not the schedule).
+    # that are DUE on or before the repayment date, oldest first;
+    # paid_amount is servicing bookkeeping feeding the arrears scan
+    # (penalties live on the loan row, not the schedule). Installments
+    # due in the future are never touched: marking them paid with
+    # prepaid principal would make _interest_due treat that cash as
+    # interest collected, silently erasing future interest that was
+    # never received (review finding 3). Cash left over after the due
+    # buckets is a principal prepayment — it reduces loans.balance
+    # below (settlement quotes and payoff reflect it immediately) while
+    # the schedule keeps its contractual dues.
     remaining = allocation.interest + allocation.principal
     if remaining > ZERO:
         unpaid = (
             await session.execute(
                 text(
                     "SELECT id, total_due, paid_amount FROM loan_schedules "
-                    "WHERE loan_id = CAST(:id AS uuid) AND paid_amount < total_due "
+                    "WHERE loan_id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                    "AND due_date <= :as_of AND paid_amount < total_due "
                     "ORDER BY installment_no"
                 ),
-                {"id": str(loan_id)},
+                {"id": str(loan_id), "tid": str(tenant_id), "as_of": ts.date()},
             )
         ).all()
         for inst_id, total_due_raw, paid_raw in unpaid:

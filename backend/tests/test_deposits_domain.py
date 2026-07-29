@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from genesis.domain.deposits import previous_quarter, quarter_of, quarterly_interest
+from genesis.domain.deposits import next_quarter, previous_quarter, quarter_of, quarterly_interest
 from genesis.domain.ledger import Side, TxnType, member_direction
 
 
@@ -29,6 +29,15 @@ def test_previous_quarter_is_contiguous_and_crosses_years() -> None:
     prev = previous_quarter(date(2026, 1, 15))
     assert prev.start == date(2025, 10, 1)
     assert prev.end == date(2025, 12, 31)
+
+
+def test_next_quarter_is_contiguous_and_crosses_years() -> None:
+    for month in range(1, 13):
+        q = quarter_of(date(2026, month, 15))
+        nq = next_quarter(q)
+        assert nq.start == q.end + timedelta(days=1)  # no gap, no overlap
+        assert previous_quarter(nq.start) == q  # inverse of previous_quarter
+    assert next_quarter(quarter_of(date(2025, 11, 1))).start == date(2026, 1, 1)
 
 
 def test_quarterly_interest_hand_computed_values() -> None:

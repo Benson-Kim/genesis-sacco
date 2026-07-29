@@ -6,7 +6,10 @@ artifact and pasted into the MR description):
 
   1. ledger listing keyset page (idx_txns_occurred_keyset)
   2. member-filtered ledger page (idx_txns_member_keyset)
-  3. deposit-interest accrual scan (idx_deposit_accounts_scan)
+  3. deposit-interest accrual scan (idx_deposit_accounts_keyset — the
+     job walks every account since interest is computed from the
+     period-end balance, so the 0008 partial positive-balance index no
+     longer matches the scan predicate)
 
 Tiny CI tables make seqscan the cheaper plan; the capture disables it
 for the session to prove each query is servable by an index — i.e. the
@@ -54,7 +57,7 @@ ORDER BY occurred_at DESC, id DESC LIMIT 21
 
 INTEREST_ACCRUAL_SCAN = """
 SELECT d.id, d.member_id, d.balance FROM deposit_accounts d
-WHERE d.balance > 0 AND d.id > CAST(:after AS uuid)
+WHERE d.tenant_id = CAST(:tid AS uuid) AND d.id > CAST(:after AS uuid)
 ORDER BY d.id LIMIT 200
 """
 
@@ -109,7 +112,7 @@ def test_p11_hot_path_queries_are_index_backed() -> None:
             accrual_plan = await _explain(
                 session,
                 INTEREST_ACCRUAL_SCAN,
-                {"after": "00000000-0000-0000-0000-000000000000"},
+                {"tid": str(tid), "after": "00000000-0000-0000-0000-000000000000"},
             )
         sections.append(("ledger listing keyset page", page_plan))
         sections.append(("member-filtered ledger page", member_plan))
@@ -123,7 +126,8 @@ def test_p11_hot_path_queries_are_index_backed() -> None:
         assert "idx_txns_member_keyset" in member_plan or "idx_transactions_member" in member_plan
         assert "Seq Scan" not in member_plan
         assert (
-            "idx_deposit_accounts_scan" in accrual_plan or "deposit_accounts_pkey" in accrual_plan
+            "idx_deposit_accounts_keyset" in accrual_plan
+            or "deposit_accounts_pkey" in accrual_plan
         )
         assert "Seq Scan" not in accrual_plan
 

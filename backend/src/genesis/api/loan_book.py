@@ -176,7 +176,7 @@ async def disburse_application(
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         result = await disburse_loan(session, ctx.tenant_id, application_id, channel, ctx.user_id)
-        schedule = await loans_service.get_schedule(session, result.loan_id)
+        schedule = await loans_service.get_schedule(session, ctx.tenant_id, result.loan_id)
     return DisbursementOut(
         loan_id=str(result.loan_id),
         txn_id=str(result.txn_id),
@@ -208,6 +208,7 @@ async def list_loans(
     async with tenant_session(factory, ctx.tenant_id) as session:
         items, next_cursor = await loans_service.list_loans(
             session,
+            ctx.tenant_id,
             status=status,
             classification=classification,
             cursor=cursor,
@@ -220,7 +221,7 @@ async def list_loans(
 async def get_loan(loan_id: uuid.UUID, ctx: BookViewCtx) -> LoanOut:
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        loan = await loans_service.get_loan(session, loan_id)
+        loan = await loans_service.get_loan(session, ctx.tenant_id, loan_id)
     return _loan_out(loan)
 
 
@@ -228,7 +229,7 @@ async def get_loan(loan_id: uuid.UUID, ctx: BookViewCtx) -> LoanOut:
 async def get_loan_schedule(loan_id: uuid.UUID, ctx: BookViewCtx) -> list[ScheduleRowOut]:
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        schedule = await loans_service.get_schedule(session, loan_id)
+        schedule = await loans_service.get_schedule(session, ctx.tenant_id, loan_id)
     return [_schedule_out(row) for row in schedule]
 
 
@@ -241,7 +242,9 @@ async def get_settlement_quote(
     quote_date = resolve_as_of(as_of)
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        quote = await loans_service.get_settlement_quote(session, loan_id, as_of=quote_date)
+        quote = await loans_service.get_settlement_quote(
+            session, ctx.tenant_id, loan_id, as_of=quote_date
+        )
     return SettlementQuoteOut(
         as_of=quote_date.isoformat(),
         principal_balance=str(quote.principal_balance),
@@ -315,6 +318,12 @@ async def run_arrears(body: ArrearsRunBody, ctx: BookEditCtx) -> ArrearsRunOut:
     The nightly scheduler calls the same service per tenant; this route
     exists for operations and backfills. Each batch commits its own
     short transaction (gate 1.3).
+
+    Permission (P4 matrix, verified): Loan-book × EDIT. Reclassifying
+    days-past-due/provisioning rewrites loan-book rows, so the job sits
+    with the roles the matrix grants loan_book:edit (System Admin,
+    Branch Manager) — not loan_book:approve (a committee decision
+    power) and not any transactions permission (no money moves here).
     """
     as_of = resolve_as_of(body.as_of)
     factory = get_sessionmaker(get_settings().database_url)
