@@ -14,6 +14,7 @@ from db_helpers import api_client, factory, seed_user, unique_email
 from genesis.application import deposit_interest as interest_service
 from genesis.application import transactions as txn_service
 from genesis.application.auth import AuthContext, issue_access_token
+from genesis.application.ledger import post_deposit
 from genesis.application.rbac import seed_permissions
 from genesis.domain.deposits import next_quarter, previous_quarter, quarter_of
 from genesis.domain.ledger import Channel, Side, TxnType
@@ -114,12 +115,17 @@ async def _seed_accrual_row(
         )
 
 
-async def _backdate_txn(tid: uuid.UUID, txn_id: uuid.UUID, occurred_at: datetime) -> None:
-    """Move a posted transaction into a past period (ADB basis fixtures)."""
+async def _deposit_at(tid: uuid.UUID, mid: uuid.UUID, amount: str, occurred_at: datetime) -> None:
+    """Post an in-period deposit leg via the P7 contract (ADB fixtures).
+
+    transactions is append-only (gate 1.5), so past-period history is
+    written the same way production wrote it: a real posting with an
+    explicit occurred_at. The account balance itself is seeded by the
+    caller (the fixture's current balance already includes the amount).
+    """
     async with tenant_session(factory(), tid) as session:
-        await session.execute(
-            text("UPDATE transactions SET occurred_at = :ts WHERE id = CAST(:id AS uuid)"),
-            {"ts": occurred_at, "id": str(txn_id)},
+        await post_deposit(
+            session, tid, mid, Decimal(amount), Channel.BANK, occurred_at=occurred_at
         )
 
 
@@ -412,21 +418,16 @@ def test_interest_basis_is_average_daily_balance() -> None:
         period = quarter_of(date(2026, 4, 1))  # Q2-2026: Apr 1 - Jun 30
         assert (period.end - period.start).days + 1 == 91
 
-        m_last_day = await _seed_member(tid)
-        async with tenant_session(factory(), tid) as session:
-            last = await txn_service.record_deposit(
-                session, tid, None, m_last_day, amount=Decimal("91000.00"), channel=Channel.BANK
-            )
-        await _backdate_txn(tid, last.txn_id, datetime.combine(period.end, time(12, 0), tzinfo=UTC))
+        m_last_day = await _seed_member(tid, deposit="91000.00")
+        await _deposit_at(
+            tid, m_last_day, "91000.00", datetime.combine(period.end, time(12, 0), tzinfo=UTC)
+        )
 
-        m_ten_days = await _seed_member(tid)
-        async with tenant_session(factory(), tid) as session:
-            ten = await txn_service.record_deposit(
-                session, tid, None, m_ten_days, amount=Decimal("9100.00"), channel=Channel.BANK
-            )
-        await _backdate_txn(
+        m_ten_days = await _seed_member(tid, deposit="9100.00")
+        await _deposit_at(
             tid,
-            ten.txn_id,
+            m_ten_days,
+            "9100.00",
             datetime.combine(period.end - timedelta(days=9), time(12, 0), tzinfo=UTC),
         )
 
