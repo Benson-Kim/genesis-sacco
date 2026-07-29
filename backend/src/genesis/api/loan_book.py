@@ -44,10 +44,18 @@ TxnCreateCtx = Annotated[AuthContext, Depends(_txn_create)]
 
 
 class DisburseBody(BaseModel):
+    """extra="forbid": a caller-sent disbursed_at/occurred_at (or any
+    money field this contract does not own) is a 422, never silently
+    ignored — the posting date is resolved server-side (issue #12)."""
+
+    model_config = ConfigDict(extra="forbid")
+
     channel: Channel
 
 
 class RepaymentBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     #: decimal_places=2 rejects sub-cent amounts at the contract instead
     #: of silently rounding them into the ledger.
     amount: Decimal = Field(gt=0, le=1_000_000_000, decimal_places=2)
@@ -55,6 +63,8 @@ class RepaymentBody(BaseModel):
 
 
 class ArrearsRunBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     as_of: date | None = None
     batch_size: int = Field(default=arrears_service.DEFAULT_BATCH_SIZE, ge=1, le=1000)
 

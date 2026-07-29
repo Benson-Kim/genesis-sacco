@@ -57,7 +57,13 @@ pytestmark = pytest.mark.skipif(
 
 
 async def _seed_member(tid: uuid.UUID) -> uuid.UUID:
-    """Insert a minimal member row and return its id."""
+    """Insert a minimal member row and return its id.
+
+    The deposit account satisfies the P12.5 multiplier precondition
+    (issue #15): 100000.00 x 3.00 covers every amount disbursed here —
+    these tests exercise the posting contract, not the eligibility gate
+    (test_deposit_multiplier.py owns that).
+    """
     mid = uuid.uuid4()
     async with tenant_session(factory(), tid) as session:
         await session.execute(
@@ -66,6 +72,13 @@ async def _seed_member(tid: uuid.UUID) -> uuid.UUID:
                 "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :no, 'person', 'Test Member')"
             ),
             {"id": str(mid), "tid": str(tid), "no": f"GP-{mid.hex[:6].upper()}"},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO deposit_accounts (id, tenant_id, member_id, balance) "
+                "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:m AS uuid), '100000.00')"
+            ),
+            {"id": str(uuid.uuid4()), "tid": str(tid), "m": str(mid)},
         )
     return mid
 

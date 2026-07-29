@@ -87,6 +87,17 @@ async def _seed_book(tid: uuid.UUID) -> None:
                 ),
                 {"id": str(mid), "tid": str(tid), "no": f"GP-{mid.hex[:6].upper()}"},
             )
+            # Deposit account satisfying the P12.5 multiplier
+            # precondition (issue #15): 100000.00 x 3.00 covers the
+            # amounts disbursed below.
+            await session.execute(
+                text(
+                    "INSERT INTO deposit_accounts (id, tenant_id, member_id, balance) "
+                    "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), "
+                    "CAST(:m AS uuid), '100000.00')"
+                ),
+                {"id": str(uuid.uuid4()), "tid": str(tid), "m": str(mid)},
+            )
             await session.execute(
                 text(
                     "INSERT INTO loan_products "
