@@ -31,10 +31,8 @@ def quarter_of(d: date) -> QuarterPeriod:
     """The calendar quarter containing d."""
     start_month = _QUARTER_MONTHS[(d.month - 1) // 3]
     start = date(d.year, start_month, 1)
-    if start_month == 10:
-        next_start = date(d.year + 1, 1, 1)
-    else:
-        next_start = date(d.year, start_month + 3, 1)
+
+    next_start = date(d.year + 1, 1, 1) if start_month == 10 else date(d.year, start_month + 3, 1)
     return QuarterPeriod(start=start, end=next_start - timedelta(days=1))
 
 
