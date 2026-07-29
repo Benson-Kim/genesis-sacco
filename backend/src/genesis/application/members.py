@@ -363,8 +363,11 @@ async def change_member_status(
     """
     row = (
         await session.execute(
-            text("SELECT status, version FROM members WHERE id = CAST(:id AS uuid) FOR UPDATE"),
-            {"id": str(member_id)},
+            text(
+                "SELECT status, version FROM members WHERE id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
+            ),
+            {"id": str(member_id), "tid": str(tenant_id)},
         )
     ).first()
     if row is None:
@@ -387,10 +390,13 @@ async def change_member_status(
         CursorResult[Any],
         await session.execute(
             text(
+                # Explicit tenant predicate on the write, on top of RLS
+                # (defence in depth, gate 1.6).
                 "UPDATE members SET status = :st, version = version + 1, updated_at = now() "
-                "WHERE id = CAST(:id AS uuid) AND version = :ver"
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "AND version = :ver"
             ),
-            {"st": new_status.value, "id": str(member_id), "ver": version},
+            {"st": new_status.value, "id": str(member_id), "tid": str(tenant_id), "ver": version},
         ),
     )
     if result.rowcount != 1:
