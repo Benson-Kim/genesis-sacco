@@ -872,3 +872,145 @@ def test_release_guarantees_for_loan_service() -> None:
             assert released_again == 0
 
     asyncio.run(run())
+
+
+def test_direct_rejection_releases_pledges() -> None:
+    """Regression: rejecting an application must release its pledges."""
+
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        headers = _headers(token)
+        borrower = await _make_member(headers, "Reject Release Borrower")
+        guarantor = await _make_member(headers, "Reject Release Guarantor")
+        await _set_deposit_balance(tid, guarantor, "10000.00")
+        product_id = await _make_product(headers, "Reject Release Product")
+        app = await _make_application(headers, borrower, product_id, "5000.00")
+        aid = app["id"]
+        async with api_client() as client:
+            pledge = await client.post(
+                f"/applications/{aid}/guarantees",
+                json={"guarantor_member_id": guarantor, "amount": "4000.00"},
+                headers=headers,
+            )
+            assert pledge.status_code == 201
+            gid = pledge.json()["id"]
+            rejected = await client.post(
+                f"/applications/{aid}/transition",
+                json={"version": 1, "target": "rejected"},
+                headers=headers,
+            )
+            assert rejected.status_code == 200
+        async with tenant_session(factory(), tid) as session:
+            status = (
+                await session.execute(
+                    text("SELECT status FROM guarantees WHERE id = CAST(:g AS uuid)"),
+                    {"g": gid},
+                )
+            ).scalar_one()
+        assert status == "released"
+        # Capacity is restored: the full balance can be pledged again.
+        app2 = await _make_application(headers, borrower, product_id, "5000.00")
+        async with api_client() as client:
+            repledge = await client.post(
+                f"/applications/{app2['id']}/guarantees",
+                json={"guarantor_member_id": guarantor, "amount": "10000.00"},
+                headers=headers,
+            )
+        assert repledge.status_code == 201
+
+    asyncio.run(run())
+
+
+def test_committee_rejection_releases_pledges() -> None:
+    """Regression: a quorum rejection must release pledges too."""
+
+    async def run() -> None:
+        tid, role_id, token = await _seed_actor()
+        headers = _headers(token)
+        product_id = await _make_product(headers, "Quorum Release Product")
+        guarantor = await _make_member(headers, "Quorum Release Guarantor")
+        await _set_deposit_balance(tid, guarantor, "10000.00")
+        aid = await _application_in_committee(
+            headers, tid, "Quorum Release Borrower", product_id
+        )
+        async with api_client() as client:
+            pledge = await client.post(
+                f"/applications/{aid}/guarantees",
+                json={"guarantor_member_id": guarantor, "amount": "3000.00"},
+                headers=headers,
+            )
+            assert pledge.status_code == 201
+            gid = pledge.json()["id"]
+            voter2 = _headers(await _add_actor(tid, role_id))
+            r1 = await client.post(
+                f"/applications/{aid}/vote", json={"vote": "reject"}, headers=headers
+            )
+            assert r1.status_code == 200
+            r2 = await client.post(
+                f"/applications/{aid}/vote", json={"vote": "reject"}, headers=voter2
+            )
+            assert r2.status_code == 200
+            assert r2.json()["decision"] == "rejected"
+        async with tenant_session(factory(), tid) as session:
+            status = (
+                await session.execute(
+                    text("SELECT status FROM guarantees WHERE id = CAST(:g AS uuid)"),
+                    {"g": gid},
+                )
+            ).scalar_one()
+        assert status == "released"
+
+    asyncio.run(run())
+
+
+def test_cover_pct_clamped_to_column_bounds() -> None:
+    """Regression: huge deposits vs a tiny amount must not overflow NUMERIC(6,2)."""
+
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        headers = _headers(token)
+        member_id = await _make_member(headers, "Clamp Borrower")
+        await _set_deposit_balance(tid, member_id, "25000.00")
+        product_id = await _make_product(headers, "Clamp Product")
+        app = await _make_application(headers, member_id, product_id, "100.00")
+        assert app["cover_pct"] == "9999.99"
+
+    asyncio.run(run())
+
+
+def test_exited_member_cannot_apply_or_guarantee() -> None:
+    """Regression: lifecycle guards - exited members can neither borrow nor pledge."""
+
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        headers = _headers(token)
+        exited = await _make_member(headers, "Exited Member")
+        borrower = await _make_member(headers, "Lifecycle Borrower")
+        await _set_deposit_balance(tid, exited, "10000.00")
+        product_id = await _make_product(headers, "Lifecycle Product")
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(
+                text("UPDATE members SET status = 'exited' WHERE id = CAST(:m AS uuid)"),
+                {"m": exited},
+            )
+        async with api_client() as client:
+            apply_res = await client.post(
+                "/applications",
+                json={
+                    "member_id": exited,
+                    "product_id": product_id,
+                    "amount": "1000.00",
+                    "term_months": 6,
+                },
+                headers=headers,
+            )
+            assert apply_res.status_code == 409
+            app = await _make_application(headers, borrower, product_id, "5000.00")
+            pledge = await client.post(
+                f"/applications/{app['id']}/guarantees",
+                json={"guarantor_member_id": exited, "amount": "1000.00"},
+                headers=headers,
+            )
+        assert pledge.status_code == 409
+
+    asyncio.run(run())

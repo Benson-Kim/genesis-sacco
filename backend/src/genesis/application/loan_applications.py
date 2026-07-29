@@ -37,6 +37,11 @@ _COLS = (
     "id, member_id, product_id, amount, term_months, rate_pct, purpose, stage, cover_pct, version"
 )
 
+#: cover_pct is stored as NUMERIC(6,2); values above this cap carry no
+#: extra information ("covered many times over") and would overflow the
+#: column, turning a valid request into an unhandled 500.
+_COVER_PCT_CAP = Decimal("9999.99")
+
 
 @dataclass(frozen=True)
 class ApplicationRecord:
@@ -100,7 +105,53 @@ async def _guarantee_total(session: AsyncSession, application_id: uuid.UUID) -> 
 
 
 def _cover_pct(deposits: Decimal, guarantees: Decimal, amount: Decimal) -> Decimal:
-    return to_cents((deposits + guarantees) * Decimal("100") / amount)
+    raw = to_cents((deposits + guarantees) * Decimal("100") / amount)
+    return min(raw, _COVER_PCT_CAP)
+
+
+async def _release_application_pledges(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+    application_id: uuid.UUID,
+) -> int:
+    """Release live pledges when an application is rejected (gates 1.4, 1.5).
+
+    Mirrors guarantees.release_guarantees_for_loan for the pre-loan
+    stage. It lives here rather than in guarantees.py because that
+    module imports recompute_cover from this one and the reverse import
+    would be circular.
+    """
+    result = cast(
+        CursorResult[Any],
+        await session.execute(
+            text(
+                "UPDATE guarantees SET status = 'released', "
+                "version = version + 1, updated_at = now() "
+                "WHERE application_id = CAST(:aid AS uuid) "
+                "AND status IN ('pledged', 'active')"
+            ),
+            {"aid": str(application_id)},
+        ),
+    )
+    released = int(result.rowcount or 0)
+    if released:
+        await record_audit(
+            session,
+            tenant_id,
+            actor_id,
+            action="guarantee.release",
+            entity="guarantees",
+            entity_id=str(application_id),
+            after={"application_id": str(application_id), "released": released},
+        )
+        await enqueue_event(
+            session,
+            tenant_id,
+            event_type="guarantee.released",
+            payload={"application_id": str(application_id), "released": released},
+        )
+    return released
 
 
 async def create_application(
@@ -130,14 +181,18 @@ async def create_application(
         raise InvalidInputError(
             f"term {term_months} outside product limit of {product.max_term_months} months"
         )
-    member_exists = (
+    member_row = (
         await session.execute(
-            text("SELECT 1 FROM members WHERE id = CAST(:m AS uuid)"),
+            text("SELECT status FROM members WHERE id = CAST(:m AS uuid)"),
             {"m": str(member_id)},
         )
     ).first()
-    if member_exists is None:
+    if member_row is None:
         raise NotFoundError(f"member {member_id} not found")
+    if str(member_row[0]) != "active":
+        raise ConflictError(
+            f"member {member_id} is '{member_row[0]}': only active members may apply"
+        )
     deposits = await _deposit_balance(session, member_id)
     cover = _cover_pct(deposits, ZERO, amount)
     application_id = uuid.uuid4()
@@ -321,6 +376,9 @@ async def transition_stage(
             "to": target.value,
         },
     )
+    if target is ApplicationStage.REJECTED:
+        # Terminal rejection frees the guarantors' capacity immediately.
+        await _release_application_pledges(session, tenant_id, actor_id, application_id)
     return await get_application(session, application_id)
 
 
@@ -429,6 +487,9 @@ async def cast_vote(
                 "rejections": rejections,
             },
         )
+        if target is ApplicationStage.REJECTED:
+            # Quorum rejection is terminal: free the pledged capacity.
+            await _release_application_pledges(session, tenant_id, voter_id, application_id)
     return VoteTally(
         approvals=approvals,
         rejections=rejections,
