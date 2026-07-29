@@ -152,22 +152,37 @@ nothing); dashboard aggregates match seeded fixtures to the cent.
 ROLE: Developer. DEPENDS: P8, P7.
 PROMPT: Implement deposits, withdrawals (balance check under row lock, no
 blocking I/O while held, 1.3/1.4), share top-ups, and the quarterly
-deposit-interest accrual job (batch, idempotent by period UNIQUE, posts
-INT- refs via P7). Ledger listing endpoint with keyset pagination and
-filters matching the prototype columns (date, ref, member, type, DR/CR,
-channel).
+deposit-interest accrual job: rate exclusively from tenant configuration,
+period resolved server-side in strict quarter order (never caller-supplied
+or backdatable), basis = ledger-reconstructed AVERAGE DAILY BALANCE under
+the account row lock (never a point-in-time snapshot), batched via the
+shared runner, idempotent by period UNIQUE claimed ON CONFLICT DO NOTHING,
+INT- postings stamped at period end via P7. Ledger listing endpoint with
+keyset pagination and filters matching the prototype columns (date, ref,
+member, type, DR/CR, channel) — bound parameters only.
 EXIT: concurrent withdrawal test never overdraws; interest job re-run
-posts nothing new.
+posts nothing new and scans nothing; a last-day deposit earns exactly its
+pro-rata share (hand-computed oracle).
 
 ### P12 — Member exit & settlement
 ROLE: Developer. DEPENDS: P10, P11.
-PROMPT: Implement exit workflow per prototype: eligibility check (no active
-loan unless netted; active guarantees block exit until released/substituted),
-settlement computation (shares + deposits − loan balance − fees), committee
-approval step, atomic settlement posting via P7, terminal state transition.
-Exit statement document via export path.
+PROMPT: Implement exit workflow per prototype: eligibility check under the
+member row lock (no active loan unless netted; active guarantees block exit
+until released/substituted), settlement computation (shares + deposits −
+loan balance − fees) persisted as an approved SNAPSHOT row that the
+committee approves and that posting re-verifies component-by-component
+under the full lock set (409 on drift — 1.4 snapshot rule). Exit fees come
+from tenant/product configuration, never the request body (1.6). Handle
+negative settlements (loan balance exceeds assets) as an explicit,
+documented, tested branch. Committee approval reuses the P9 voting
+machinery. Atomic settlement posting via P7 in ONE application-service
+transaction (postings + zeroed balances + guarantee release + terminal
+transition + audit + outbox). Exit statement document via export path (if
+P13 is not yet built, ship a minimal statement endpoint and record the
+blocker issue per the standing rule).
 EXIT: guarantee-blocked exit test green; settlement is atomic (kill-switch
-test leaves no partial state).
+test leaves no partial state); approval-drift test returns 409 and posts
+nothing; exited members are rejected by every mutation path.
 
 ### P13 — Reports & exports
 ROLE: Developer. DEPENDS: P10, P11.
@@ -300,7 +315,30 @@ EXIT: UAT sign-off; production tenant live; week-one error budget intact.
 
 ---
 
-## STANDING RULE
+## STANDING RULES
 If any prompt's EXIT cannot be met, stop, record the blocker as an issue
 referencing the prompt ID, and do not start dependent prompts. Never
 weaken a gate to pass an EXIT.
+
+HARDENED STANDARDS (v1.1 — proven on the !17 deep-review sweeps; apply to
+every prompt, retroactively on touched code and forward on new code):
+1. Money parameters (rates, fees, periods) are server-resolved from tenant/
+   product configuration; request bodies reject them (`extra="forbid"`).
+2. Period-derived values use ledger-reconstructed bases (average daily
+   balance), never point-in-time snapshots.
+3. Approvals bind to persisted snapshots re-verified under locks at
+   execution; drift returns 409 and posts nothing.
+4. Explicit bound `tenant_id` predicates on every tenant-owned read AND
+   write, on top of forced RLS.
+5. Uniqueness claims are atomic (`INSERT ... ON CONFLICT DO NOTHING` +
+   rowcount), never SELECT-then-INSERT.
+6. SQL values are always bound parameters; identifiers only from code-owned
+   mappings, commented as such.
+7. Least-disclosure errors; exact figures live in the audit row.
+8. Batched jobs go through the shared batch runner; re-runs must be
+   lock-free no-ops (anti-join on the claim key).
+9. Anti-reward-hacking test rules and kill-switch atomicity tests per
+   MASTER_PROMPT §4; honest DoD per §5.8; pre-implementation review per
+   §5.9.
+10. Incremental push discipline: commit + push + observe pipeline per
+    coherent unit; a crashed session must never lose completed work.
