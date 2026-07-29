@@ -101,8 +101,7 @@ async def _posting_side_effects(tid: uuid.UUID) -> tuple[int, int, int, int]:
         events = (
             await session.execute(
                 text(
-                    "SELECT count(*) FROM outbox_events "
-                    "WHERE event_type = 'ledger.deposit_posted'"
+                    "SELECT count(*) FROM outbox_events WHERE event_type = 'ledger.deposit_posted'"
                 )
             )
         ).scalar_one()
@@ -134,10 +133,7 @@ def test_close_period_api_writes_row_audit_and_outbox() -> None:
             ).scalar_one()
             audits = (
                 await session.execute(
-                    text(
-                        "SELECT count(*) FROM audit_log "
-                        "WHERE action = 'accounting_period.close'"
-                    )
+                    text("SELECT count(*) FROM audit_log WHERE action = 'accounting_period.close'")
                 )
             ).scalar_one()
             events = (
@@ -247,10 +243,7 @@ def test_concurrent_close_collapses_to_exactly_one_row() -> None:
             ).scalar_one()
             audits = (
                 await session.execute(
-                    text(
-                        "SELECT count(*) FROM audit_log "
-                        "WHERE action = 'accounting_period.close'"
-                    )
+                    text("SELECT count(*) FROM audit_log WHERE action = 'accounting_period.close'")
                 )
             ).scalar_one()
         assert (int(rows), int(audits)) == (1, 1)

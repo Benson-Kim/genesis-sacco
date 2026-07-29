@@ -424,10 +424,7 @@ def test_linked_guarantee_released_on_loan_closure_end_to_end() -> None:
         async with tenant_session(factory(), tid) as session:
             link_audits = (
                 await session.execute(
-                    text(
-                        "SELECT count(*) FROM audit_log "
-                        "WHERE action = 'guarantee.link_loan'"
-                    )
+                    text("SELECT count(*) FROM audit_log WHERE action = 'guarantee.link_loan'")
                 )
             ).scalar_one()
         assert int(link_audits) == 1
