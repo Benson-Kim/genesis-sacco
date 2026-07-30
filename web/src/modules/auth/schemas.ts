@@ -16,3 +16,6 @@ export const otpCodeSchema = z
   .regex(/^\d{6}$/, "Enter all 6 digits");
 
 export const emailSchema = z.string().min(3).max(254);
+
+/** Tenant id — a routing UUID entered at the gate, never a credential. */
+export const tenantIdSchema = z.string().uuid("Enter a valid tenant id (UUID).");

@@ -18,7 +18,8 @@ function tearDownOn401(error: unknown): void {
   if (error instanceof ApiError && error.status === 401) {
     clearSession();
     if (typeof window !== "undefined") {
-      window.location.assign("/login");
+      // Code-owned flag only — nothing attacker-controlled enters the URL.
+      window.location.assign("/login?reason=expired");
     }
   }
 }

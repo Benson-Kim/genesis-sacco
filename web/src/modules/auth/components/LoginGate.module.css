@@ -105,6 +105,16 @@
   margin-top: 4px;
 }
 
+.notice {
+  background: var(--navySoft, #eef2f8);
+  color: var(--navy);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
 .error {
   background: var(--brickSoft);
   color: var(--brick);

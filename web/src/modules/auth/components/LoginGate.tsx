@@ -1,9 +1,13 @@
 "use client";
 
 /**
- * OTP sign-in gate mirroring the prototype (`vLogin`): request a one-time
- * password, then verify the 6-digit code. Server enforces attempts/TTL/
- * rate limits (P3); this component only shapes the flow.
+ * OTP sign-in gate mirroring the prototype (`vLogin`): tenant + email,
+ * request a one-time password, then verify the 6-digit code. Server
+ * enforces attempts/TTL/rate limits (P3); this component only shapes the
+ * flow. Deliberate differences from the prototype's demo gate (recorded
+ * in GAP_ANALYSIS §2.1 as demo artifacts, carried from !25): no role
+ * picker — the role comes from the user record server-side — and the OTP
+ * code is NEVER displayed; it arrives out-of-band.
  */
 import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
@@ -11,7 +15,9 @@ import { useMutation } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
 import { Button, Field } from "@genesis/design-system";
 import { requestOtp, verifyOtp } from "../api";
-import { OTP_LENGTH, emailSchema, otpCodeSchema } from "../schemas";
+import { OTP_LENGTH, emailSchema, otpCodeSchema, tenantIdSchema } from "../schemas";
+import { getStoredTenantId, setActiveTenantId, storeTenantId } from "../session";
+import { env } from "@/lib/env";
 import styles from "./LoginGate.module.css";
 
 function errorMessage(error: unknown): string {
@@ -30,9 +36,10 @@ function errorMessage(error: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
-export function LoginGate() {
+export function LoginGate({ notice }: { notice?: string }) {
   const router = useRouter();
   const [stage, setStage] = useState<"request" | "verify">("request");
+  const [tenantId, setTenantId] = useState(() => getStoredTenantId() || env.tenantId);
   const [email, setEmail] = useState("");
   const [digits, setDigits] = useState<string[]>(Array.from({ length: OTP_LENGTH }, () => ""));
   const [formError, setFormError] = useState<string | null>(null);
@@ -50,19 +57,31 @@ export function LoginGate() {
 
   const verify = useMutation({
     mutationFn: verifyOtp,
-    onSuccess: () => router.replace("/dashboard"),
+    onSuccess: () => {
+      // Persist ONLY the tenant id — a routing UUID, never a credential.
+      storeTenantId(tenantId.trim());
+      router.replace("/dashboard");
+    },
     onError: (error) => setFormError(errorMessage(error)),
   });
 
   function submitRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (request.isPending) return;
+    const tenant = tenantIdSchema.safeParse(tenantId.trim());
+    if (!tenant.success) {
+      setFormError("Enter a valid tenant id (UUID).");
+      return;
+    }
     const parsed = emailSchema.safeParse(email.trim());
     if (!parsed.success) {
       setFormError("Enter your registered email address.");
       return;
     }
     setFormError(null);
+    // The tenant becomes the session's X-Tenant-Id scope for every
+    // subsequent request (client middleware) — never a URL parameter.
+    setActiveTenantId(tenant.data);
     request.mutate(parsed.data);
   }
 
@@ -118,8 +137,20 @@ export function LoginGate() {
           {brand}
           <div className={styles.title}>Staff sign in</div>
           <div className={styles.subtitle}>
-            We&apos;ll send a one-time password to your registered email.
+            We&apos;ll send a one-time password to your registered email. It is never
+            shown on screen.
           </div>
+          {notice !== undefined && notice !== "" && <div className={styles.notice}>{notice}</div>}
+          <Field label="Tenant ID" htmlFor="login-tenant">
+            <input
+              id="login-tenant"
+              className={styles.input}
+              autoComplete="off"
+              placeholder="00000000-0000-0000-0000-000000000000"
+              value={tenantId}
+              onChange={(event) => setTenantId(event.target.value)}
+            />
+          </Field>
           <Field label="Email" htmlFor="login-email">
             <input
               id="login-email"
