@@ -684,8 +684,9 @@ async def disburse_loan(
     Steps:
       1. Lock the application row; verify stage == approved.
       2. Verify the deposit-multiplier eligibility under the deposit
-         account row lock (issue #15); transition stage to disbursed.
-      3. Create the loan record; link the application's live
+         aaccount row lock (issue #15), then block any unconsented
+         pledged guarantees; transition stage to disbursed.
+      3. Create the loan record; link the application's consented live
          guarantees to it (issue #15).
       4. Post the disbursement ledger entry.
       5. Generate and persist the amortisation schedule.
@@ -766,6 +767,20 @@ async def disburse_loan(
             "increase deposits or guarantees before disbursement"
         )
 
+    pledged_guarantee = (
+        await session.execute(
+            text(
+                "SELECT 1 FROM guarantees "
+                "WHERE application_id = CAST(:aid AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) "
+                "AND status = 'pledged' LIMIT 1"
+            ),
+            {"aid": str(application_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if pledged_guarantee is not None:
+        raise ConflictError("all guarantees must be consented before disbursement")
+
     update_result = cast(
         CursorResult[Any],
         await session.execute(
@@ -812,8 +827,8 @@ async def disburse_loan(
         },
     )
 
-    # Step 3b: link every live guarantee to the loan (issue #15,
-    # gate 1.5): pledges carry application_id with loan_id NULL until
+    # Step 3b: link every consented guarantee to the loan (issue #15,
+    # gate 1.5): active guarantees application_id with loan_id NULL until
     # this moment; from disbursement on, the guarantee lifecycle
     # follows the loan, so the P10 release-on-closure hook and the P12
     # exit sweep always find them. Runs inside the same atomic
@@ -827,7 +842,7 @@ async def disburse_loan(
                 "version = version + 1, updated_at = now() "
                 "WHERE application_id = CAST(:aid AS uuid) "
                 "AND tenant_id = CAST(:tid AS uuid) "
-                "AND status IN ('pledged', 'active')"
+                "AND status = 'active'"
             ),
             {"lid": str(loan_id), "aid": str(application_id), "tid": str(tenant_id)},
         ),

@@ -253,6 +253,67 @@ def test_disbursement_at_exact_cap_succeeds_with_guarantees() -> None:
     asyncio.run(run())
 
 
+def test_disbursement_blocks_unconsented_pledged_guarantees() -> None:
+    """A pledged guarantee can contribute to the pre-disbursement cap, but
+    it must not be activated as loan collateral without guarantor consent.
+
+    Hand-computed cap: deposits 10000.00 x 3.00 + pledged guarantee 5000.00
+    = 35000.00. The cap is satisfied, but disbursement still 409s until the
+    pledge is consented; no loan, transaction, audit, or guarantee mutation is
+    written.
+    """
+
+    async def run() -> None:
+        tid, uid, token = await _seed_actor()
+        mid = await _make_member(tid, deposit="10000.00")
+        guarantor = await _make_member(tid, deposit="6000.00")
+        pid = await _make_product(token)
+        app_id = await _approved_application(tid, token, mid, pid, "35000.00")
+        gid = uuid.uuid4()
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO guarantees "
+                    "(id, tenant_id, guarantor_member_id, borrower_member_id, "
+                    " application_id, amount, status) "
+                    "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:g AS uuid), "
+                    "CAST(:b AS uuid), CAST(:a AS uuid), '5000.00', 'pledged')"
+                ),
+                {
+                    "id": str(gid),
+                    "tid": str(tid),
+                    "g": str(guarantor),
+                    "b": str(mid),
+                    "a": str(app_id),
+                },
+            )
+
+        with pytest.raises(ConflictError) as excinfo:
+            async with tenant_session(factory(), tid) as session:
+                await disburse_loan(session, tid, app_id, Channel.BANK, uid)
+        assert "consented" in str(excinfo.value)
+        assert await _loan_count(tid) == 0
+        assert await _guarantee_row(tid, gid) == (None, "pledged")
+        async with tenant_session(factory(), tid) as session:
+            stage = (
+                await session.execute(
+                    text("SELECT stage FROM loan_applications WHERE id = CAST(:id AS uuid)"),
+                    {"id": str(app_id)},
+                )
+            ).scalar_one()
+            txns = (await session.execute(text("SELECT count(*) FROM transactions"))).scalar_one()
+            link_audits = (
+                await session.execute(
+                    text("SELECT count(*) FROM audit_log WHERE action = 'guarantee.link_loan'")
+                )
+            ).scalar_one()
+        assert str(stage) == "approved"
+        assert int(txns) == 0
+        assert int(link_audits) == 0
+
+    asyncio.run(run())
+
+
 def test_max_eligible_surfaced_on_application_read() -> None:
     """Hand-computed: deposits 10000.00 x 3.00 + live pledge 5000.00
     = 35000.00 on the single-application read model (issue #15)."""
