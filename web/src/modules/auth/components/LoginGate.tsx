@@ -5,10 +5,10 @@
  * password, then verify the 6-digit code. Server enforces attempts/TTL/
  * rate limits (P3); this component only shapes the flow.
  */
-import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
-import { ApiError, newIdempotencyKey } from "@genesis/api-client";
+import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
 import { Button, Field } from "@genesis/design-system";
 import { requestOtp, verifyOtp } from "../api";
 import { OTP_LENGTH, emailSchema, otpCodeSchema } from "../schemas";
@@ -36,6 +36,7 @@ export function LoginGate() {
   const [email, setEmail] = useState("");
   const [digits, setDigits] = useState<string[]>(Array.from({ length: OTP_LENGTH }, () => ""));
   const [formError, setFormError] = useState<string | null>(null);
+  const verifyKeySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
 
   const request = useMutation({
     mutationFn: requestOtp,
@@ -74,12 +75,15 @@ export function LoginGate() {
       return;
     }
     setFormError(null);
-    // One Idempotency-Key per submission: a double-submit of the same code
-    // replays the stored response instead of a second effect (gate 1.4).
+    // Idempotency-Key stability/rotation contract (gate 1.4, scaffold
+    // review finding S6): the key stays stable while the logical
+    // submission (email+code) is unchanged — a retry after a network
+    // error replays the stored response instead of burning the
+    // single-use OTP — and rotates when the code changes.
+    const body = { email: email.trim(), code: parsed.data };
     verify.mutate({
-      email: email.trim(),
-      code: parsed.data,
-      idempotencyKey: newIdempotencyKey(),
+      ...body,
+      idempotencyKey: idempotencyKeyFor(verifyKeySlot.current, JSON.stringify(body)),
     });
   }
 

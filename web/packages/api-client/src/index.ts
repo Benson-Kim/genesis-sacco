@@ -15,8 +15,12 @@ export type { ErrorEnvelope } from "./errors";
 
 export interface GenesisClientOptions {
   baseUrl: string;
-  /** Tenant scope — sent as X-Tenant-Id (required pre-auth, harmless after). */
-  tenantId?: string;
+  /**
+   * Tenant scope — sent as X-Tenant-Id (required pre-auth, harmless after).
+   * Resolved per request: the tenant is chosen at the sign-in gate for the
+   * active session, not baked into the build (scaffold review finding S5).
+   */
+  getTenantId?: () => string | null;
   /**
    * Returns a valid access token (may refresh first) or null when
    * unauthenticated. Async so callers can single-flight token refresh.
@@ -31,8 +35,9 @@ export function createGenesisClient(options: GenesisClientOptions): GenesisClien
 
   const headersMiddleware: Middleware = {
     async onRequest({ request }) {
-      if (options.tenantId) {
-        request.headers.set("x-tenant-id", options.tenantId);
+      const tenantId = options.getTenantId?.() ?? null;
+      if (tenantId !== null && tenantId !== "") {
+        request.headers.set("x-tenant-id", tenantId);
       }
       if (options.getAccessToken) {
         const token = await options.getAccessToken();
@@ -55,4 +60,29 @@ export function createGenesisClient(options: GenesisClientOptions): GenesisClien
  */
 export function newIdempotencyKey(): string {
   return crypto.randomUUID();
+}
+
+/**
+ * Key slot implementing the Idempotency-Key stability/rotation contract
+ * (gate 1.4, ported from !25): the key stays STABLE while the serialized
+ * logical submission is unchanged (a retry of the identical body replays
+ * the stored response instead of a second effect) and ROTATES the moment
+ * the body changes (a new logical submission must not replay the old
+ * response — the middleware matches on request hash).
+ */
+export interface IdempotencyKeySlot {
+  key: string | null;
+  body: string | null;
+}
+
+export function idempotencyKeyFor(
+  slot: IdempotencyKeySlot,
+  bodyJson: string,
+  fresh: () => string = newIdempotencyKey,
+): string {
+  if (slot.key === null || slot.body !== bodyJson) {
+    slot.key = fresh();
+    slot.body = bodyJson;
+  }
+  return slot.key;
 }
