@@ -9,8 +9,10 @@ The only way report data leaves the system (MASTER_PROMPT 1.3):
     requests (P13 blocker d and the EXIT latency test).
 
   * request_export — persists the export scope (report, filters,
-    column allow-list, as-of instant) resolved SERVER-SIDE at request
-    time. Callers never supply money, cost, format, limit, or storage
+    column allow-list) resolved SERVER-SIDE at request
+    time; the artifact as-of instant is advanced to the worker snapshot
+    start when rendering begins. Callers never supply money, cost,
+    format, limit, or storage
     parameters (P13 blocker a); PII columns are granted only to roles
     holding members:view and the grant is frozen into the job row
     (P13 blocker e).
@@ -40,7 +42,7 @@ import secrets
 import uuid
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -238,9 +240,11 @@ async def request_export(
 ) -> ExportRecord:
     """Persist an export job with a server-resolved, frozen scope.
 
-    The as-of instant, the column allow-list, and every rendering
-    parameter are fixed here — the worker renders exactly this scope
-    for exactly this requester, whoever runs the queue later.
+    The column allow-list and every rendering parameter are fixed here.
+    The initial as-of is a queue timestamp for status visibility; the
+    worker advances it to the REPEATABLE READ snapshot start before
+    reading mutable report rows, so artifact metadata cannot claim an
+    earlier cutoff than the rendered loan book.
     """
     definition = REPORTS[report]
     validate_filters(definition, filters)
@@ -386,6 +390,15 @@ async def run_export_job(session: AsyncSession, tenant_id: uuid.UUID) -> ExportJ
     if claim is None:
         return None
     record = _row_to_export(claim)
+    render_as_of = (await session.execute(text("SELECT now()"))).scalar_one()
+    await session.execute(
+        text(
+            "UPDATE exports SET as_of = :as_of "
+            "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+        ),
+        {"as_of": render_as_of, "id": str(record.id), "tid": str(tenant_id)},
+    )
+    record = replace(record, as_of=render_as_of)
     definition = REPORTS[record.report]
     allowed = frozenset(record.allowed_columns)
     indexes = tuple(

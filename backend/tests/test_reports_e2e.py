@@ -323,6 +323,56 @@ def test_loan_book_report_with_classification_and_provisions() -> None:
     asyncio.run(run())
 
 
+def test_loan_book_as_of_matches_worker_snapshot_after_queue_delay() -> None:
+    async def run() -> None:
+        tid, _, token = await seed_actor()
+        mid = await seed_member(tid, name="Delayed Book Member")
+        loan_id = await _seed_loan_for_book(
+            tid,
+            mid,
+            principal="10000.00",
+            balance="8000.00",
+            classification="watch",
+            provision_pct="5",
+            days_past_due=45,
+        )
+
+        headers = {"authorization": f"Bearer {token}"}
+        async with api_client() as client:
+            created = await client.post("/exports", json={"report": "loan_book"}, headers=headers)
+            assert created.status_code == 201, created.text
+            queued = created.json()
+
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(
+                text(
+                    "UPDATE loans SET balance = '7000.00', classification = 'substandard', "
+                    "days_past_due = 120, provision_pct = '25.00' "
+                    "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+                ),
+                {"id": str(loan_id), "tid": str(tid)},
+            )
+
+        summary = await drain_export_queue(tid)
+        assert summary.failed == 0
+        async with api_client() as client:
+            fetched = await client.get(f"/exports/{queued['id']}", headers=headers)
+            assert fetched.status_code == 200
+            completed = fetched.json()
+
+        assert completed["as_of"] != queued["as_of"]
+        artifact = completed["artifact"]
+        assert artifact is not None
+        status, _, body = await download(token, artifact["csv_download"])
+        assert status == 200
+        row = parse_csv(body)[1]
+        assert row[4] == "7000.00"
+        assert row[8] == "substandard"
+        assert row[11] == "1750.00"
+
+    asyncio.run(run())
+
+
 async def _insert_txn(
     tid: uuid.UUID,
     *,
