@@ -27,6 +27,14 @@
   border-bottom: 1px solid var(--panel);
 }
 
+.rowClickable {
+  cursor: pointer;
+}
+
+.rowClickable:hover {
+  background: var(--bg);
+}
+
 .td,
 .tdRight {
   padding: 11px 16px;

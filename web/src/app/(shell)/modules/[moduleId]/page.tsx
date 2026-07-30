@@ -5,7 +5,11 @@ import { MODULES, MODULE_LABELS, isModuleId } from "@/modules/authz/modules";
 import styles from "./page.module.css";
 
 export function generateStaticParams() {
-  return MODULES.map((moduleId) => ({ moduleId }));
+  // access_control has real screens (P13.5) served by its own static
+  // route segment; every other module keeps the P15 placeholder.
+  return MODULES.filter((moduleId) => moduleId !== "access_control").map((moduleId) => ({
+    moduleId,
+  }));
 }
 
 /**

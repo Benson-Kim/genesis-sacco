@@ -29,6 +29,7 @@ export function KeysetTable<T>({
   query,
   rowKey,
   emptyMessage = "Nothing to show yet.",
+  onRowClick,
 }: KeysetTableProps<T>) {
   if (query.isPending) {
     return <div className={styles.note}>Loading…</div>;

@@ -5,8 +5,10 @@
  */
 export { colorTokens, cssVar, fontFamily } from "./tokens";
 export type { ColorToken } from "./tokens";
+export { Banner } from "./components/Banner";
 export { Button } from "./components/Button";
 export { Card } from "./components/Card";
 export { Field } from "./components/Field";
+export { Modal } from "./components/Modal";
 export { Pill } from "./components/Pill";
 export { Stat } from "./components/Stat";

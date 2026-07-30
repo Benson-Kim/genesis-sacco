@@ -9,7 +9,7 @@ export function Header() {
   const router = useRouter();
   const signOut = useMutation({
     mutationFn: logout,
-    onSettled: () => router.replace("/login"),
+    onSettled: () => router.replace("/login?reason=signed-out"),
   });
 
   return (
