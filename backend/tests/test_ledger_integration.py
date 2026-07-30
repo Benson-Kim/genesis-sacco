@@ -165,6 +165,120 @@ def test_trigger_blocks_unbalanced_ledger_insert() -> None:
     asyncio.run(run())
 
 
+def test_trigger_blocks_ledger_totals_below_transaction_amount() -> None:
+    """Balanced lines must still match transactions.amount at COMMIT."""
+
+    async def run() -> None:
+        tid, _ = await seed_user(unique_email())
+        mid = await _seed_member(tid)
+        txn_id = uuid.uuid4()
+
+        with pytest.raises(Exception, match="do not match transaction amount"):
+            async with tenant_session(factory(), tid) as session:
+                await session.execute(
+                    text(
+                        "INSERT INTO transactions "
+                        "(id, tenant_id, txn_ref, member_id, type, amount, channel) "
+                        "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :ref, "
+                        "CAST(:mid AS uuid), 'deposit', 100.00, 'mpesa')"
+                    ),
+                    {
+                        "id": str(txn_id),
+                        "tid": str(tid),
+                        "mid": str(mid),
+                        "ref": f"MP-{txn_id.hex[:8]}",
+                    },
+                )
+                await session.execute(
+                    text(
+                        "INSERT INTO ledger_entries "
+                        "(id, tenant_id, transaction_id, account, side, amount) "
+                        "VALUES "
+                        "(CAST(:dr AS uuid), CAST(:tid AS uuid), "
+                        "CAST(:txn AS uuid), 'cash.mpesa', 'debit', 90.00), "
+                        "(CAST(:cr AS uuid), CAST(:tid AS uuid), "
+                        "CAST(:txn AS uuid), 'deposits.member', 'credit', 90.00)"
+                    ),
+                    {
+                        "dr": str(uuid.uuid4()),
+                        "cr": str(uuid.uuid4()),
+                        "tid": str(tid),
+                        "txn": str(txn_id),
+                    },
+                )
+
+    asyncio.run(run())
+
+
+def test_trigger_blocks_extra_balanced_lines_on_posted_transaction() -> None:
+    """Appending a balanced pair must fail when totals exceed txn amount."""
+
+    async def run() -> None:
+        tid, _ = await seed_user(unique_email())
+        mid = await _seed_member(tid)
+
+        async with tenant_session(factory(), tid) as session:
+            result = await post_deposit(session, tid, mid, Decimal("100"), Channel.MPESA)
+            txn_id = result.txn_id
+
+        with pytest.raises(Exception, match="do not match transaction amount"):
+            async with tenant_session(factory(), tid) as session:
+                await session.execute(
+                    text(
+                        "INSERT INTO ledger_entries "
+                        "(id, tenant_id, transaction_id, account, side, amount) "
+                        "VALUES "
+                        "(CAST(:dr AS uuid), CAST(:tid AS uuid), "
+                        "CAST(:txn AS uuid), 'cash.mpesa', 'debit', 5.00), "
+                        "(CAST(:cr AS uuid), CAST(:tid AS uuid), "
+                        "CAST(:txn AS uuid), 'deposits.member', 'credit', 5.00)"
+                    ),
+                    {
+                        "dr": str(uuid.uuid4()),
+                        "cr": str(uuid.uuid4()),
+                        "tid": str(tid),
+                        "txn": str(txn_id),
+                    },
+                )
+
+    asyncio.run(run())
+
+
+def test_reversal_link_must_reference_same_tenant_transaction() -> None:
+    async def run() -> None:
+        tenant_a, _ = await seed_user(unique_email())
+        tenant_b, _ = await seed_user(unique_email())
+        member_a = await _seed_member(tenant_a)
+        member_b = await _seed_member(tenant_b)
+
+        async with tenant_session(factory(), tenant_a) as session:
+            original = await post_deposit(
+                session, tenant_a, member_a, Decimal("100"), Channel.MPESA
+            )
+
+        with pytest.raises(Exception, match="fk_transactions_reversal_same_tenant"):
+            async with tenant_session(factory(), tenant_b) as session:
+                await session.execute(
+                    text(
+                        "INSERT INTO transactions "
+                        "(id, tenant_id, txn_ref, member_id, type, amount, "
+                        "channel, reversal_of_id) "
+                        "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :ref, "
+                        "CAST(:mid AS uuid), 'deposit', 100.00, 'mpesa', "
+                        "CAST(:rev AS uuid))"
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "tid": str(tenant_b),
+                        "mid": str(member_b),
+                        "ref": f"MP-X{uuid.uuid4().hex[:8]}",
+                        "rev": str(original.txn_id),
+                    },
+                )
+
+    asyncio.run(run())
+
+
 def test_trigger_blocks_update_on_ledger_entries() -> None:
     """UPDATE on ledger_entries must raise (gate 1.5)."""
 

@@ -276,6 +276,21 @@ def test_build_deposit_posting_rejects_non_cash_channels(channel: Channel) -> No
         build_deposit_posting(Decimal("100"), channel)
 
 
+@pytest.mark.parametrize(
+    "factory",
+    [
+        build_withdrawal_posting,
+        build_share_topup_posting,
+        build_disbursement_posting,
+        build_repayment_posting,
+    ],
+)
+@pytest.mark.parametrize("channel", [Channel.ACCRUAL, Channel.INTERNAL])
+def test_cash_posting_factories_reject_non_cash_channels(factory, channel: Channel) -> None:
+    with pytest.raises(ValueError, match="cash postings require MPESA or BANK"):
+        factory(Decimal("100"), channel)
+
+
 # ---------------------------------------------------------------------------
 # Money rounding — amounts are always 2 d.p.
 # ---------------------------------------------------------------------------

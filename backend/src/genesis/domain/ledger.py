@@ -178,8 +178,7 @@ def _cash_account(channel: Channel) -> Account:
         return Account.CASH_MPESA
     if channel is Channel.BANK:
         return Account.CASH_BANK
-    # Accrual / internal postings use suspense
-    return Account.SUSPENSE
+    raise ValueError(f"cash postings require MPESA or BANK channels, got {channel!r}")
 
 
 def build_deposit_posting(amount: Decimal, channel: Channel) -> PostingSpec:

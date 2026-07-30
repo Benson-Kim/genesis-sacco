@@ -264,7 +264,7 @@ async def post_deposit(
             "txn_id": str(result.txn_id),
             "txn_ref": result.txn_ref,
             "member_id": str(member_id),
-            "amount": str(amount),
+            "amount": str(spec.amount),
             "channel": channel.value,
         },
     )
@@ -291,7 +291,7 @@ async def post_withdrawal(
             "txn_id": str(result.txn_id),
             "txn_ref": result.txn_ref,
             "member_id": str(member_id),
-            "amount": str(amount),
+            "amount": str(spec.amount),
             "channel": channel.value,
         },
     )
@@ -318,7 +318,7 @@ async def post_share_topup(
             "txn_id": str(result.txn_id),
             "txn_ref": result.txn_ref,
             "member_id": str(member_id),
-            "amount": str(amount),
+            "amount": str(spec.amount),
             "channel": channel.value,
         },
     )
@@ -344,6 +344,19 @@ async def post_repayment(
     which will call this primitive with the split legs.  Do not add
     allocation logic here.
     """
+    loan_row = await session.execute(
+        text(
+            "SELECT member_id FROM loans "
+            "WHERE tenant_id = CAST(:tid AS uuid) AND id = CAST(:lid AS uuid)"
+        ),
+        {"tid": str(tenant_id), "lid": str(loan_id)},
+    ).first()
+    if loan_row is None:
+        raise NotFoundError(f"loan {loan_id} not found")
+    loan_member_id = uuid.UUID(str(loan_row[0]))
+    if loan_member_id != member_id:
+        raise ConflictError(f"loan {loan_id} does not belong to member {member_id}")
+
     spec = build_repayment_posting(amount, channel)
     result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
     # Record in repayments table.
@@ -358,7 +371,7 @@ async def post_repayment(
             "tid": str(tenant_id),
             "lid": str(loan_id),
             "txn": str(result.txn_id),
-            "amount": str(amount),
+            "amount": str(spec.amount),
         },
     )
     await enqueue_event(
@@ -370,7 +383,7 @@ async def post_repayment(
             "txn_ref": result.txn_ref,
             "member_id": str(member_id),
             "loan_id": str(loan_id),
-            "amount": str(amount),
+            "amount": str(spec.amount),
             "channel": channel.value,
         },
     )
@@ -454,7 +467,7 @@ async def post_loan_interest_accrual(
             "txn_id": str(result.txn_id),
             "txn_ref": result.txn_ref,
             "member_id": str(member_id) if member_id else None,
-            "amount": str(amount),
+            "amount": str(spec.amount),
         },
     )
     return result
@@ -482,7 +495,7 @@ async def post_deposit_interest(
             "txn_id": str(result.txn_id),
             "txn_ref": result.txn_ref,
             "member_id": str(member_id) if member_id else None,
-            "amount": str(amount),
+            "amount": str(spec.amount),
         },
     )
     return result
@@ -590,6 +603,21 @@ async def post_reversal(
     ).first()
     if existing_reversal is not None:
         raise ConflictError(f"transaction {original_txn_id} has already been reversed")
+
+    repayment_row = (
+        await session.execute(
+            text(
+                "SELECT id FROM repayments "
+                "WHERE transaction_id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) LIMIT 1"
+            ),
+            {"id": str(original_txn_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if repayment_row is not None:
+        raise ConflictError(
+            f"transaction {original_txn_id} has repayment records and cannot be reversed"
+        )
 
     # Load original ledger lines.
     line_rows = (

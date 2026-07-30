@@ -192,8 +192,11 @@ def test_over_multiplier_disbursement_409_zero_side_effects() -> None:
         pid = await _make_product(token)  # multiplier 3.00
         app_id = await _approved_application(tid, token, mid, pid, "30000.01")
 
-        with pytest.raises(ConflictError) as excinfo:
-            async with tenant_session(factory(), tid) as session:
+        session_factory = factory()
+        session_cm = tenant_session(session_factory, tid)
+
+        async with session_cm as session:
+            with pytest.raises(ConflictError) as excinfo:
                 await disburse_loan(session, tid, app_id, Channel.BANK, uid)
         # Least disclosure: no balances, multiplier, or shortfall echoed.
         message = str(excinfo.value)
@@ -288,8 +291,11 @@ def test_disbursement_blocks_unconsented_pledged_guarantees() -> None:
                 },
             )
 
-        with pytest.raises(ConflictError) as excinfo:
-            async with tenant_session(factory(), tid) as session:
+        session_factory = factory()
+        session_cm = tenant_session(session_factory, tid)
+
+        async with session_cm as session:
+            with pytest.raises(ConflictError) as excinfo:
                 await disburse_loan(session, tid, app_id, Channel.BANK, uid)
         assert "consented" in str(excinfo.value)
         assert await _loan_count(tid) == 0
