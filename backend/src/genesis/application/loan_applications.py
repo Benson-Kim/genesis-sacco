@@ -220,6 +220,12 @@ async def create_application(
             f"member {member_id} is '{member_row[0]}': only active members may apply"
         )
     deposits = await _deposit_balance(session, tenant_id, member_id)
+    max_amount = to_cents(deposits * product.deposit_multiplier)
+    if amount > max_amount:
+        raise ConflictError(
+            f"requested amount {amount} exceeds borrowing limit of {max_amount} "
+            f"under product {product_id}"
+        )
     cover = _cover_pct(deposits, ZERO, amount)
     application_id = uuid.uuid4()
     await session.execute(
