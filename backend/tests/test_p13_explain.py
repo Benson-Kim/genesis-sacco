@@ -116,35 +116,9 @@ def test_p13_report_and_export_queries_are_index_backed() -> None:
                 session, DOWNLOAD_SQL, {"tid": str(tid), "token": "probe-token"}
             )
 
-        # Deterministic single-index paths assert their backing index
-        # (shipped in the same MR as the query, gate 1.3); every plan
-        # must be servable without a sequential scan.
-        assert (
-            "idx_txns_member_keyset" in statement_page
-            or "idx_transactions_member" in statement_page
-        )
-        # The opening aggregate groups by type, so the planner may pick
-        # any of the transactions composite indexes; the gate is that
-        # SOME index serves it (no sequential scan, asserted below).
-        assert "Index" in statement_opening
-        assert "idx_loans_created_keyset" in loan_book
-        assert "idx_txns_type_occurred" in disb_coll
-        assert "idx_schedules_due" in npl_month
-        assert "idx_exports_requested" in claim
-        assert "csv_token" in download
-        assert "pdf_token" in download
-        for name, plan in (
-            ("member statement page", statement_page),
-            ("member statement opening", statement_opening),
-            ("trial balance", trial_balance),
-            ("loan book page", loan_book),
-            ("disbursements & collections page", disb_coll),
-            ("npl trend month", npl_month),
-            ("export job claim", claim),
-            ("artifact token lookup", download),
-        ):
-            assert "Seq Scan" not in plan, f"{name} plan fell back to a sequential scan"
-
+        # Capture the artifact BEFORE any assertion so the CI job log
+        # and backend/perf/ artifact always carry the full plans, even
+        # when an assertion below trips (blocker j: EXPLAIN evidence).
         OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         header = (
             "P13 report/export EXPLAIN (ANALYZE, BUFFERS) — captured in CI against\n"
@@ -164,5 +138,43 @@ def test_p13_report_and_export_queries_are_index_backed() -> None:
         ]
         body = "\n\n".join(f"=== {name} ===\n{plan}" for name, plan in sections)
         OUT_PATH.write_text(f"{header}\n{body}\n")
+
+        # Deterministic single-index paths assert their backing index
+        # (shipped in the same MR as the query, gate 1.3); every plan
+        # must be servable without a sequential scan.
+        assert (
+            "idx_txns_member_keyset" in statement_page
+            or "idx_transactions_member" in statement_page
+        )
+        # The opening aggregate groups by type, so the planner may pick
+        # any of the transactions composite indexes; the gate is that
+        # SOME index serves it (no sequential scan, asserted below).
+        assert "Index" in statement_opening
+        assert "idx_loans_created_keyset" in loan_book
+        # The disbursements & collections page is keyset-ordered on
+        # (occurred_at, id), so the planner may serve it either from
+        # idx_txns_type_occurred (0013: the selective path when the
+        # two loan types are rare) or from the P11 keyset index
+        # idx_txns_occurred_keyset scanned in order with type as a
+        # filter — the cheaper plan on near-empty CI tables. Both are
+        # composite tenant-led indexes shipped with their queries; the
+        # falsifiable guard is the no-sequential-scan gate below
+        # (drop both indexes and this test fails on the Seq Scan).
+        assert "idx_txns_type_occurred" in disb_coll or "idx_txns_occurred_keyset" in disb_coll
+        assert "idx_schedules_due" in npl_month
+        assert "idx_exports_requested" in claim
+        assert "csv_token" in download
+        assert "pdf_token" in download
+        for name, plan in (
+            ("member statement page", statement_page),
+            ("member statement opening", statement_opening),
+            ("trial balance", trial_balance),
+            ("loan book page", loan_book),
+            ("disbursements & collections page", disb_coll),
+            ("npl trend month", npl_month),
+            ("export job claim", claim),
+            ("artifact token lookup", download),
+        ):
+            assert "Seq Scan" not in plan, f"{name} plan fell back to a sequential scan"
 
     asyncio.run(run())
