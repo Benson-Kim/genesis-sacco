@@ -13,9 +13,9 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from genesis.api.authz import RequirePermission
+from genesis.api.authz import RequireAnyPermission, RequirePermission
 from genesis.application import guarantees as guarantees_service
 from genesis.application import loan_applications as applications_service
 from genesis.application import loan_products as products_service
