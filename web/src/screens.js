@@ -8,5 +8,15 @@
  * Screens land one per commit (incremental push discipline).
  */
 
+import { mountUsers } from './users.js';
+
 /** @type {Array<{id:string,label:string,title:string,sub:string,mount:(container:HTMLElement,ctx:{onSessionExpired:()=>void,modalHost:HTMLElement})=>void}>} */
-export const SCREENS = [];
+export const SCREENS = [
+  {
+    id: 'users',
+    label: 'Users',
+    title: 'Access control — Users',
+    sub: 'System users administration',
+    mount: mountUsers,
+  },
+];
