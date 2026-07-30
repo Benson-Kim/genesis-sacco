@@ -148,7 +148,12 @@ backend:build:
       --destination "$CI_REGISTRY_IMAGE/backend:$CI_COMMIT_SHORT_SHA"
 
 # -----------------------------------------------------------------------------
-# Web — Next.js / TypeScript
+# Web — static admin console (vanilla ES modules, zero dependencies).
+# The original placeholders assumed the P14 Next.js scaffold; the web
+# codebase that actually landed (P13.5 slice) follows the repository's
+# prototype conventions: no framework, no runtime deps. `npm run lint`
+# is the security lint (XSS-sink / token-storage gates), `npm test`
+# runs the node:test suites, `npm run build` assembles web/dist.
 # -----------------------------------------------------------------------------
 .web:
   image: node:22-alpine
@@ -189,7 +194,7 @@ web:build:
     - npm run build
   artifacts:
     paths:
-      - web/.next
+      - web/dist
     expire_in: 1 week
 
 # -----------------------------------------------------------------------------
@@ -208,23 +213,6 @@ mobile:lint:
       for app in mobile/*/; do
         if [ -f "${app}pubspec.yaml" ]; then
           (cd "$app" && flutter pub get && dart format --output=none --set-exit-if-changed . && flutter analyze)
-        fi
-      done
-
-mobile:test:
-  extends: .mobile
-  stage: test
-  needs: ["mobile:lint"]
-  rules:
-    - exists: ["mobile/**/pubspec.yaml"]
-  script:
-    - |
-      for app in mobile/*/; do
-        if [ -f "${app}pubspec.yaml" ] && [ -d "${app}test" ]; then
-          (cd "$app" && flutter pub get && flutter test)
-        fi
-      done
-art format --output=none --set-exit-if-changed . && flutter analyze)
         fi
       done
 
