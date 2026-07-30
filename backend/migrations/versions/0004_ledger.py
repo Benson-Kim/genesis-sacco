@@ -88,7 +88,8 @@ CREATE UNIQUE INDEX uq_transactions_reversal_of
     WHERE reversal_of_id IS NOT NULL;
 
 -- -------------------------------------------------------------------------
--- Constraint trigger: balanced DR/CR enforced per transaction (gate 1.5)
+-- Constraint trigger: balanced DR/CR and transaction amount enforced per
+-- transaction (gate 1.5)
 --
 -- DEFERRABLE INITIALLY DEFERRED: the check runs at COMMIT, after all lines
 -- of a posting are inserted — regardless of how many statements were used.
@@ -101,7 +102,13 @@ LANGUAGE plpgsql AS $fn$
 DECLARE
     dr numeric;
     cr numeric;
+    txn_amount numeric;
 BEGIN
+    SELECT t.amount
+    INTO txn_amount
+    FROM transactions AS t
+    WHERE t.id = NEW.transaction_id;
+
     SELECT
         COALESCE(SUM(CASE WHEN side = 'debit'  THEN amount END), 0),
         COALESCE(SUM(CASE WHEN side = 'credit' THEN amount END), 0)
@@ -113,6 +120,13 @@ BEGIN
         RAISE EXCEPTION
             'Unbalanced ledger for transaction %: DR=% CR=%',
             NEW.transaction_id, dr, cr;
+    END IF;
+
+    IF dr <> txn_amount THEN
+        RAISE EXCEPTION
+            'Ledger totals for transaction % do not match transaction amount %: '
+            'DR=% CR=%',
+            NEW.transaction_id, txn_amount, dr, cr;
     END IF;
     RETURN NULL;
 END
