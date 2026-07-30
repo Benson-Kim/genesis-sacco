@@ -9,6 +9,7 @@
  */
 
 import { mountUsers } from './users.js';
+import { mountAudit } from './audit.js';
 
 /** @type {Array<{id:string,label:string,title:string,sub:string,mount:(container:HTMLElement,ctx:{onSessionExpired:()=>void,modalHost:HTMLElement})=>void}>} */
 export const SCREENS = [
@@ -18,5 +19,12 @@ export const SCREENS = [
     title: 'Access control — Users',
     sub: 'System users administration',
     mount: mountUsers,
+  },
+  {
+    id: 'audit',
+    label: 'Audit log',
+    title: 'Access control — Audit log',
+    sub: 'Immutable audit trail viewer',
+    mount: mountAudit,
   },
 ];
