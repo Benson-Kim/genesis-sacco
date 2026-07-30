@@ -10,7 +10,7 @@ export interface PillProps {
   color?: ColorToken;
 }
 
-export function Pill({ children, bg = "panel", color = "sub" }: PillProps) {
+export function Pill({ children, bg = "panel", color = "sub" }: Readonly<PillProps>) {
   return (
     <span
       className={styles.pill}

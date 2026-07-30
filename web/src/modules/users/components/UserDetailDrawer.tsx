@@ -7,7 +7,7 @@
  * audited role assignment and OTP lifecycle actions that surface
  * side-effect COUNTS only — zero OTP disclosure anywhere (gate 1.6).
  */
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type SubmitEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
 import { Banner, Button, Field, Modal } from "@genesis/design-system";
@@ -30,7 +30,7 @@ import type { OtpReenrolResult, Role, User, UserStatus } from "../schemas";
 import { statusPill } from "./UsersScreen";
 import styles from "./Users.module.css";
 
-function Kv({ label, children }: { label: string; children: ReactNode }) {
+function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
   return (
     <div className={styles.kvRow}>
       <span className={styles.kvKey}>{label}</span>
@@ -45,15 +45,16 @@ export function UserDetailDrawer({
   userId,
   roles,
   onClose,
-}: {
+}: Readonly<{
   userId: string;
   roles: Role[];
   onClose: () => void;
-}) {
+}>) {
   const permissions = usePermissions();
   const [editing, setEditing] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
   const [notice, setNotice] = useState<string>("");
+  const [reloadNotice, setReloadNotice] = useState(false);
 
   const detail = useQuery({
     queryKey: ["users", "detail", userId],
@@ -86,15 +87,25 @@ export function UserDetailDrawer({
   return (
     <Modal title={title} onClose={onClose}>
       {editing ? (
-        <EditForm
-          key={`${user.id}:${user.version}`}
-          user={user}
-          onDone={(message) => {
-            setEditing(false);
-            setNotice(message);
-          }}
-          onCancel={() => setEditing(false)}
-        />
+        <>
+          {reloadNotice && (
+            <Banner>Record reloaded — re-apply your change against the current values.</Banner>
+          )}
+          <EditForm
+            key={`${user.id}:${user.version}`}
+            user={user}
+            onDone={(message) => {
+              setEditing(false);
+              setReloadNotice(false);
+              setNotice(message);
+            }}
+            onReloaded={() => setReloadNotice(true)}
+            onCancel={() => {
+              setEditing(false);
+              setReloadNotice(false);
+            }}
+          />
+        </>
       ) : (
         <>
           {notice !== "" && <Banner variant="ok">{notice}</Banner>}
@@ -139,7 +150,7 @@ export function UserDetailDrawer({
                 <Button
                   disabled={own}
                   className={suspendTarget === "suspended" ? styles.danger : undefined}
-                  variant={suspendTarget === "suspended" ? "default" : "success"}
+                  variant={suspendTarget === "suspended" ? "danger" : "success"}
                   onClick={() => setConfirm("status")}
                 >
                   {suspendTarget === "suspended" ? "Suspend" : "Activate"}
@@ -189,18 +200,19 @@ export function UserDetailDrawer({
 function EditForm({
   user,
   onDone,
+  onReloaded,
   onCancel,
-}: {
+}: Readonly<{
   user: User;
   onDone: (notice: string) => void;
+  onReloaded: () => void;
   onCancel: () => void;
-}) {
+}>) {
   const queryClient = useQueryClient();
   const [fullName, setFullName] = useState(user.full_name);
   const [email, setEmail] = useState(user.email);
   const [phone, setPhone] = useState(user.phone ?? "");
   const [branch, setBranch] = useState(user.branch ?? "");
-  const [reloaded, setReloaded] = useState(false);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
 
   const update = useMutation({
@@ -221,13 +233,13 @@ function EditForm({
 
   async function reloadRecord() {
     // Explicit reload flow: fetch the current record; the EditForm remounts
-    // (keyed on version) with the fresh values and the operator re-applies
-    // their change. The stale submission is never replayed.
+    // (keyed on version) with the fresh values. The stale submission is never
+    // replayed. Notice is hoisted to the parent so it survives the remount.
     await queryClient.refetchQueries({ queryKey: ["users", "detail", user.id] });
-    setReloaded(true);
+    onReloaded();
   }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     if (update.isPending) return;
     const input: UpdateUserInput = { version: user.version };
@@ -247,13 +259,8 @@ function EditForm({
           This record changed since you loaded it (or conflicts with an existing
           one). Your change was NOT applied.
           <div className={styles.actions}>
-            <Button onClick={() => void reloadRecord()}>Reload record</Button>
+            <Button type="button" onClick={() => void reloadRecord()}>Reload record</Button>
           </div>
-        </Banner>
-      )}
-      {reloaded && (
-        <Banner>
-          Record reloaded — re-apply your change against the current values.
         </Banner>
       )}
       {update.isError && !conflict && <ErrorBanner error={update.error} />}
@@ -321,14 +328,14 @@ function ConfirmActionDialog({
   suspendTarget,
   onClose,
   onApplied,
-}: {
+}: Readonly<{
   kind: ConfirmKind;
   user: User;
   roles: Role[];
   suspendTarget: UserStatus;
   onClose: () => void;
   onApplied: (notice: string) => void;
-}) {
+}>) {
   const queryClient = useQueryClient();
   const [roleId, setRoleId] = useState(user.role_id);
   const [otpResult, setOtpResult] = useState<OtpReenrolResult | { voided_otp_challenges: number } | null>(null);

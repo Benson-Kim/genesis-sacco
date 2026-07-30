@@ -14,7 +14,7 @@ import styles from "./RequireModule.module.css";
  * error, nothing privileged is shown. The API still authorizes every call
  * server-side (gate 1.6).
  */
-export function RequireModule({ module, children }: { module: ModuleId; children: ReactNode }) {
+export function RequireModule({ module, children }: Readonly<{ module: ModuleId; children: ReactNode }>) {
   const permissions = usePermissions();
 
   if (permissions.isPending) {

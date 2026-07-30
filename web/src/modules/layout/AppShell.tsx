@@ -6,7 +6,7 @@ import { Header } from "./Header";
 import styles from "./AppShell.module.css";
 
 /** Prototype app frame: navy sidebar, top header, scrollable main area. */
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <div className={styles.app}>
       <Sidebar />

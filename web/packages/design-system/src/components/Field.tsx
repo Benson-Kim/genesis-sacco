@@ -8,7 +8,7 @@ export interface FieldProps {
 }
 
 /** Prototype `.field` form row: label above control. */
-export function Field({ label, htmlFor, children }: FieldProps) {
+export function Field({ label, htmlFor, children }: Readonly<FieldProps>) {
   return (
     <div className={styles.field}>
       <label className={styles.label} htmlFor={htmlFor}>

@@ -30,7 +30,7 @@ function tearDownOn401(error: unknown): void {
  * alone left a revoked session stuck mid-mutation). Mutations never retry
  * (exactly one write attempt per submission — gate 1.4); queries retry once.
  */
-export function Providers({ children }: { children: ReactNode }) {
+export function Providers({ children }: Readonly<{ children: ReactNode }>) {
   const [client] = useState(
     () =>
       new QueryClient({

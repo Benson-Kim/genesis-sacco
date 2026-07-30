@@ -13,10 +13,10 @@ export interface BannerProps {
  * raw markup — so attacker-influenced strings (names, correlation ids)
  * stay inert text (gate 1.6).
  */
-export function Banner({ children, variant = "info", className }: BannerProps) {
+export function Banner({ children, variant = "info", className }: Readonly<BannerProps>) {
   const classes = [styles.banner, styles[variant], className].filter(Boolean).join(" ");
   return (
-    <div className={classes} role={variant === "error" ? "alert" : "status"}>
+    <div className={classes} role={variant === "error" ? "alert" : undefined}>
       {children}
     </div>
   );

@@ -80,6 +80,9 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
   if (path === "/users" && request.method === "POST") {
     return json(201, userOut);
   }
+  if (path === "/audit-log" && request.method === "GET") {
+    return json(200, { items: [], next_cursor: null });
+  }
   return json(404, { category: "not_found", correlation_id: "corr-n" });
 }
 

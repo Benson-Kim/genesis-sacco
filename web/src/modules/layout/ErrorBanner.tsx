@@ -10,7 +10,7 @@ import styles from "./ErrorBanner.module.css";
  * correlation id, and 422 field messages. Everything renders as React
  * text nodes — attacker-influenced field names/messages stay inert.
  */
-export function ErrorBanner({ error }: { error: unknown }) {
+export function ErrorBanner({ error }: Readonly<{ error: unknown }>) {
   const { title, correlationId } = operatorMessage(error);
   const fields = error instanceof ApiError ? error.fields : [];
   return (

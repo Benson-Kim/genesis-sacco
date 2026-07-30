@@ -16,7 +16,7 @@
  *   actor filter avoids 422 noise); the server validates and enforces
  *   entitlement regardless.
  */
-import { useState, type FormEvent } from "react";
+import { useState, type SubmitEvent } from "react";
 import { Banner, Button, Card, Modal, Pill } from "@genesis/design-system";
 import { KeysetTable, type Column } from "@/modules/table/KeysetTable";
 import { useKeysetList } from "@/modules/table/useKeysetList";
@@ -36,7 +36,7 @@ export function AuditScreen() {
     fetchPage: (cursor) => fetchAuditPage(filters, cursor),
   });
 
-  function applyFilters(event: FormEvent<HTMLFormElement>) {
+  function applyFilters(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const actor = draft.actorId.trim();
     if (actor !== "" && !isUuid(actor)) {

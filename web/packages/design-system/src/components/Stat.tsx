@@ -7,7 +7,7 @@ export interface StatProps {
 }
 
 /** Prototype `.stat` KPI block (label above value). */
-export function Stat({ label, value }: StatProps) {
+export function Stat({ label, value }: Readonly<StatProps>) {
   return (
     <div>
       <div className={styles.label}>{label}</div>

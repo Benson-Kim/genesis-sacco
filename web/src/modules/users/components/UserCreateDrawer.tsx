@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type SubmitEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
 import { Banner, Button, Field, Modal } from "@genesis/design-system";
@@ -19,11 +19,11 @@ export function UserCreateDrawer({
   roles,
   onClose,
   onCreated,
-}: {
+}: Readonly<{
   roles: Role[];
   onClose: () => void;
   onCreated: (user: User) => void;
-}) {
+}>) {
   const queryClient = useQueryClient();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -43,7 +43,7 @@ export function UserCreateDrawer({
     },
   });
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     if (create.isPending) return;
     const input: CreateUserInput = {

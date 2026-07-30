@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 
+const isDev = process.env.NODE_ENV === "development";
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 /**
@@ -14,10 +15,17 @@ const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:800
  *   deployment hardening item. The PRIMARY XSS control is the absence of
  *   injection sinks (react/no-danger + no-restricted eslint guards and the
  *   hostile-payload tests) — React escapes all interpolated data.
+ * - 'unsafe-eval' is added to script-src in development only: Next.js's
+ *   React Fast Refresh runtime uses eval() for HMR. It is never present
+ *   in production builds.
  */
+const scriptSrc = isDev
+  ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+  : "script-src 'self' 'unsafe-inline'";
+
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  scriptSrc,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self'",

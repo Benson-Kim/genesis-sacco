@@ -13,15 +13,13 @@
  *   "Not permitted." with a correlation id and no capability hints.
  * - Keyset pagination only (opaque cursors; no page numbers/offsets).
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Card, Pill } from "@genesis/design-system";
+import { Card, Pill } from "@genesis/design-system";
 import { KeysetTable, type Column } from "@/modules/table/KeysetTable";
 import { useKeysetList } from "@/modules/table/useKeysetList";
-import { usePermissions } from "@/modules/authz/usePermissions";
-import { can } from "@/modules/authz/schemas";
 import { fmtDateTime, initials, relTime } from "@/lib/format";
-import { fetchRoles, fetchUsersPage, type UserListFilters } from "../api";
+import { fetchRoles, fetchUsersPage } from "../api";
 import type { User } from "../schemas";
 import { UserCreateDrawer } from "./UserCreateDrawer";
 import { UserDetailDrawer } from "./UserDetailDrawer";
@@ -55,15 +53,18 @@ export function statusPill(status: string) {
 
 type DrawerState = null | { mode: "create" } | { mode: "detail"; userId: string };
 
-export function UsersScreen() {
-  const permissions = usePermissions();
+export function UsersScreen({ triggerCreate = 0 }: { triggerCreate?: number }) {
   const roles = useRoles();
-  const [filters, setFilters] = useState<UserListFilters>({ status: "", roleId: "" });
   const [drawer, setDrawer] = useState<DrawerState>(null);
 
+  // Open the create drawer whenever the parent increments triggerCreate
+  useEffect(() => {
+    if (triggerCreate > 0) setDrawer({ mode: "create" });
+  }, [triggerCreate]);
+
   const list = useKeysetList<User>({
-    queryKey: ["users", "list", filters],
-    fetchPage: (cursor) => fetchUsersPage(filters, cursor),
+    queryKey: ["users", "list"],
+    fetchPage: (cursor) => fetchUsersPage({ status: "", roleId: "" }, cursor),
   });
 
   const columns: Column<User>[] = [
@@ -112,56 +113,11 @@ export function UsersScreen() {
 
   return (
     <Card padded={false}>
-      <div className={styles.toolbar}>
-        <div className={styles.filters}>
-          <label className={styles.formStack}>
-            <span className={styles.cellSub}>Status</span>
-            <select
-              className={styles.select}
-              aria-label="Filter by status"
-              value={filters.status}
-              onChange={(event) =>
-                setFilters((current) => ({
-                  ...current,
-                  status: event.target.value as UserListFilters["status"],
-                }))
-              }
-            >
-              <option value="">All statuses</option>
-              <option value="active">Active</option>
-              <option value="suspended">Suspended</option>
-            </select>
-          </label>
-          <label className={styles.formStack}>
-            <span className={styles.cellSub}>Role</span>
-            <select
-              className={styles.select}
-              aria-label="Filter by role"
-              value={filters.roleId}
-              onChange={(event) =>
-                setFilters((current) => ({ ...current, roleId: event.target.value }))
-              }
-            >
-              <option value="">All roles</option>
-              {(roles.data ?? []).map((role) => (
-                <option key={role.id} value={role.id}>
-                  {role.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        {can(permissions.data, "access_control", "create") && (
-          <Button variant="primary" onClick={() => setDrawer({ mode: "create" })}>
-            + Add user
-          </Button>
-        )}
-      </div>
       <KeysetTable
         columns={columns}
         query={list}
         rowKey={(user) => user.id}
-        emptyMessage="No users match the current filters."
+        emptyMessage="No users found."
         onRowClick={(user) => setDrawer({ mode: "detail", userId: user.id })}
       />
       {drawer !== null && drawer.mode === "create" && (

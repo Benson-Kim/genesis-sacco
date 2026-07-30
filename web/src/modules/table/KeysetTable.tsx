@@ -18,6 +18,7 @@ export interface KeysetTableProps<T> {
   query: KeysetListResult<T>;
   rowKey: (row: T) => string;
   emptyMessage?: string;
+  onRowClick?: (row: T) => void;
 }
 
 /**
@@ -30,7 +31,7 @@ export function KeysetTable<T>({
   rowKey,
   emptyMessage = "Nothing to show yet.",
   onRowClick,
-}: KeysetTableProps<T>) {
+}: Readonly<KeysetTableProps<T>>) {
   if (query.isPending) {
     return <div className={styles.note}>Loading…</div>;
   }
@@ -61,7 +62,9 @@ export function KeysetTable<T>({
             {columns.map((column) => (
               <th
                 key={column.key}
-                className={column.align === "right" ? styles.thRight : styles.th}
+                className={
+                  column.align === "right" ? styles.thRight : styles.th
+                }
               >
                 {column.header}
               </th>
@@ -70,7 +73,23 @@ export function KeysetTable<T>({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={rowKey(row)} className={styles.row}>
+            <tr
+              key={rowKey(row)}
+              className={
+                onRowClick ? `${styles.row} ${styles.rowClickable}` : styles.row
+              }
+              onClick={onRowClick ? () => onRowClick(row) : undefined}
+              {...(onRowClick && {
+                role: "button",
+                tabIndex: 0,
+                onKeyDown: (event: React.KeyboardEvent) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onRowClick(row);
+                  }
+                },
+              })}
+            >
               {columns.map((column) => (
                 <td
                   key={column.key}

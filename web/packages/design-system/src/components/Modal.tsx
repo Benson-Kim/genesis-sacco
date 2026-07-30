@@ -25,7 +25,7 @@ export function Modal({
   onClose,
   closeDisabled = false,
   variant = "drawer",
-}: ModalProps) {
+}: Readonly<ModalProps>) {
   return (
     <div
       className={variant === "dialog" ? styles.overlayCenter : styles.overlay}

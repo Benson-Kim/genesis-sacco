@@ -1,20 +1,19 @@
 import type { Metadata } from "next";
 import { RequireModule } from "@/modules/authz/components/RequireModule";
-import { UsersScreen } from "@/modules/users/components/UsersScreen";
+import { AccessControlClient } from "./AccessControlClient";
 
 export const metadata: Metadata = {
-  title: "Access control · Users · Genesis Prestige Admin",
+  title: "Access control · Genesis Prestige Admin",
 };
 
 /**
- * P13.5 — system users administration (prototype Access-control "Users"
- * tab). Route-guarded by /me/permissions; the API enforces every call
- * server-side regardless (gate 1.6).
+ * Access control — Users table + Permissions matrix.
+ * Metadata lives here (server component); tab state lives in the client child.
  */
-export default function AccessControlUsersPage() {
+export default function AccessControlPage() {
   return (
     <RequireModule module="access_control">
-      <UsersScreen />
+      <AccessControlClient />
     </RequireModule>
   );
 }
