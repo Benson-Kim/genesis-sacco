@@ -203,9 +203,12 @@ async def create_application(
         )
     member_row = (
         await session.execute(
+            # FOR SHARE holds iff a concurrent terminal member exit (which locks the row FOR UPDATE)
+            # until this application create commits, closing the TOCTOU window
+            # between the status check and ther insert (gate 1.4).
             text(
                 "SELECT status FROM members WHERE id = CAST(:m AS uuid) "
-                "AND tenant_id = CAST(:tid AS uuid)"
+                "AND tenant_id = CAST(:tid AS uuid) FOR SHARE"
             ),
             {"m": str(member_id), "tid": str(tenant_id)},
         )

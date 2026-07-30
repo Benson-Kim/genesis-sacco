@@ -396,6 +396,56 @@ def test_db_backstop_trigger_blocks_raw_insert() -> None:
     asyncio.run(run())
 
 
+def test_db_backstop_trigger_serializes_with_concurrent_close() -> None:
+    """Raw SQL writers must wait for an in-flight close_period() before
+    the trigger checks accounting_periods. Without the trigger's shared
+    advisory lock, the insert sees no committed closed row and can land
+    in the period that is being closed."""
+
+    async def run() -> None:
+        tid, uid, _ = await _seed_actor()
+        mid = await _seed_member(tid)
+        year, month = _last_month()
+        inside = datetime.combine(date(year, month, 10), time(9, 0), tzinfo=UTC)
+        close_inserted = asyncio.Event()
+
+        async def close_holding_lock() -> None:
+            async with tenant_session(factory(), tid) as session:
+                await periods_service.close_period(session, tid, uid, year=year, month=month)
+                close_inserted.set()
+                await asyncio.sleep(0.3)
+
+        async def raw_insert_after_close_starts() -> bool:
+            await close_inserted.wait()
+            try:
+                async with tenant_session(factory(), tid) as session:
+                    await session.execute(
+                        text(
+                            "INSERT INTO transactions "
+                            "(id, tenant_id, txn_ref, member_id, type, amount, channel, "
+                            " occurred_at) "
+                            "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :ref, "
+                            "CAST(:mid AS uuid), 'deposit', '50.00', 'bank', :ts)"
+                        ),
+                        {
+                            "id": str(uuid.uuid4()),
+                            "tid": str(tid),
+                            "ref": f"MP-{uuid.uuid4().hex[:6].upper()}",
+                            "mid": str(mid),
+                            "ts": inside,
+                        },
+                    )
+            except DBAPIError:
+                return False
+            return True
+
+        _, inserted = await asyncio.gather(close_holding_lock(), raw_insert_after_close_starts())
+        assert inserted is False, "raw insert must observe the concurrently closed period"
+        assert await _posting_side_effects(tid) == (0, 0, 0, 0)
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # Listing
 # ---------------------------------------------------------------------------
