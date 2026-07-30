@@ -163,8 +163,7 @@ def test_create_user_email_claim_is_atomic() -> None:
         assert (
             await count(
                 tid,
-                "SELECT count(*) FROM audit_log "
-                "WHERE action = 'user.create' AND entity_id = :eid",
+                "SELECT count(*) FROM audit_log WHERE action = 'user.create' AND entity_id = :eid",
                 eid=uid,
             )
             == 1
@@ -250,8 +249,7 @@ def test_update_user_optimistic_locking() -> None:
         assert (
             await count(
                 tid,
-                "SELECT count(*) FROM audit_log "
-                "WHERE action = 'user.update' AND entity_id = :eid",
+                "SELECT count(*) FROM audit_log WHERE action = 'user.update' AND entity_id = :eid",
                 eid=target_id,
             )
             == 1
@@ -522,8 +520,7 @@ def test_concurrent_suspension_of_last_two_admins_leaves_one() -> None:
         assert sorted(statuses) == [200, 409], statuses
         remaining = await count(
             tid,
-            "SELECT count(*) FROM users WHERE role_id = CAST(:r AS uuid) "
-            "AND status = 'active'",
+            "SELECT count(*) FROM users WHERE role_id = CAST(:r AS uuid) AND status = 'active'",
             r=str(admin_rid),
         )
         assert remaining == 1
@@ -693,8 +690,7 @@ def test_create_user_idempotency_replay_by_side_effects() -> None:
         assert (
             await count(
                 tid,
-                "SELECT count(*) FROM audit_log "
-                "WHERE action = 'user.create' AND entity_id = :eid",
+                "SELECT count(*) FROM audit_log WHERE action = 'user.create' AND entity_id = :eid",
                 eid=uid,
             )
             == 1
@@ -767,8 +763,7 @@ def test_otp_lifecycle_endpoints_void_without_disclosure() -> None:
             assert (
                 await count(
                     tid,
-                    "SELECT count(*) FROM audit_log "
-                    "WHERE action = :a AND entity_id = :eid",
+                    "SELECT count(*) FROM audit_log WHERE action = :a AND entity_id = :eid",
                     a=action,
                     eid=target_id,
                 )
