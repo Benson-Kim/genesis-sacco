@@ -193,6 +193,44 @@ web:build:
       - web/.next
     expire_in: 1 week
 
+# Contract drift-checks (P14): the web client is GENERATED from the backend
+# OpenAPI contract and may never silently drift from it.
+#   spec-drift   — backend code vs committed openapi.json snapshot
+#   client-drift — committed openapi.json vs committed generated client
+web:spec-drift:
+  image: python:3.12-slim
+  stage: test
+  needs: []
+  rules:
+    - exists: ["web/packages/api-client/openapi.json"]
+  cache:
+    key:
+      files:
+        - backend/pyproject.toml
+    paths:
+      - .cache/pip
+  script:
+    - pip install --upgrade pip
+    - pip install ./backend
+    - python backend/scripts/export_openapi.py /tmp/openapi.json
+    - |
+      if ! diff -u web/packages/api-client/openapi.json /tmp/openapi.json; then
+        echo "ERROR: web/packages/api-client/openapi.json is STALE relative to the backend."
+        echo "Regenerate: (cd backend && python scripts/export_openapi.py ../web/packages/api-client/openapi.json)"
+        echo "then (cd web && npm run generate:api) and commit both."
+        exit 1
+      fi
+    - echo "OK - committed OpenAPI snapshot matches the backend contract."
+
+web:client-drift:
+  extends: .web
+  stage: test
+  needs: []
+  rules:
+    - exists: ["web/packages/api-client/openapi.json"]
+  script:
+    - npm run check:client-drift
+
 # -----------------------------------------------------------------------------
 # Mobile — Flutter (member_app, admin_app, shared packages)
 # -----------------------------------------------------------------------------
