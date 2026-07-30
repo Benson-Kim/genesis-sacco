@@ -250,10 +250,6 @@ async function onSignOut() {
   renderGate();
 }
 
-function screenCtx() {
-  return { onSessionExpired, modalHost: byId('modal-host') };
-}
-
 /** @param {string} id */
 function go(id) {
   const screen = SCREENS.find((s) => s.id === id);
@@ -262,9 +258,14 @@ function go(id) {
   setText(byId('h-title'), screen.title);
   setText(byId('h-sub'), screen.sub);
   renderNav();
-  const main = byId('main');
-  replace(main, []);
-  screen.mount(main, screenCtx());
+  // Fresh wrapper nodes per mount: a LATE async render of the previous
+  // screen writes into detached nodes instead of clobbering the active
+  // screen or its modal host (adversarial-review finding #2).
+  const host = el('div', {});
+  replace(byId('main'), [host]);
+  const modal = el('div', {});
+  replace(byId('modal-host'), [modal]);
+  screen.mount(host, { onSessionExpired, modalHost: modal });
 }
 
 function renderNav() {
