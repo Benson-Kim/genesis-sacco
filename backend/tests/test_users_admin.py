@@ -132,9 +132,7 @@ def test_users_routes_matrix_every_role() -> None:
                 )
                 assert res.status_code == (200 if can_edit else 403), role_name
 
-                res = await client.post(
-                    f"/users/{target_id}/otp/invalidate", headers=headers
-                )
+                res = await client.post(f"/users/{target_id}/otp/invalidate", headers=headers)
                 assert res.status_code == (200 if can_edit else 403), role_name
                 res = await client.post(f"/users/{target_id}/otp/reenrol", headers=headers)
                 assert res.status_code == (200 if can_edit else 403), role_name
@@ -445,9 +443,7 @@ def test_self_status_and_self_role_edits_are_forbidden() -> None:
         async with tenant_session(factory(), tid) as session:
             row = (
                 await session.execute(
-                    text(
-                        "SELECT status, version FROM users WHERE id = CAST(:id AS uuid)"
-                    ),
+                    text("SELECT status, version FROM users WHERE id = CAST(:id AS uuid)"),
                     {"id": str(admin_id)},
                 )
             ).first()
@@ -661,6 +657,11 @@ def test_users_list_keyset_pagination_and_filters() -> None:
             res = await client.get("/users?status=suspended", headers=headers)
             assert res.status_code == 200
             assert res.json()["items"] == []
+            # Role filter: only the seeded System Admin matches.
+            admin_rid = await _role_id(tid, "System Admin")
+            res = await client.get("/users", params={"role_id": str(admin_rid)}, headers=headers)
+            assert res.status_code == 200
+            assert [i["id"] for i in res.json()["items"]] == [str(admin_id)]
             res = await client.get("/users?cursor=not-a-cursor", headers=headers)
             assert res.status_code == 400
 

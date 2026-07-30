@@ -138,9 +138,7 @@ def _row_to_record(row: Any) -> UserRecord:
     )
 
 
-async def _role_name(
-    session: AsyncSession, tenant_id: uuid.UUID, role_id: uuid.UUID
-) -> str | None:
+async def _role_name(session: AsyncSession, tenant_id: uuid.UUID, role_id: uuid.UUID) -> str | None:
     row = (
         await session.execute(
             text(
@@ -153,9 +151,7 @@ async def _role_name(
     return str(row[0]) if row is not None else None
 
 
-async def get_user(
-    session: AsyncSession, tenant_id: uuid.UUID, user_id: uuid.UUID
-) -> UserRecord:
+async def get_user(session: AsyncSession, tenant_id: uuid.UUID, user_id: uuid.UUID) -> UserRecord:
     # Explicit tenant predicate on top of RLS (gate 1.6 v1.1).
     row = (
         await session.execute(
@@ -370,9 +366,7 @@ async def _lock_admin_set(session: AsyncSession, tenant_id: uuid.UUID) -> uuid.U
     """
     row = (
         await session.execute(
-            text(
-                "SELECT id FROM roles WHERE tenant_id = CAST(:tid AS uuid) AND name = :name"
-            ),
+            text("SELECT id FROM roles WHERE tenant_id = CAST(:tid AS uuid) AND name = :name"),
             {"tid": str(tenant_id), "name": SYSTEM_ADMIN},
         )
     ).first()

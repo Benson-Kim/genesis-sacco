@@ -141,14 +141,10 @@ def test_audit_log_filters_entity_actor_action_date() -> None:
         await _insert_audit_row(
             tid, entity="loans", action="probe.b", actor_id=other_actor, entity_id="l1"
         )
-        await _insert_audit_row(
-            tid, entity="members", action="probe.a", entity_id="m-old", at=old
-        )
+        await _insert_audit_row(tid, entity="members", action="probe.a", entity_id="m-old", at=old)
         headers = {"authorization": f"Bearer {token}"}
         async with api_client() as client:
-            res = await client.get(
-                "/audit-log", params={"entity": "loans"}, headers=headers
-            )
+            res = await client.get("/audit-log", params={"entity": "loans"}, headers=headers)
             assert res.status_code == 200
             assert [i["entity_id"] for i in res.json()["items"]] == ["l1"]
 
@@ -157,9 +153,7 @@ def test_audit_log_filters_entity_actor_action_date() -> None:
             )
             assert [i["entity_id"] for i in res.json()["items"]] == ["l1"]
 
-            res = await client.get(
-                "/audit-log", params={"action": "probe.a"}, headers=headers
-            )
+            res = await client.get("/audit-log", params={"action": "probe.a"}, headers=headers)
             assert [i["entity_id"] for i in res.json()["items"]] == ["m1", "m-old"]
 
             day = datetime.now(UTC).date().isoformat()
@@ -178,9 +172,7 @@ def test_audit_log_filters_entity_actor_action_date() -> None:
             )
             assert [i["entity_id"] for i in res.json()["items"]] == ["m-old"]
 
-            res = await client.get(
-                "/audit-log", params={"cursor": "garbage"}, headers=headers
-            )
+            res = await client.get("/audit-log", params={"cursor": "garbage"}, headers=headers)
             assert res.status_code == 400
 
     asyncio.run(run())
