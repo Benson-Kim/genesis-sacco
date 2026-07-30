@@ -2,8 +2,8 @@
  * Session store for the auth module.
  *
  * Token custody (P3 transport pattern, gate 1.6 — scaffold review finding S1):
- * - BOTH tokens live in JS module memory only. No cookie, no localStorage,
- *   no sessionStorage: any script-readable persistent storage turns a
+ * - BOTH tokens live in JS module memory only. No cookie, no local or
+ *   session storage: any script-readable persistent storage turns a
  *   one-shot XSS into durable session theft. A page reload therefore
  *   requires re-login — the accepted trade-off for a core-banking console
  *   (carried forward from the !25 threat model).

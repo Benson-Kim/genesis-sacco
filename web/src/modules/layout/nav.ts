@@ -37,6 +37,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "Settings", href: "/modules/settings", module: "settings" },
       { label: "Access control", href: "/modules/access_control", module: "access_control" },
+      { label: "Audit log", href: "/modules/access_control/audit-log", module: "access_control" },
     ],
   },
 ];
