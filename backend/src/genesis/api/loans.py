@@ -136,11 +136,15 @@ class ApplicationListResponse(BaseModel):
 
 
 class TransitionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     version: int = Field(ge=1)
     target: ApplicationStage
 
 
 class VoteBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     vote: Vote
 
 
@@ -152,11 +156,15 @@ class VoteResultOut(BaseModel):
 
 
 class GuaranteePledgeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     guarantor_member_id: uuid.UUID
     amount: Decimal = Field(gt=0, le=1_000_000_000)
 
 
 class ConsentBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     version: int = Field(ge=1)
 
 
@@ -226,7 +234,7 @@ async def create_product(body: ProductCreateBody, ctx: SettingsCreateCtx) -> Pro
 
 
 @router.get("/products")
-async def list_products(ctx: SettingsViewCtx) -> list[ProductOut]:
+async def list_products(ctx: ProductListCtx) -> list[ProductOut]:
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         products = await products_service.list_products(session, ctx.tenant_id)

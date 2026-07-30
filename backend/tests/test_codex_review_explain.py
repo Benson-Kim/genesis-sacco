@@ -128,7 +128,14 @@ def test_codex_review_queries_are_index_backed() -> None:
         assert len(items) == 20
 
         async with tenant_session(factory(), tid) as session:
+            # Freshly seeded tables have no stats (ANALYZE needs table
+            # ownership, which the RLS app role deliberately lacks), so
+            # the planner's row estimates are unusable for cost-based
+            # index CHOICE. Disabling seqscan AND sort turns the capture
+            # into the plan-SHAPE assertion that matters: each query is
+            # servable by its index in index order, no sort node.
             await session.execute(text("SET LOCAL enable_seqscan = off"))
+            await session.execute(text("SET LOCAL enable_sort = off"))
             stage_plan = await _explain(
                 session,
                 STAGE_FILTERED_PAGE,
@@ -163,8 +170,8 @@ def test_codex_review_queries_are_index_backed() -> None:
         header = (
             "Codex-review MR EXPLAIN (ANALYZE, BUFFERS) — captured in CI against\n"
             "the migrated Postgres service under the RLS app role.\n"
-            "enable_seqscan=off; 180 applications seeded across 6 stages so the\n"
-            "planner's index choice reflects plan shape at scale.\n"
+            "enable_seqscan=off and enable_sort=off (fresh tables carry no stats;\n"
+            "the assertion is plan shape: index-served order, no sort node).\n"
         )
         sections = [
             ("stage-filtered applications keyset page (0014 index)", stage_plan),

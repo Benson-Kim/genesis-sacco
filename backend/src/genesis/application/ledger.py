@@ -264,7 +264,7 @@ async def post_deposit(
             "txn_id": str(result.txn_id),
             "txn_ref": result.txn_ref,
             "member_id": str(member_id),
-            "amount": str(amount),
+            "amount": str(spec.amount),  # rounded, matches the ledger (1.5)
             "channel": channel.value,
         },
     )
@@ -489,7 +489,7 @@ async def post_loan_interest_accrual(
             "txn_id": str(result.txn_id),
             "txn_ref": result.txn_ref,
             "member_id": str(member_id) if member_id else None,
-            "amount": str(amount),
+            "amount": str(spec.amount),  # rounded, matches the ledger (1.5)
         },
     )
     return result
@@ -517,7 +517,7 @@ async def post_deposit_interest(
             "txn_id": str(result.txn_id),
             "txn_ref": result.txn_ref,
             "member_id": str(member_id) if member_id else None,
-            "amount": str(amount),
+            "amount": str(spec.amount),  # rounded, matches the ledger (1.5)
         },
     )
     return result
@@ -634,6 +634,23 @@ async def post_reversal(
     ).first()
     if existing_reversal is not None:
         raise ConflictError(f"transaction {original_txn_id} has already been reversed")
+
+    repayment_row = (
+        await session.execute(
+            text(
+                # Explicit tenant predicate on top of RLS (gate 1.6 v1.1).
+                "SELECT 1 FROM repayments "
+                "WHERE transaction_id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) LIMIT 1"
+            ),
+            {"id": str(original_txn_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if repayment_row is not None:
+        raise ConflictError(
+            f"transaction {original_txn_id} has repayment records and cannot be "
+            "generically reversed; use the repayment adjustment flow"
+        )
 
     # Load original ledger lines.
     line_rows = (
