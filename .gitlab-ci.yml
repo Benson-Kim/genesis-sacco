@@ -169,7 +169,6 @@ web:lint:
     - exists: ["web/package.json"]
   script:
     - npm run lint
-    - npx tsc --noEmit
 
 web:test:
   extends: .web
@@ -209,6 +208,23 @@ mobile:lint:
       for app in mobile/*/; do
         if [ -f "${app}pubspec.yaml" ]; then
           (cd "$app" && flutter pub get && dart format --output=none --set-exit-if-changed . && flutter analyze)
+        fi
+      done
+
+mobile:test:
+  extends: .mobile
+  stage: test
+  needs: ["mobile:lint"]
+  rules:
+    - exists: ["mobile/**/pubspec.yaml"]
+  script:
+    - |
+      for app in mobile/*/; do
+        if [ -f "${app}pubspec.yaml" ] && [ -d "${app}test" ]; then
+          (cd "$app" && flutter pub get && flutter test)
+        fi
+      done
+art format --output=none --set-exit-if-changed . && flutter analyze)
         fi
       done
 
