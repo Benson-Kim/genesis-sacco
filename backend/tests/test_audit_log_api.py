@@ -258,7 +258,7 @@ def test_audit_log_is_tenant_scoped() -> None:
 
     async def run() -> None:
         tid_a, _, _ = await seed_actor()
-        tid_b, _, token_b = await seed_actor()
+        _, _, token_b = await seed_actor()
         marker = f"cross-{uuid.uuid4().hex[:8]}"
         await _insert_audit_row(tid_a, entity="members", action=marker)
         async with api_client() as client:

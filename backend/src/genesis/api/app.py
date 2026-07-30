@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from genesis.api.access import router as access_router
 from genesis.api.accounting_periods import router as accounting_periods_router
+from genesis.api.audit_log import router as audit_log_router
 from genesis.api.auth import router as auth_router
 from genesis.api.health import router as health_router
 from genesis.api.idempotency import IdempotencyMiddleware
