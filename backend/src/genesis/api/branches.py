@@ -53,16 +53,20 @@ MemberEditCtx = Annotated[AuthContext, Depends(_member_edit)]
 
 
 class BranchCreateBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """str_strip_whitespace keeps API-created names consistent with the
+    backfill's btrim normalisation (' HQ ' can never coexist with
+    'HQ'); a whitespace-only name shrinks to '' and fails min_length."""
 
-    name: str = Field(min_length=1, max_length=120, pattern=r"\S")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=120)
 
 
 class BranchUpdateBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     version: int = Field(ge=1)
-    name: str = Field(min_length=1, max_length=120, pattern=r"\S")
+    name: str = Field(min_length=1, max_length=120)
 
 
 class BranchAssignBody(BaseModel):

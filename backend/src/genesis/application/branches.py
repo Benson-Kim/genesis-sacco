@@ -472,8 +472,7 @@ async def _process_backfill_batch(
         existing = (
             await session.execute(
                 text(
-                    "SELECT id FROM branches "
-                    "WHERE tenant_id = CAST(:tid AS uuid) AND name = :name"
+                    "SELECT id FROM branches WHERE tenant_id = CAST(:tid AS uuid) AND name = :name"
                 ),
                 {"tid": str(tenant_id), "name": name},
             )
