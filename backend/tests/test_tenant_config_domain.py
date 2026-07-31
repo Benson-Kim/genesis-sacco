@@ -333,11 +333,7 @@ def test_approval_bands_property_resolution_is_deterministic(
     amount = Decimal(probe)
     index = required_band_index(amount, bands)
     assert 0 <= index <= len(bands)
-    covering = [
-        i
-        for i, b in enumerate(bands)
-        if b.max_amount is None or amount <= b.max_amount
-    ]
+    covering = [i for i, b in enumerate(bands) if b.max_amount is None or amount <= b.max_amount]
     # Strictly increasing ceilings mean the covering set is a suffix;
     # its first element is the unique resolution.
     assert index == (covering[0] if covering else len(bands))
