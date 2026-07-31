@@ -656,12 +656,15 @@ async def assign_role(
         raise NotFoundError(f"role {role_id} not found")
     admin_role_id = await _lock_admin_set(session, tenant_id)
     target_role_id, current_status, _ = await _lock_user_row(session, tenant_id, user_id)
-    if admin_role_id is not None and admin_role_id in (role_id, target_role_id):
+    if (
+        admin_role_id is not None
+        and admin_role_id in (role_id, target_role_id)
         # Review F2: checked under the locks, against committed state,
         # BEFORE the same-role 409 so a non-admin probe learns nothing
         # about the target's current role (least disclosure).
-        if await _actor_role_id(session, tenant_id, actor_id) != admin_role_id:
-            raise ForbiddenError("System Admin role changes require a System Admin actor")
+        and await _actor_role_id(session, tenant_id, actor_id) != admin_role_id
+    ):
+        raise ForbiddenError("System Admin role changes require a System Admin actor")
     if target_role_id == role_id:
         raise ConflictError(f"user {user_id} already holds role {role_id}")
     if (
