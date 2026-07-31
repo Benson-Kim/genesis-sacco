@@ -292,6 +292,81 @@ test("suspend flows through an explicit confirmation before any write", async ()
   });
 });
 
+test("F1 email-change fence: 403 renders the standard least-disclosure banner, session intact", async () => {
+  const user = userEvent.setup();
+  // Backend review fix F1: an email change on an admin target by a
+  // non-System-Admin is refused server-side with the sanitized envelope.
+  mocked.updateUser.mockRejectedValue(new ApiError(403, "forbidden", "corr-f1"));
+  mountScreen();
+
+  await user.click(await screen.findByText(HOSTILE_NAME));
+  await user.click(await screen.findByRole("button", { name: "Edit profile" }));
+  const emailInput = await screen.findByLabelText("Email");
+  await user.clear(emailInput);
+  await user.type(emailInput, "takeover@evil.example");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+  // Standard ErrorBanner: sanitized per-status title + correlation id ONLY
+  // (gate 1.6). Falsifiable: bypass ErrorBanner for the 403 branch (or echo
+  // err.category/server detail) and these assertions fail.
+  expect(await screen.findByText(/Not permitted\./)).toBeInTheDocument();
+  expect(screen.getByText(/ref: corr-f1/)).toBeInTheDocument();
+  // No capability-probing hint: the raw server category never renders.
+  expect(screen.queryByText(/forbidden/i)).toBeNull();
+  // 403 stays DISTINCT from 409 — the denial must NOT offer the
+  // reload-and-retry conflict flow.
+  expect(screen.queryByRole("button", { name: "Reload record" })).toBeNull();
+  // Exactly one write attempt; a denial is never auto-retried.
+  expect(mocked.updateUser).toHaveBeenCalledTimes(1);
+  // Under-privilege is not session death: a 403 must NOT tear the session
+  // down (falsifiable: widen the 401 teardown to 403 and this fails).
+  expect(hasSession()).toBe(true);
+});
+
+test("F2 admin-grant fence: System-Admin role grant 403 renders the standard banner in the dialog", async () => {
+  const user = userEvent.setup();
+  // Backend review fix F2: granting System Admin requires the ACTOR's
+  // users-table role to be System Admin — denials arrive as sanitized 403s.
+  mocked.assignUserRole.mockRejectedValue(new ApiError(403, "forbidden", "corr-f2"));
+  mountScreen();
+
+  await user.click(await screen.findByText(HOSTILE_NAME));
+  await user.click(await screen.findByRole("button", { name: "Change role" }));
+  const dialog = await screen.findByRole("dialog", { name: "Assign role" });
+  await user.selectOptions(within(dialog).getByLabelText("New role"), ROLE_ADMIN);
+  await user.click(within(dialog).getByRole("button", { name: "Assign role" }));
+
+  // Falsifiable: drop the ErrorBanner from ConfirmActionDialog's error
+  // branch and the denial becomes invisible to the operator.
+  expect(await within(dialog).findByText(/Not permitted\./)).toBeInTheDocument();
+  expect(within(dialog).getByText(/ref: corr-f2/)).toBeInTheDocument();
+  expect(within(dialog).queryByText(/forbidden/i)).toBeNull();
+  // Exactly one attempt with the loaded version — no retry on denial.
+  expect(mocked.assignUserRole).toHaveBeenCalledTimes(1);
+  expect(mocked.assignUserRole.mock.calls[0]?.[1]).toEqual({
+    version: 3,
+    role_id: ROLE_ADMIN,
+  });
+  expect(hasSession()).toBe(true);
+});
+
+test("F3 suspension: a query-path 401 kills the session immediately (no token-lifetime grace)", async () => {
+  const user = userEvent.setup();
+  // Backend review fix F3: RequirePermission verifies live users.status, so
+  // the FIRST request after a committed suspension returns 401 even while
+  // the access token is still unexpired. The QueryCache side of the
+  // teardown must clear the session — the existing mutation-401 test alone
+  // would let a suspended operator keep browsing read screens.
+  mocked.fetchUser.mockRejectedValue(new ApiError(401, "unauthenticated", "corr-f3"));
+  mountScreen();
+
+  await user.click(await screen.findByText(HOSTILE_NAME));
+
+  // Falsifiable: remove the QueryCache onError in Providers (finding S3)
+  // and the session survives the suspension.
+  await waitFor(() => expect(hasSession()).toBe(false));
+});
+
 test("mutation 401 tears the session down (re-login flow)", async () => {
   const user = userEvent.setup();
   mocked.updateUser.mockRejectedValue(new ApiError(401, "unauthenticated", "corr-401"));
