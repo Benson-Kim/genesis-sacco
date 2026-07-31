@@ -177,9 +177,7 @@ def test_rate_bands_count_cap() -> None:
     ),
     probe=st.integers(min_value=0, max_value=20_000_000),
 )
-def test_rate_bands_property_valid_contiguous_lists_accepted(
-    bounds: list[int], probe: int
-) -> None:
+def test_rate_bands_property_valid_contiguous_lists_accepted(bounds: list[int], probe: int) -> None:
     """Property: any strictly-increasing contiguous list validates, and
     every probe amount resolves to at most one band (the containment
     scan finds the FIRST match; contiguity makes it the ONLY match)."""
@@ -301,8 +299,7 @@ def test_approval_bands_rejections(raw: object, reason: str) -> None:
 
 def test_approval_bands_at_most_one_per_role() -> None:
     raw = [
-        {"authority": name, "max_amount": str((i + 1) * 1000)}
-        for i, name in enumerate(ROLE_NAMES)
+        {"authority": name, "max_amount": str((i + 1) * 1000)} for i, name in enumerate(ROLE_NAMES)
     ]
     assert len(validate_approval_bands(raw)) == len(ROLE_NAMES)
 

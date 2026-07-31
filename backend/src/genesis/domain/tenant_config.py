@@ -437,9 +437,7 @@ def required_band_index(amount: Decimal, bands: tuple[ApprovalBand, ...]) -> int
     return len(bands)
 
 
-def authority_may_ratify(
-    role_name: str, amount: Decimal, bands: tuple[ApprovalBand, ...]
-) -> bool:
+def authority_may_ratify(role_name: str, amount: Decimal, bands: tuple[ApprovalBand, ...]) -> bool:
     """Whether a role may ratify (advance/approve) the given amount.
 
     A role LISTED in the matrix is capped by its own band ceiling; a
