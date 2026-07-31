@@ -20,8 +20,7 @@ from genesis.application.audit import record_audit
 from genesis.errors import ConflictError, NotFoundError
 
 _COLS = (
-    "id, name, rate_pct, deposit_multiplier, max_term_months, guarantors_required, "
-    "active, version"
+    "id, name, rate_pct, deposit_multiplier, max_term_months, guarantors_required, active, version"
 )
 
 
