@@ -22,6 +22,7 @@ from genesis.application.audit import record_audit
 from genesis.application.loan_products import get_product
 from genesis.application.outbox import enqueue_event
 from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
+from genesis.application.tenant_settings import committee_quorum, enforce_authority_band
 from genesis.domain.committee import Decision, Vote, decide
 from genesis.domain.lending import ApplicationStage, InvalidTransitionError, transition
 from genesis.domain.money import ZERO, to_cents
@@ -369,7 +370,15 @@ async def transition_stage(
     version: int,
     target: ApplicationStage,
 ) -> ApplicationRecord:
-    """Move an application through the P6 machine under a row lock."""
+    """Move an application through the P6 machine under a row lock.
+
+    Ratifying (forward) moves are additionally capped by the tenant's
+    approval-authority bands (P13.7): the matrix is read from current
+    committed config AFTER the application row lock is taken, so a
+    config change mid-workflow governs future transitions only — moves
+    already committed under the old config are never revisited (v1.1
+    rule 3). Rejection stays uncapped: it moves no money.
+    """
     if target not in API_TRANSITION_TARGETS:
         raise ConflictError(
             f"stage '{target.value}' is decided by committee voting or disbursement, "
@@ -380,7 +389,7 @@ async def transition_stage(
             text(
                 # Explicit tenant predicate on the row-lock read, on top
                 # of RLS (defence in depth, gate 1.6 v1.1; issue #17).
-                "SELECT stage, version FROM loan_applications "
+                "SELECT stage, version, amount FROM loan_applications "
                 "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
             {"id": str(application_id), "tid": str(tenant_id)},
@@ -393,6 +402,9 @@ async def transition_stage(
         transition(current, target)
     except InvalidTransitionError as exc:
         raise ConflictError(str(exc)) from exc
+    if actor_id is not None and target is not ApplicationStage.REJECTED:
+        # P13.7 authority bands, enforced under the row lock above.
+        await enforce_authority_band(session, tenant_id, actor_id, Decimal(str(row[2])))
     result = cast(
         CursorResult[Any],
         await session.execute(
@@ -445,13 +457,22 @@ async def cast_vote(
     The application row lock serialises voters, so tallies and the
     resulting decision are race-free. The UNIQUE constraint makes
     double-voting impossible even outside this code path.
+
+    P13.7: the quorum is read from tenant configuration AT VOTE TIME,
+    inside this transaction and under the row lock (fallback: the
+    code-owned COMMITTEE_QUORUM). A quorum change between votes governs
+    the NEXT vote's tally only — votes already tallied never decide
+    retroactively, because a decision can only ever be produced by a
+    vote event (v1.1 rule 3). Approve votes are additionally capped by
+    the approval-authority bands: approving is the ratifying act, while
+    a reject vote moves no money and stays uncapped.
     """
     row = (
         await session.execute(
             text(
                 # Explicit tenant predicate on the row-lock read, on top
                 # of RLS (defence in depth, gate 1.6 v1.1; issue #17).
-                "SELECT stage FROM loan_applications "
+                "SELECT stage, amount FROM loan_applications "
                 "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
             {"id": str(application_id), "tid": str(tenant_id)},
@@ -462,6 +483,9 @@ async def cast_vote(
     current = ApplicationStage(str(row[0]))
     if current is not ApplicationStage.COMMITTEE:
         raise ConflictError(f"voting is only open in committee stage, not '{current.value}'")
+    if vote is Vote.APPROVE:
+        # P13.7 authority bands, enforced under the row lock above.
+        await enforce_authority_band(session, tenant_id, voter_id, Decimal(str(row[1])))
     try:
         await session.execute(
             text(
@@ -501,7 +525,8 @@ async def cast_vote(
         entity_id=str(application_id),
         after={"vote": vote.value, "approvals": approvals, "rejections": rejections},
     )
-    decision = decide(approvals, rejections)
+    # Config read at vote time, under the application row lock (P13.7).
+    decision = decide(approvals, rejections, quorum=await committee_quorum(session, tenant_id))
     stage: ApplicationStage = current
     if decision is not None:
         target = (
