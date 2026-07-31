@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         """Return origins as a list, filtering out any blank entries."""
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
     # Export configuration (P13): resolved exclusively server-side —
     # request bodies never carry formats, row limits, or storage
     # locations (gate 1.6; P13 blocker a).
