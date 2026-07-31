@@ -138,7 +138,7 @@ def backfill_scan_sql(*, with_after: bool) -> str:
     """
     after = "AND u.id > CAST(:after AS uuid) " if with_after else ""
     return (
-        "SELECT u.id, btrim(u.branch) AS name FROM users u "
+        "SELECT u.id, btrim(u.branch) AS name FROM users u "  # noqa: S608
         "WHERE u.tenant_id = CAST(:tid AS uuid) "
         "AND u.branch IS NOT NULL AND u.branch_id IS NULL "
         f"{after}"
