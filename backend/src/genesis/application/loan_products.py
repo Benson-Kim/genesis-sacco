@@ -19,7 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from genesis.application.audit import record_audit
 from genesis.errors import ConflictError, NotFoundError
 
-_COLS = "id, name, rate_pct, deposit_multiplier, max_term_months, active, version"
+_COLS = (
+    "id, name, rate_pct, deposit_multiplier, max_term_months, guarantors_required, "
+    "active, version"
+)
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,9 @@ class LoanProduct:
     rate_pct: Decimal
     deposit_multiplier: Decimal
     max_term_months: int
+    #: P13.7 stored configuration (prototype Settings > Loan products);
+    #: disbursement-time enforcement is a recorded follow-up.
+    guarantors_required: int
     active: bool
     version: int
 
@@ -40,8 +46,9 @@ def _row_to_product(row: Any) -> LoanProduct:
         rate_pct=Decimal(str(row[2])),
         deposit_multiplier=Decimal(str(row[3])),
         max_term_months=int(row[4]),
-        active=bool(row[5]),
-        version=int(row[6]),
+        guarantors_required=int(row[5]),
+        active=bool(row[6]),
+        version=int(row[7]),
     )
 
 
