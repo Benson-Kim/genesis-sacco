@@ -363,8 +363,10 @@ test("F3 suspension: a query-path 401 kills the session immediately (no token-li
   await user.click(await screen.findByText(HOSTILE_NAME));
 
   // Falsifiable: remove the QueryCache onError in Providers (finding S3)
-  // and the session survives the suspension.
-  await waitFor(() => expect(hasSession()).toBe(false));
+  // and the session survives the suspension. The timeout accommodates the
+  // production query retry (retry: 1, ~1s backoff) — the teardown fires
+  // only after the final failure, and that config must stay real here.
+  await waitFor(() => expect(hasSession()).toBe(false), { timeout: 4000 });
 });
 
 test("mutation 401 tears the session down (re-login flow)", async () => {
