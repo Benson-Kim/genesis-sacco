@@ -152,7 +152,7 @@ async def _vote(
 
 def test_settings_unconfigured_defaults_then_claim_then_edit() -> None:
     async def run() -> None:
-        tid, admin_id, token = await seed_actor()
+        tid, _, token = await seed_actor()
         async with api_client() as client:
             res = await client.get("/settings", headers=_headers(token))
             assert res.status_code == 200

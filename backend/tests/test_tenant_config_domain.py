@@ -162,11 +162,9 @@ def test_rate_bands_rejections(raw: object, reason: str) -> None:
 def test_rate_bands_count_cap() -> None:
     bands = []
     lower = Decimal("0")
-    for i in range(MAX_RATE_BANDS + 1):
+    for _ in range(MAX_RATE_BANDS + 1):
         upper = lower + 100
-        bands.append(
-            {"min_amount": str(lower), "max_amount": str(upper), "rate_pct": "10.00"}
-        )
+        bands.append({"min_amount": str(lower), "max_amount": str(upper), "rate_pct": "10.00"})
         lower = upper
     bands[-1]["max_amount"] = None
     with pytest.raises(BandConfigError, match="at most"):
