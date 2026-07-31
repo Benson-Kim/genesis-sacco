@@ -113,15 +113,15 @@ export function PermissionsScreen() {
     mutationFn: async () => {
       if (selectedRoleId === null) return;
       const dirty = dirtyModules();
-      for (const module of dirty) {
-        const p = draft[module] ?? emptyPermission(module);
-        const updated = await updateRolePermission(selectedRoleId, module, {
+      for (const moduleId of dirty) {
+        const p = draft[moduleId] ?? emptyPermission(moduleId);
+        const updated = await updateRolePermission(selectedRoleId, moduleId, {
           can_view: p.can_view,
           can_create: p.can_create,
           can_edit: p.can_edit,
           can_approve: p.can_approve,
         });
-        setDraft((prev) => ({ ...prev, [module]: updated }));
+        setDraft((prev) => ({ ...prev, [moduleId]: updated }));
       }
     },
     onMutate: () => setSaveStatus("saving"),
