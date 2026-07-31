@@ -98,9 +98,7 @@ def _audited_entities() -> tuple[set[str], list[str]]:
             entity_kw = next((kw for kw in node.keywords if kw.arg == "entity"), None)
             if entity_kw is None:
                 continue  # the writer's own definition
-            if isinstance(entity_kw.value, ast.Constant) and isinstance(
-                entity_kw.value.value, str
-            ):
+            if isinstance(entity_kw.value, ast.Constant) and isinstance(entity_kw.value.value, str):
                 entities.add(entity_kw.value.value)
             else:
                 offences.append(f"{path.relative_to(SRC)}:{node.lineno}")
