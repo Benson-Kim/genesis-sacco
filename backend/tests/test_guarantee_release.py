@@ -1704,15 +1704,10 @@ def test_email_identity_link_is_byte_exact_and_tenant_fenced() -> None:
         # tid session must never satisfy _actor_is_guarantor (the
         # u.tenant_id = :tid predicate and RLS both refuse the row).
         async with tenant_session(factory(), tid) as session:
-            auditor_role = uuid.UUID(
-                str(
-                    (
-                        await session.execute(
-                            text("SELECT id FROM roles WHERE name = 'Auditor'")
-                        )
-                    ).scalar_one()
-                )
-            )
+            auditor_role_row = (
+                await session.execute(text("SELECT id FROM roles WHERE name = 'Auditor'"))
+            ).scalar_one()
+            auditor_role = uuid.UUID(str(auditor_role_row))
             with pytest.raises(ForbiddenError):
                 await guarantees_service.release_guarantee(
                     session,
