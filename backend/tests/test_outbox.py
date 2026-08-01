@@ -173,6 +173,7 @@ def test_worker_cycle_covers_active_tenants() -> None:
 
     asyncio.run(run())
 
+
 # ---------------------------------------------------------------------------
 # P13.17(e) / DSA-6 — set-based lease, retention purge, due-tenant discovery
 # ---------------------------------------------------------------------------
@@ -365,8 +366,7 @@ def test_fm5_purge_deletes_only_dispatched_rows_older_than_retention() -> None:
         assert purged == 1
         async with tenant_session(factory(), tid) as session:
             remaining = {
-                str(row[0])
-                for row in await session.execute(text("SELECT id FROM outbox_events"))
+                str(row[0]) for row in await session.execute(text("SELECT id FROM outbox_events"))
             }
         assert str(purged_id) not in remaining
         assert {str(kept_recent), str(kept_pending), str(kept_dead)} <= remaining
