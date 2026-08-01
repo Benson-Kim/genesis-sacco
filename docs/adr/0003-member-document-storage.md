@@ -23,7 +23,7 @@ recorded". Constraints that bind the eventual choice:
   transactions holding row locks (gate 1.3).
 
 ## Decision
-1. **Ship metadata-only now.** `member_documents` (migration 0017)
+1. **Ship metadata-only now.** `member_documents` (migration 0018)
    carries type, status, expiry, versioning and audit; there is no
    upload/download endpoint and no binary column. This unblocks the
    registration workflow (checklist tracking) without committing to a
@@ -62,4 +62,4 @@ recorded". Constraints that bind the eventual choice:
   follow-ups list.
 - Migration path: adding content is expand-only (new storage keys on
   `member_documents` or a side table + the storage adapter); nothing
-  in 0017 needs rework.
+  in 0018 needs rework.

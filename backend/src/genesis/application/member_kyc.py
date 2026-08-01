@@ -2,7 +2,7 @@
 
 Persists the prototype's type-specific registration data (GAP_ANALYSIS
 §2.3): one profile row per member (per-type JSONB validated by
-domain/member_kyc.py, DB-CHECKed by 0017), the member category, the
+domain/member_kyc.py, DB-CHECKed by 0018), the member category, the
 DPA-2019 consent timestamp, and the per-type document checklist as
 metadata rows. Binary document content is deferred behind the storage
 decision in ADR-0003 — metadata-only is the recorded P13.12 fallback.
@@ -19,7 +19,7 @@ delivery, not mutation).
 Consent immutability & TOCTOU: consent is granted inside the same
 version-guarded UPDATE as the rest of the edit, after an
 already-captured check — a concurrent grant bumps the version and the
-stale writer gets 409, so there is no check-then-set window. The 0017
+stale writer gets 409, so there is no check-then-set window. The 0018
 trigger is the DB backstop: not even raw SQL can rewrite or delete a
 captured consent.
 
@@ -140,7 +140,7 @@ _DOCUMENT_COLUMNS = "d.id, d.member_id, d.doc_type, d.status, d.expires_at, d.ve
 
 def profile_lookup_sql() -> str:
     """Profile-by-member lookup, served by uq_member_profiles_member
-    (0017; EXPLAIN-asserted in tests/test_p1312_explain.py). Explicit
+    (0018; EXPLAIN-asserted in tests/test_p1312_explain.py). Explicit
     tenant predicate on top of RLS (v1.1 rule 4)."""
     return (
         f"SELECT {_PROFILE_COLUMNS} FROM member_profiles p "  # noqa: S608
@@ -150,7 +150,7 @@ def profile_lookup_sql() -> str:
 
 def documents_page_sql(*, with_cursor: bool) -> str:
     """Documents checklist page, keyset on doc_type within one member
-    (gate 1.3), served by uq_member_documents_checklist (0017 — the
+    (gate 1.3), served by uq_member_documents_checklist (0018 — the
     claim constraint's index IS the listing index). Fragments are
     static literals chosen in code; every value is a bound parameter
     (v1.1 rule 6)."""
@@ -261,7 +261,7 @@ async def create_profile(
     is never caller-supplied — and a mismatch surfaces as 422 with no
     echoed values (gate 1.6). The (tenant_id, member_id) claim is
     atomic (v1.1 rule 5). Consent, when given, is timestamped by the
-    database at capture; the 0017 trigger makes it immutable from then
+    database at capture; the 0018 trigger makes it immutable from then
     on.
     """
     member = await members_service.get_member(session, tenant_id, member_id)
@@ -329,7 +329,7 @@ async def update_profile(
     Consent may only be GRANTED (dpa_consent=True on a profile without
     one); granting again is 409, and changing/clearing is impossible by
     construction — the UPDATE keeps a captured value, the version guard
-    closes the check-then-set window, and the 0017 trigger backstops
+    closes the check-then-set window, and the 0018 trigger backstops
     raw SQL. Omitted fields keep their current values.
     """
     current = await get_profile(session, tenant_id, member_id)

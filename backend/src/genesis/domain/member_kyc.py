@@ -6,7 +6,7 @@ The prototype's add-member wizard collects type-specific detail forms
 truth: pydantic models with ``extra="forbid"`` mirror the prototype's
 sections field-for-field, so a payload of the wrong member type — or a
 rider field smuggled into any section — is rejected at validation time.
-The DB CHECK in migration 0017 backstops the section shape for raw SQL.
+The DB CHECK in migration 0018 backstops the section shape for raw SQL.
 
 PII discipline (gate 1.6): validation failures raise
 ProfileValidationError carrying only field LOCATIONS and error TYPES —
@@ -233,7 +233,7 @@ def validate_profile(member_type: MemberType, payload: Mapping[str, Any]) -> dic
 # Document checklists (prototype docsFor) and status machine
 # ---------------------------------------------------------------------------
 
-#: Code-owned per-type checklist; mirrored by the 0017 DB CHECK.
+#: Code-owned per-type checklist; mirrored by the 0018 DB CHECK.
 DOCUMENT_CHECKLISTS: Mapping[MemberType, frozenset[str]] = {
     MemberType.PERSON: frozenset(
         {"national_id_copy", "kra_pin", "passport_photo", "signature", "next_of_kin_id"}

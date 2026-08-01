@@ -8,7 +8,7 @@ module — these are the statements the endpoints actually run.
 Tiny CI tables make seqscan the cheaper plan; the capture disables it
 for the session to prove each query is SERVABLE by an index — i.e. the
 plans stay index-backed once the tables grow (P10-P13.6 precedent).
-Falsifiable guard: drop the 0017 unique constraints and the
+Falsifiable guard: drop the 0018 unique constraints and the
 no-sequential-scan gate below fails.
 """
 
@@ -84,7 +84,7 @@ def test_p1312_kyc_queries_are_index_backed() -> None:
         body = "\n\n".join(f"=== {name} ===\n{plan}" for name, plan in sections)
         OUT_PATH.write_text(f"{header}\n{body}\n")
 
-        # The claim constraints' indexes ARE the read indexes (0017).
+        # The claim constraints' indexes ARE the read indexes (0018).
         assert "uq_member_profiles_member" in profile
         assert "uq_member_documents_checklist" in documents
         assert "uq_member_documents_checklist" in documents_first_page

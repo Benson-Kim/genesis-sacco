@@ -5,7 +5,7 @@ the app as the non-superuser role, so RLS is live under every test.
 
 Anti-reward-hacking (§4): idempotency and audit guarantees are proven
 by side-effect ROW COUNTS, never return values; the consent guard test
-fails if the 0017 trigger is removed (raw SQL would then succeed);
+fails if the 0018 trigger is removed (raw SQL would then succeed);
 the tenant-predicate tests run RLS-satisfied sessions with a foreign
 tenant argument, so only the explicit predicates can refuse the row
 (issue #17 pattern).
@@ -283,7 +283,7 @@ def test_consent_grant_once_then_conflict() -> None:
 
 
 def test_consent_is_immutable_even_via_raw_sql() -> None:
-    """Falsifiability (EXIT): drop the 0017 consent trigger and every
+    """Falsifiability (EXIT): drop the 0018 consent trigger and every
     branch of this test fails — the raw UPDATE/DELETE would succeed."""
 
     async def run() -> None:

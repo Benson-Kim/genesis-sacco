@@ -60,7 +60,7 @@ class ProfileCreateBody(BaseModel):
 
 class ProfileUpdateBody(BaseModel):
     """dpa_consent accepts only true: consent can be granted, never
-    withdrawn through the API (and never rewritten at all — 0017
+    withdrawn through the API (and never rewritten at all — 0018
     trigger)."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)

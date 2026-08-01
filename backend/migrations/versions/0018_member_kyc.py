@@ -1,7 +1,7 @@
 """member KYC profiles & documents (P13.12)
 
-Revision ID: 0017
-Revises: 0016
+Revision ID: 0018
+Revises: 0017
 Create Date: 2026-08-01
 
 EXPAND-ONLY revision backing BUILD_PROMPTS P13.12 (GAP_ANALYSIS §2.3):
@@ -75,8 +75,8 @@ tables) and touches no pre-existing data.
 
 from alembic import op
 
-revision = "0017"
-down_revision = "0016"
+revision = "0018"
+down_revision = "0017"
 branch_labels = None
 depends_on = None
 
