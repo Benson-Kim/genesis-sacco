@@ -535,7 +535,7 @@ async def update_document(
     *,
     version: int,
     status: DocumentStatus | None = None,
-    expires_at: date | None | Unset = UNSET,
+    expires_at: date | Unset | None = UNSET,
 ) -> DocumentRecord:
     """Optimistic-locked status/expiry update; stale versions surface 409.
 
