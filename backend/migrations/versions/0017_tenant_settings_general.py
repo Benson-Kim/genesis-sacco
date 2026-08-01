@@ -188,7 +188,9 @@ END
 $gd$;
 """
 
-_DOWN = _DOWN_GUARD + """
+_DOWN = (
+    _DOWN_GUARD
+    + """
 DROP TRIGGER IF EXISTS roles_refuse_system_rename ON roles;
 DROP FUNCTION IF EXISTS refuse_system_role_rename();
 
@@ -221,6 +223,7 @@ ALTER TABLE tenant_settings
 ALTER TABLE tenant_settings
     ALTER COLUMN deposit_interest_annual_rate_pct SET NOT NULL;
 """
+)
 
 
 def upgrade() -> None:
