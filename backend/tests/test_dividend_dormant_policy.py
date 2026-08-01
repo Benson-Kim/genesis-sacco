@@ -123,9 +123,9 @@ async def _status(tid: uuid.UUID, mid: uuid.UUID) -> str:
     return str(value)
 
 
-async def _paid_then_exited() -> (
-    tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, DeclarationRecord]
-):
+async def _paid_then_exited() -> tuple[
+    uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, DeclarationRecord
+]:
     """The disposition-due state shared by FM6/FM7: A paid, B exited
     mid-run and still owed.
 
@@ -540,8 +540,7 @@ def test_fm6_kill_switch_mid_disposition_leaves_zero_orphan_unclaimed_state(
         assert (
             await count(
                 tid,
-                "SELECT count(*) FROM audit_log "
-                "WHERE action = 'dividend_distribution.unclaimed'",
+                "SELECT count(*) FROM audit_log WHERE action = 'dividend_distribution.unclaimed'",
             )
             == 0
         )
