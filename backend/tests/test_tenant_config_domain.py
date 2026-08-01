@@ -237,9 +237,14 @@ def test_approval_bands_authority_ceilings() -> None:
     assert authority_may_ratify("Credit Committee", Decimal("50000"), bands)
     assert not authority_may_ratify("Credit Committee", Decimal("2000000.01"), bands)
     assert authority_may_ratify("System Admin", Decimal("99999999.00"), bands)
-    # Unlisted roles are not capped here: RBAC remains the primary gate
-    # and an unconfigured matrix keeps pre-P13.7 behaviour.
-    assert authority_may_ratify("Auditor", Decimal("99999999.00"), bands)
+    # Unlisted roles fail closed with a floor (review R2): they may
+    # ratify only within the FIRST band's ceiling (100 000 here) — a
+    # forgotten role degrades to the smallest configured authority,
+    # never to an uncapped ceiling. Fails in the second direction if
+    # the fail-open `return True` is restored.
+    assert authority_may_ratify("Auditor", Decimal("100000.00"), bands)
+    assert not authority_may_ratify("Auditor", Decimal("100000.01"), bands)
+    assert not authority_may_ratify("Auditor", Decimal("99999999.00"), bands)
 
 
 def test_approval_bands_finite_top_band_blocks_all_listed_roles() -> None:

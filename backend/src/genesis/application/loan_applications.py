@@ -26,7 +26,7 @@ from genesis.application.tenant_settings import committee_quorum, enforce_author
 from genesis.domain.committee import Decision, Vote, decide
 from genesis.domain.lending import ApplicationStage, InvalidTransitionError, transition
 from genesis.domain.money import ZERO, to_cents
-from genesis.errors import ConflictError, InvalidInputError, NotFoundError
+from genesis.errors import ConflictError, ForbiddenError, InvalidInputError, NotFoundError
 
 #: Stage moves a caller may request directly. APPROVED comes only from
 #: committee quorum; DISBURSED comes only from P7's disburse_loan.
@@ -369,6 +369,7 @@ async def transition_stage(
     *,
     version: int,
     target: ApplicationStage,
+    system_actor: bool = False,
 ) -> ApplicationRecord:
     """Move an application through the P6 machine under a row lock.
 
@@ -378,7 +379,21 @@ async def transition_stage(
     config change mid-workflow governs future transitions only — moves
     already committed under the old config are never revisited (v1.1
     rule 3). Rejection stays uncapped: it moves no money.
+
+    Deny by default (review R1): the band guard binds every attributed
+    actor. An unattributed service-level caller must OPT IN to the
+    bypass by passing the keyword-only ``system_actor=True`` together
+    with ``actor_id=None`` — the bypass is then recorded on the
+    transition's own audit row. A bare ``actor_id=None`` without the
+    flag is refused before any state is read or written, so no present
+    or future job/backfill/internal path can silently ratify unlimited
+    amounts by passing None.
     """
+    if system_actor:
+        if actor_id is not None:
+            raise InvalidInputError("system_actor transitions must not carry an actor_id")
+    elif actor_id is None:
+        raise ForbiddenError("transition without an actor requires the explicit system_actor flag")
     if target not in API_TRANSITION_TARGETS:
         raise ConflictError(
             f"stage '{target.value}' is decided by committee voting or disbursement, "
@@ -404,6 +419,8 @@ async def transition_stage(
         raise ConflictError(str(exc)) from exc
     if actor_id is not None and target is not ApplicationStage.REJECTED:
         # P13.7 authority bands, enforced under the row lock above.
+        # actor_id can be None here ONLY via the explicit system_actor
+        # bypass validated at function entry (review R1).
         await enforce_authority_band(session, tenant_id, actor_id, Decimal(str(row[2])))
     result = cast(
         CursorResult[Any],
@@ -419,6 +436,11 @@ async def transition_stage(
     )
     if result.rowcount != 1:
         raise ConflictError(f"stale version {version} for application {application_id}")
+    after_payload: dict[str, object] = {"stage": target.value}
+    if system_actor:
+        # The band-guard bypass is deliberate and leaves evidence: the
+        # transition's audit row records it (review R1).
+        after_payload["system_actor"] = True
     await record_audit(
         session,
         tenant_id,
@@ -427,7 +449,7 @@ async def transition_stage(
         entity="loan_applications",
         entity_id=str(application_id),
         before={"stage": current.value},
-        after={"stage": target.value},
+        after=after_payload,
     )
     await enqueue_event(
         session,

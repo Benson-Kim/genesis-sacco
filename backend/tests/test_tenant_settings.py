@@ -114,16 +114,30 @@ async def _make_application(
 
 
 async def _advance(tid: uuid.UUID, application_id: uuid.UUID, *, to_committee: bool) -> None:
-    """Drive an application forward via the service (no acting user, so
-    the authority-band guard is exercised only where a test wants it)."""
+    """Drive an application forward via the explicit system-actor bypass
+    (review R1): fixtures deliberately opt out of the band guard so it
+    is exercised only where a test wants it. A bare actor_id=None would
+    now raise (see test_bare_none_actor_transition_refused...)."""
     async with tenant_session(factory(), tid) as session:
         await applications_service.transition_stage(
-            session, tid, None, application_id, version=1, target=ApplicationStage.APPRAISAL
+            session,
+            tid,
+            None,
+            application_id,
+            version=1,
+            target=ApplicationStage.APPRAISAL,
+            system_actor=True,
         )
     if to_committee:
         async with tenant_session(factory(), tid) as session:
             await applications_service.transition_stage(
-                session, tid, None, application_id, version=2, target=ApplicationStage.COMMITTEE
+                session,
+                tid,
+                None,
+                application_id,
+                version=2,
+                target=ApplicationStage.COMMITTEE,
+                system_actor=True,
             )
 
 
@@ -714,6 +728,125 @@ def test_committee_approve_vote_capped_by_band_reject_uncapped() -> None:
         async with tenant_session(factory(), tid) as session:
             tally = await applications_service.cast_vote(session, tid, cc_id, app_id, Vote.REJECT)
         assert tally.rejections == 1
+
+    asyncio.run(run())
+
+
+def test_bare_none_actor_transition_refused_without_system_flag() -> None:
+    """Review R1 falsifiability: the None-actor band bypass must be
+    impossible to hit accidentally. A service call with actor_id=None
+    and NO explicit system flag on a banded amount is refused with the
+    stage provably unchanged and no stage-audit row; the ambiguous
+    combination (an actor AND the flag) is refused too; the deliberate
+    bypass works and records system_actor=true on the transition's own
+    audit row. Fails with the entry guard removed (the bare None call
+    would silently ratify the banded amount)."""
+
+    async def run() -> None:
+        tid, admin_id, token = await seed_actor()
+        await _configure(tid, admin_id, approval_bands=_PROTO_MATRIX)
+        # 200 000 requires band 1 (Branch Manager) — hand-computed.
+        app_id = await _make_application(
+            tid, _headers(token), amount="200000.00", name="Bare None Borrower"
+        )
+        async with tenant_session(factory(), tid) as session:
+            with pytest.raises(ForbiddenError):
+                await applications_service.transition_stage(
+                    session, tid, None, app_id, version=1, target=ApplicationStage.APPRAISAL
+                )
+        assert await _stage_of(tid, app_id) == "submitted"
+        audits = await count(
+            tid,
+            "SELECT count(*) FROM audit_log WHERE tenant_id = CAST(:t AS uuid) "
+            "AND action = 'application.stage' AND entity_id = :eid",
+            t=str(tid),
+            eid=str(app_id),
+        )
+        assert audits == 0, "a refused transition must leave no stage-audit row"
+        # The ambiguous combination is a refused contract violation.
+        async with tenant_session(factory(), tid) as session:
+            with pytest.raises(InvalidInputError):
+                await applications_service.transition_stage(
+                    session,
+                    tid,
+                    admin_id,
+                    app_id,
+                    version=1,
+                    target=ApplicationStage.APPRAISAL,
+                    system_actor=True,
+                )
+        assert await _stage_of(tid, app_id) == "submitted"
+        # The deliberate bypass works and leaves audit evidence.
+        async with tenant_session(factory(), tid) as session:
+            await applications_service.transition_stage(
+                session,
+                tid,
+                None,
+                app_id,
+                version=1,
+                target=ApplicationStage.APPRAISAL,
+                system_actor=True,
+            )
+        assert await _stage_of(tid, app_id) == "appraisal"
+        async with tenant_session(factory(), tid) as session:
+            after = (
+                await session.execute(
+                    text(
+                        "SELECT after FROM audit_log "
+                        "WHERE tenant_id = CAST(:tid AS uuid) "
+                        "AND action = 'application.stage' AND entity_id = :eid"
+                    ),
+                    {"tid": str(tid), "eid": str(app_id)},
+                )
+            ).scalar_one()
+        assert after["system_actor"] is True
+
+    asyncio.run(run())
+
+
+def test_unlisted_role_fails_closed_at_first_band_ceiling() -> None:
+    """Review R2 falsifiability, both directions: with a matrix that
+    omits Branch Manager (who holds applications:edit), the manager may
+    still ratify within the FIRST band's ceiling (100 000 — the
+    fail-closed floor) but is refused above it (403, stage unchanged).
+    Fails with the fail-open `return True` restored (the 200 000
+    transition would succeed)."""
+
+    async def run() -> None:
+        tid, admin_id, token = await seed_actor()
+        await _configure(
+            tid,
+            admin_id,
+            approval_bands=[
+                {"authority": "Loan Officer", "max_amount": "100000.00"},
+                {"authority": "System Admin", "max_amount": None},
+            ],
+        )
+        _, manager_token = await add_user(tid, "Branch Manager")
+        # Above the floor: hand-computed 200 000 > 100 000 (band 0).
+        big_app = await _make_application(
+            tid, _headers(token), amount="200000.00", name="Unlisted Above Floor"
+        )
+        async with api_client() as client:
+            res = await client.post(
+                f"/applications/{big_app}/transition",
+                json={"version": 1, "target": "appraisal"},
+                headers=_headers(manager_token),
+            )
+            assert res.status_code == 403, res.text
+        assert await _stage_of(tid, big_app) == "submitted"
+        # Within the floor: 50 000 <= 100 000 resolves to band 0.
+        small_app = await _make_application(
+            tid, _headers(token), amount="50000.00", name="Unlisted Within Floor"
+        )
+        async with api_client() as client:
+            res = await client.post(
+                f"/applications/{small_app}/transition",
+                json={"version": 1, "target": "appraisal"},
+                headers=_headers(manager_token),
+            )
+            assert res.status_code == 200, res.text
+        assert await _stage_of(tid, small_app) == "appraisal"
 
     asyncio.run(run())
 

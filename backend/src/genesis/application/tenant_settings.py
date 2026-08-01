@@ -404,9 +404,11 @@ async def enforce_authority_band(
     transitions only, never retroactively (v1.1 rule 3). The actor's
     role is resolved server-side from the users table inside this
     transaction — never from the JWT alone (the P13.5 F1/F2 precedent).
-    Roles not listed in the matrix are not capped here: the P4 RBAC
-    matrix remains the primary gate, and an unconfigured matrix keeps
-    the pre-P13.7 behaviour (fallback default).
+    A configured matrix caps EVERY role: roles not listed fail closed
+    at the FIRST band's ceiling (review R2 — misconfiguration degrades
+    safely, never uncaps); the P4 RBAC matrix remains the primary
+    gate. Only a tenant with NO matrix configured keeps the pre-P13.7
+    uncapped behaviour (fallback default).
     """
     bands = await approval_bands_config(session, tenant_id)
     if bands is None:

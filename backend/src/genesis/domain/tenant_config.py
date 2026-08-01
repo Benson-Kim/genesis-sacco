@@ -440,16 +440,23 @@ def required_band_index(amount: Decimal, bands: tuple[ApprovalBand, ...]) -> int
 def authority_may_ratify(role_name: str, amount: Decimal, bands: tuple[ApprovalBand, ...]) -> bool:
     """Whether a role may ratify (advance/approve) the given amount.
 
-    A role LISTED in the matrix is capped by its own band ceiling; a
-    role NOT listed is not capped here — the P4 RBAC matrix remains
-    the primary gate, and an unconfigured (or partially configured)
-    matrix must fall back to the pre-P13.7 behaviour (BUILD_PROMPTS
-    P13.7: "current constants as fallback defaults").
+    A role LISTED in the matrix is capped by its own band ceiling. A
+    role NOT listed in a configured matrix FAILS CLOSED WITH A FLOOR
+    (review R2): it may ratify only amounts within the FIRST band's
+    ceiling, so a misconfigured matrix (a role holding
+    applications:edit that the tenant forgot to list) degrades to the
+    smallest configured authority instead of silently uncapping a
+    money ceiling. The uncapped pre-P13.7 fallback (BUILD_PROMPTS
+    P13.7: "current constants as fallback defaults") applies only when
+    NO matrix is configured at all — enforce_authority_band returns
+    before ever calling this function in that case.
     """
+    required = required_band_index(amount, bands)
     for index, band in enumerate(bands):
         if band.authority == role_name:
-            return index >= required_band_index(amount, bands)
-    return True
+            return index >= required
+    # Fail closed with a floor: an unlisted role holds band-0 authority.
+    return required == 0
 
 
 def rate_for_amount(amount: Decimal, bands: tuple[RateBand, ...]) -> Decimal | None:
