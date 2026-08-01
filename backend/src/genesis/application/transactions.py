@@ -88,7 +88,7 @@ async def _require_member(
         await session.execute(
             # Lock clause chosen from two static literals in code.
             text(
-                "SELECT status FROM members WHERE id = CAST(:m AS uuid) "
+                "SELECT status FROM members WHERE id = CAST(:m AS uuid) "  # noqa: S608
                 f"AND tenant_id = CAST(:tid AS uuid) {lock}"
             ),
             {"m": str(member_id), "tid": str(tenant_id)},
