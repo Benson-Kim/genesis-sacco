@@ -736,7 +736,7 @@ backend, not Phase C/D; (2) a dedicated series adds no renumbering risk
 to P0–P24; (3) it is docs-only and therefore a perfect parallel track
 (no migrations, no TENANT_TABLES/ENTITY_MODULES/.gitlab-ci.yml backend
 collisions); (4) the drift rule (v1.2 rule 11) needs ONE authoritative
-home for each diagram, not per-prompt copies. P-DIAG.1–.6 may run in
+home for each diagram, not per-prompt copies. P-DIAG.1–.5 may run in
 parallel with each other and with Phase C prompts once P-DIAG.0 lands.
 
 Common rules for every P-DIAG prompt:
