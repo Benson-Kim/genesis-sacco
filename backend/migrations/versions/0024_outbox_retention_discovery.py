@@ -1,0 +1,108 @@
+"""DSA-6 outbox hardening: purge index + due/purgeable tenant registries
+
+Revision ID: 0024
+Revises: 0023
+Create Date: 2026-08-01
+
+Claimed as 0024 with down_revision 0023 per v1.2 rule 14. At branch
+time main's migration head was 0022 (0001-0022 linear) and **0023 was
+the open claim of !40 (P13.10)** — this MR therefore merges AFTER !40
+and its pipeline can only be green on the combined state (sequencing
+declared in the MR description; re-verified per rule 12 before ready).
+NO new tables: no TENANT_TABLES / ENTITY_MODULES / RLS delta. Three
+expand-only objects backing P13.17(e):
+
+  * idx_outbox_dispatched_purge — partial index over
+    (dispatched_at) WHERE status = 'dispatched', the driving index for
+    the retention-purge DELETE and the purgeable-tenant registry
+    (gate 1.3: shipped in the same MR as the queries it serves,
+    infrastructure/outbox_worker.py:purge_dispatched /
+    list_purgeable_tenants). idx_outbox_pending (0001) cannot serve
+    this predicate — it is partial over status = 'pending'.
+
+  * outbox_due_tenant_ids() — SECURITY DEFINER registry (the exact
+    0003 active_tenant_ids() pattern: the dispatcher enumerates
+    cross-tenant work without weakening RLS on any table) returning
+    the active tenants that have due pending events, so the worker
+    wakes only tenants with work instead of sweeping every active
+    tenant each interval. The due set IS the pending set:
+    idx_outbox_pending (0001) serves it.
+
+  * outbox_purgeable_tenant_ids(cutoff timestamptz) — same pattern for
+    the retention purge. The cutoff argument is computed by the worker
+    from the module-owned DISPATCHED_RETENTION_DAYS constant (v1.1
+    rule 1: config-owned, never caller-supplied); it is a parameter
+    only so the retention policy lives in exactly one place.
+
+Both functions join tenants ON status = 'active' — parity with 0003:
+suspended tenants are neither dispatched nor purged.
+
+Lock posture (honest per the !40 R5 disposition): CREATE INDEX
+(non-CONCURRENT) takes a SHARE lock on outbox_events, blocking event
+INSERTs (i.e. every mutating request) for the duration of the build.
+That matches this project's accepted maintenance-window migration
+runner model; it is NOT a zero-downtime migration. CREATE FUNCTION
+takes no table locks. If a zero-downtime posture is adopted later, the
+index moves to CREATE INDEX CONCURRENTLY outside the migration
+transaction.
+
+Downgrade drops the two functions and the index — no data is touched,
+nothing money-bearing is lost, so no conditional refusal is needed
+(the purge itself only ever deletes dispatched delivery receipts;
+pending and dead rows are exempt by status in the worker SQL).
+"""
+
+from alembic import op
+
+revision = "0024"
+down_revision = "0023"
+branch_labels = None
+depends_on = None
+
+_UP = """
+-- 1. Driving index for the retention purge (gate 1.3: shipped with the
+--    DELETE and the purgeable-tenant registry it serves). Partial over
+--    the purge predicate; idx_outbox_pending (0001) is partial over
+--    status = 'pending' and cannot serve status = 'dispatched'.
+CREATE INDEX idx_outbox_dispatched_purge
+    ON outbox_events (dispatched_at)
+    WHERE status = 'dispatched';
+
+-- 2. Due-tenant discovery: SECURITY DEFINER so the dispatcher can find
+--    tenants with due work without weakening RLS on any other table
+--    (the 0003 active_tenant_ids() pattern). The defining role is the
+--    migration role (BYPASSRLS/superuser in CI and ops environments).
+CREATE FUNCTION outbox_due_tenant_ids() RETURNS SETOF uuid
+LANGUAGE sql STABLE SECURITY DEFINER
+AS $fn$
+    SELECT DISTINCT o.tenant_id
+    FROM outbox_events o
+    JOIN tenants t ON t.id = o.tenant_id AND t.status = 'active'
+    WHERE o.status = 'pending' AND o.next_attempt_at <= now()
+$fn$;
+
+-- 3. Purgeable-tenant discovery for the retention purge; the worker
+--    passes now() - DISPATCHED_RETENTION_DAYS (module-owned constant).
+CREATE FUNCTION outbox_purgeable_tenant_ids(cutoff timestamptz) RETURNS SETOF uuid
+LANGUAGE sql STABLE SECURITY DEFINER
+AS $fn$
+    SELECT DISTINCT o.tenant_id
+    FROM outbox_events o
+    JOIN tenants t ON t.id = o.tenant_id AND t.status = 'active'
+    WHERE o.status = 'dispatched' AND o.dispatched_at < cutoff
+$fn$;
+"""
+
+_DOWN = """
+DROP FUNCTION IF EXISTS outbox_purgeable_tenant_ids(timestamptz);
+DROP FUNCTION IF EXISTS outbox_due_tenant_ids();
+DROP INDEX IF EXISTS idx_outbox_dispatched_purge;
+"""
+
+
+def upgrade() -> None:
+    op.execute(_UP)
+
+
+def downgrade() -> None:
+    op.execute(_DOWN)
