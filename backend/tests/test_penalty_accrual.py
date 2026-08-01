@@ -625,6 +625,34 @@ def test_closed_written_off_and_cured_loans_never_accrue() -> None:
                 )
             skipped.append(loan_id)
 
+        # An EXITED member's loan (failure mode 7, made explicit per
+        # review V4): P12 post_settlement nets and closes every loan
+        # through the P10 closure hook and marks the member exited, so
+        # coverage was transitive via status='active'. Pin that
+        # end-state directly — same pattern as the statuses above; the
+        # settlement path itself is exercised in test_member_exits.py
+        # and a full request/quorum/settle fixture here would be
+        # disproportionate scaffolding.
+        exited = await _disburse(tid, Decimal("24000.00"))
+        await _pin_first_instalment(tid, exited, due=date(2026, 6, 1))
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(
+                text(
+                    "UPDATE loans SET status = 'closed', balance = 0, penalty_due = 0 "
+                    "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+                ),
+                {"id": str(exited), "tid": str(tid)},
+            )
+            await session.execute(
+                text(
+                    "UPDATE members SET status = 'exited' "
+                    "WHERE tenant_id = CAST(:tid AS uuid) AND id = "
+                    "(SELECT member_id FROM loans WHERE id = CAST(:id AS uuid))"
+                ),
+                {"id": str(exited), "tid": str(tid)},
+            )
+        skipped.append(exited)
+
         # A repayment that CURES the arrears before the job runs: the
         # oldest-unpaid derivation finds nothing due -> dpd 0 -> no
         # accrual (and the settled instalment leaves no basis).
