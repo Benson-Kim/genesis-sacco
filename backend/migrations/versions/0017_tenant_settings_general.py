@@ -1,14 +1,13 @@
 """tenant settings, parameters & approval matrix (P13.7)
 
 Revision ID: 0017
-Revises: 0015
+Revises: 0016
 Create Date: 2026-07-31
 
-Numbering note: revision 0016 is reserved by the in-flight P13.6
-branches registry branch (duo/feature/p13-6-branches). P13.7 does NOT
-depend on P13.6, so this revision chains from 0015 (the main head).
-Whichever MR merges second must re-point its down_revision at the
-other's revision id so the chain stays linear (recorded in the MR).
+Numbering note: this revision originally chained from 0015, reserving
+0016 for the then-in-flight P13.6 branches registry. P13.6 has since
+merged to main, so down_revision now points at 0016 and the alembic
+chain is linear again (the re-chain recorded in the MR).
 
 Expand-only revision backing BUILD_PROMPTS P13.7: generalise
 tenant_settings (0009: deposit-interest rate; 0010: exit fee) into the
@@ -59,7 +58,7 @@ returns the schema AND data domain to the 0009 contract).
 from alembic import op
 
 revision = "0017"
-down_revision = "0015"
+down_revision = "0016"
 branch_labels = None
 depends_on = None
 
