@@ -112,6 +112,26 @@ def test_terminal_stages_have_no_exits() -> None:
     assert allowed_transitions(ApplicationStage.DISBURSED) == frozenset()
 
 
+def test_npl_classes_pinned_to_classify() -> None:
+    """NPL_CLASSES (by label) can never drift from classify() (by dpd).
+
+    Mirror of !47's test_recovery_domain.test_npl_classes_pinned_to_classify
+    (the constant is the declared shared surface between P13.15's B3
+    write-off gate and P13.16 — both branches carry the identical
+    definition so the merge dedupes). Samples cover every threshold
+    boundary of the 30/90/180/360 ladder, hand-computed: 0/30 normal,
+    31/90 watch, 91/180 substandard (NPL), 181/360 doubtful (NPL),
+    361 loss (NPL). Every LoanClass member must appear, so a new class
+    cannot ship unpinned."""
+    samples = [0, 30, 31, 90, 91, 180, 181, 360, 361]
+    seen: set[LoanClass] = set()
+    for dpd in samples:
+        result = classify(dpd)
+        seen.add(result.label)
+        assert result.is_npl == (result.label in NPL_CLASSES), dpd
+    assert seen == set(LoanClass)
+
+
 # ---------------------------------------------------------------------------
 # P10: loan status machine
 # ---------------------------------------------------------------------------
