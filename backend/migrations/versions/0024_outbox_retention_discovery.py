@@ -50,6 +50,26 @@ downgrade restores active_tenant_ids() to its original 0003 definition
 (no SET clause) so 0024's downgrade leaves the database exactly at the
 0023 state.
 
+SECURITY (review finding R7): PostgreSQL grants EXECUTE on every
+function to PUBLIC by default, so all three SECURITY DEFINER
+registries — active_tenant_ids() (0003), outbox_due_tenant_ids() and
+outbox_purgeable_tenant_ids(timestamptz) (0024) — were callable by ANY
+role: a compromised tenant-scoped session could enumerate every active
+tenant id AND observe which tenants have due/purgeable outbox activity
+(a cross-tenant activity oracle). This migration REVOKEs EXECUTE FROM
+PUBLIC on all three and GRANTs EXECUTE only to `genesis`, the single
+database role this project runs end to end: the API, the outbox
+worker, and the migration runner all connect as the DATABASE_URL role
+(env.py reads DATABASE_URL only; CI pins it to genesis for both
+backend:test and backend:migrate-check; 0004 documents the
+"single app role" model — no per-table GRANTs exist). The worker calls
+these registries through its normal session, so `genesis` is exactly
+the grantee it needs. Downgrade restores the pre-0024 grant state:
+PUBLIC is re-granted on active_tenant_ids() only (the 0003 default-ACL
+state — the explicit grant is semantically identical to the NULL-proacl
+default it replaces); the two 0024 functions are dropped outright,
+which removes their ACLs with them.
+
 Lock posture (honest per the !40 R5 disposition): CREATE INDEX
 (non-CONCURRENT) takes a SHARE lock on outbox_events, blocking event
 INSERTs (i.e. every mutating request) for the duration of the build.
@@ -120,6 +140,21 @@ CREATE OR REPLACE FUNCTION active_tenant_ids() RETURNS SETOF uuid
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $fn$ SELECT id FROM tenants WHERE status = 'active' $fn$;
+
+-- 5. R7 audit fix: PostgreSQL grants EXECUTE to PUBLIC by default, so
+--    every role — including a compromised tenant-scoped app session —
+--    could call the three definer registries and use them as a
+--    cross-tenant activity oracle (which tenants exist, which have
+--    due/purgeable outbox work). Lock EXECUTE down to `genesis`, the
+--    single role this project connects as everywhere (API, outbox
+--    worker, migration runner — env.py/DATABASE_URL; see the module
+--    docstring). The worker calls these via its normal session.
+REVOKE EXECUTE ON FUNCTION active_tenant_ids() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION outbox_due_tenant_ids() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION outbox_purgeable_tenant_ids(timestamptz) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION active_tenant_ids() TO genesis;
+GRANT EXECUTE ON FUNCTION outbox_due_tenant_ids() TO genesis;
+GRANT EXECUTE ON FUNCTION outbox_purgeable_tenant_ids(timestamptz) TO genesis;
 """
 
 _DOWN = """
@@ -129,6 +164,15 @@ _DOWN = """
 CREATE OR REPLACE FUNCTION active_tenant_ids() RETURNS SETOF uuid
 LANGUAGE sql STABLE SECURITY DEFINER
 AS $fn$ SELECT id FROM tenants WHERE status = 'active' $fn$;
+
+-- R7 downgrade: restore the pre-0024 grant state. 0003 shipped
+-- active_tenant_ids() with the PostgreSQL DEFAULT function ACL, which
+-- includes EXECUTE to PUBLIC — so PUBLIC is re-granted here
+-- explicitly. (Semantically identical to the 0003 state: pg_proc's
+-- NULL proacl *means* owner + PUBLIC EXECUTE; the explicit ACL simply
+-- materialises it.) The two 0024 registries need no grant restore:
+-- the DROPs below remove them together with their ACLs.
+GRANT EXECUTE ON FUNCTION active_tenant_ids() TO PUBLIC;
 
 DROP FUNCTION IF EXISTS outbox_purgeable_tenant_ids(timestamptz);
 DROP FUNCTION IF EXISTS outbox_due_tenant_ids();
