@@ -51,6 +51,10 @@ TENANT_TABLES = [
     "dividend_declaration_votes",
     "dividend_distributions",
     "share_transfers",
+    # P13.16: recovery workflow rows carry loan/staff workflow state
+    # and collections notes — tenant-owned, RLS forced per ADR-0002.
+    "recovery_cases",
+    "recovery_case_notes",
     "outbox_events",
     "audit_log",
     "idempotency_keys",
