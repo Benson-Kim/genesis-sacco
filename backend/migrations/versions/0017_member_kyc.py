@@ -15,6 +15,17 @@ checklist, previously not persisted at all.
      can never drift from the member row it belongs to (gate 1.5 —
      consistency in the DATABASE, not just the app).
 
+     The FK deliberately carries no ON UPDATE action (review K3):
+     members.type is immutable in the P8 service — no application path
+     updates it (update_member writes name/phone/email, the status
+     paths write status, and no request body accepts a type field), so
+     the raw-FK-violation failure mode is unreachable through the app.
+     The invariant is pinned by
+     test_members_type_immutable_no_app_path_and_db_backstop, and for
+     manual SQL the violation is the intended backstop: a type rewrite
+     under an existing profile/document row is refused by the database
+     instead of silently detaching the per-type CHECKs.
+
   2. member_profiles — one row per member (UNIQUE (tenant_id,
      member_id) is the atomic-claim key, v1.1 rule 5) holding:
        * member_type (composite-FK-synced, see 1) with a CHECK that the

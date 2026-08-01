@@ -13,9 +13,13 @@ tenant argument, so only the explicit predicates can refuse the row
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
 import os
+import re
 import uuid
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -25,6 +29,7 @@ from sqlalchemy.exc import DBAPIError
 from db_helpers import api_client, factory
 from export_helpers import add_user, count, seed_actor
 from genesis.application import member_kyc as kyc_service
+from genesis.application import members as members_service
 from genesis.domain.members import MemberType
 from genesis.errors import NotFoundError
 from genesis.infrastructure.db import get_engine
@@ -723,6 +728,89 @@ def test_kyc_routes_follow_the_members_matrix() -> None:
             m=mid,
         )
         assert denied_audits == 0
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# members.type immutability (review K3): the composite-FK failure mode
+# is unreachable through the application
+# ---------------------------------------------------------------------------
+
+
+def _update_members_statements() -> list[str]:
+    """Every SQL string in the genesis package that updates members.
+
+    Implicitly concatenated literals parse as ONE ast.Constant, so a
+    statement split across source lines is still scanned whole.
+    """
+    # genesis package root, derived from an already-imported module.
+    root = Path(kyc_service.__file__).parents[1]
+    statements: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        statements.extend(
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and "UPDATE members" in node.value
+        )
+    return statements
+
+
+def test_members_type_immutable_no_app_path_and_db_backstop() -> None:
+    """Review K3: the composite FK (member_id, member_type) ->
+    members (id, type) turns a members.type update into a raw FK
+    violation once a profile exists. That failure mode is unreachable:
+    no application path updates members.type — proven structurally
+    (every UPDATE-members statement in the package touches other
+    columns only; no update body or service signature accepts a type)
+    — and for manual SQL the FK violation IS the backstop, proven with
+    a raw UPDATE that the database refuses while the member row stays
+    intact. Fails if an 'UPDATE members ... type =' path is introduced
+    or the composite FK is dropped."""
+
+    async def run() -> None:
+        # Structural invariant: no service path can rewrite type.
+        statements = _update_members_statements()
+        assert statements, "scan must see the known P8 UPDATE statements"
+        offenders = [s for s in statements if re.search(r"\btype\s*=", s)]
+        assert offenders == [], f"members.type must never be updated: {offenders}"
+        assert "type" not in inspect.signature(members_service.update_member).parameters
+        from genesis.api.members import MemberStatusBody, MemberUpdateBody
+
+        assert "type" not in MemberUpdateBody.model_fields
+        assert "type" not in MemberStatusBody.model_fields
+
+        # DB backstop: with a profile row present, a raw type rewrite
+        # is refused by the composite FK (falsifiable: drop the FK and
+        # this succeeds).
+        tid, _, token = await seed_actor()
+        async with api_client() as client:
+            mid = await _create_member(client, token, MemberType.PERSON)
+            res = await client.post(
+                f"/members/{mid}/profile",
+                json=_profile_body(MemberType.PERSON),
+                headers=_headers(token, idem=uuid.uuid4().hex),
+            )
+            assert res.status_code == 201
+        with pytest.raises(DBAPIError):
+            async with tenant_session(factory(), tid) as session:
+                await session.execute(
+                    text(
+                        "UPDATE members SET type = 'company' "
+                        "WHERE id = CAST(:m AS uuid) AND tenant_id = CAST(:t AS uuid)"
+                    ),
+                    {"m": mid, "t": str(tid)},
+                )
+        survivors = await count(
+            tid,
+            "SELECT count(*) FROM members "
+            "WHERE id = CAST(:m AS uuid) AND type = 'person'",
+            m=mid,
+        )
+        assert survivors == 1, "the member row must survive the refused rewrite"
 
     asyncio.run(run())
 
