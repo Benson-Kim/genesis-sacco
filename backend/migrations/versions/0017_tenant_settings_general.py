@@ -46,13 +46,26 @@ revalidates the same bounds at the boundary.
      this prompt; disbursement-time enforcement is recorded as a
      follow-up in the MR.
 
+  6. roles: system role names become immutable (review R5). Approval-
+     band authorities key off seeded role NAMES, so a rename would
+     silently detach a configured money ceiling. No application path
+     updates roles.name (application/rbac.py mutates permissions
+     only); the trigger makes the invariant DB-enforced against manual
+     SQL through the app role as well.
+
 No new tables and no new indexes: tenant_settings keeps its 0009 PK
 and RLS policy (forced, tenant_isolation), which serve every new read.
 
-Working downgrade fully reverses: new columns dropped; the NOT NULL on
-the deposit rate is restored after deleting rows that hold a NULL rate
-(such rows can only exist under this revision's API, so removing them
-returns the schema AND data domain to the 0009 contract).
+Downgrade (review R4 — non-destructive by contract): the new columns,
+trigger and function are dropped and the NOT NULL on the deposit rate
+is restored, but ONLY when no tenant_settings row holds a NULL deposit
+rate. Such rows carry money parameters (penalty rates, approval
+matrices, global parameters) configured under this revision, so the
+downgrade REFUSES with an exception naming the manual step — set a
+deposit rate per tenant via PUT /settings, or deliberately export and
+delete the rows — instead of silently DELETEing configured money
+config. CI's migrate-check (up -> down -> up) runs on a database
+without such rows and is unaffected.
 """
 
 from alembic import op
@@ -128,9 +141,57 @@ ALTER TABLE tenant_settings
 ALTER TABLE loan_products
     ADD COLUMN guarantors_required integer NOT NULL DEFAULT 0
         CHECK (guarantors_required >= 0 AND guarantors_required <= 10);
+
+-- ---------------------------------------------------------------------------
+-- 6. System role names are immutable (review R5): approval-band
+--    authorities key off seeded role NAMES; a rename would silently
+--    detach a configured money ceiling.
+-- ---------------------------------------------------------------------------
+CREATE FUNCTION refuse_system_role_rename() RETURNS trigger
+LANGUAGE plpgsql AS $fn$
+BEGIN
+    IF OLD.is_system AND NEW.name IS DISTINCT FROM OLD.name THEN
+        RAISE EXCEPTION
+            'system role names are immutable (P13.7 review R5): '
+            'approval-band authorities key off them';
+    END IF;
+    RETURN NEW;
+END
+$fn$;
+
+CREATE TRIGGER roles_refuse_system_rename
+    BEFORE UPDATE OF name ON roles
+    FOR EACH ROW EXECUTE FUNCTION refuse_system_role_rename();
 """
 
-_DOWN = """
+#: Downgrade guard (review R4), exported separately so the test suite
+#: can prove it refuses while rows with a NULL deposit rate exist —
+#: falsifiable independently of a full downgrade run.
+_DOWN_GUARD = """
+DO $gd$
+DECLARE null_rate_rows bigint;
+BEGIN
+    SELECT count(*) INTO null_rate_rows
+        FROM tenant_settings
+        WHERE deposit_interest_annual_rate_pct IS NULL;
+    IF null_rate_rows > 0 THEN
+        RAISE EXCEPTION
+            'refusing 0017 downgrade: % tenant_settings row(s) hold a NULL '
+            'deposit_interest_annual_rate_pct; downgrading would destroy their '
+            'configured money parameters (penalty rates, approval matrices, '
+            'global parameters). Manual step: set a deposit rate for each such '
+            'tenant via PUT /settings, or deliberately export and delete the '
+            'rows, then re-run the downgrade.',
+            null_rate_rows;
+    END IF;
+END
+$gd$;
+"""
+
+_DOWN = _DOWN_GUARD + """
+DROP TRIGGER IF EXISTS roles_refuse_system_rename ON roles;
+DROP FUNCTION IF EXISTS refuse_system_role_rename();
+
 ALTER TABLE loan_products DROP COLUMN IF EXISTS guarantors_required;
 
 ALTER TABLE tenant_settings
@@ -154,9 +215,9 @@ ALTER TABLE tenant_settings
     DROP COLUMN IF EXISTS penalty_rate_pct_per_month,
     DROP COLUMN IF EXISTS dividend_rate_pct;
 
--- Rows created without a deposit rate exist only under the 0017 API;
--- removing them restores the 0009 data domain before re-tightening.
-DELETE FROM tenant_settings WHERE deposit_interest_annual_rate_pct IS NULL;
+-- The guard above (review R4) has already refused the downgrade if any
+-- row still holds a NULL deposit rate, so re-tightening cannot destroy
+-- configured money parameters and cannot fail on existing data.
 ALTER TABLE tenant_settings
     ALTER COLUMN deposit_interest_annual_rate_pct SET NOT NULL;
 """

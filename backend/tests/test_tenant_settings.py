@@ -31,9 +31,12 @@ removing the guard makes it fail.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import os
 import uuid
 from decimal import Decimal
+from pathlib import Path
+from typing import Any
 
 import pytest
 from sqlalchemy import text
@@ -949,6 +952,82 @@ def test_corrupt_bands_repairable_via_get_version_then_put() -> None:
             )
             assert res.status_code == 403
         assert await _stage_of(tid, app_id) == "submitted"
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Migration 0017 contracts: R4 downgrade guard, R5 role-name immutability
+# ---------------------------------------------------------------------------
+
+
+def _load_migration_0017() -> Any:
+    """The real 0017 revision module (not a copy — falsifiability)."""
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "versions"
+        / "0017_tenant_settings_general.py"
+    )
+    spec = importlib.util.spec_from_file_location("migration_0017_tenant_settings", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_migration_0017_downgrade_refuses_while_null_rate_rows_exist() -> None:
+    """Review R4 falsifiability: the 0017 downgrade must REFUSE (never
+    DELETE) when tenant_settings rows hold a NULL deposit rate. The
+    guard block from the real migration raises against a tenant whose
+    row was configured without a deposit rate, and the configured money
+    parameters survive; once a rate is set the same guard passes. Also
+    pins that the destructive DELETE is gone from _DOWN. Fails with the
+    guard removed (reverted to the silent DELETE)."""
+
+    async def run() -> None:
+        migration = _load_migration_0017()
+        assert "DELETE FROM tenant_settings" not in migration._DOWN
+        assert migration._DOWN.startswith(migration._DOWN_GUARD)
+        tid, admin_id, _ = await seed_actor()
+        await _configure(tid, admin_id, registration_fee=Decimal("500.00"))
+        with pytest.raises(DBAPIError):
+            async with tenant_session(factory(), tid) as session:
+                await session.execute(text(migration._DOWN_GUARD))
+        # The refused downgrade destroyed nothing.
+        async with tenant_session(factory(), tid) as session:
+            record = await settings_service.get_settings(session, tid)
+        assert record.registration_fee == Decimal("500.00")
+        # The documented manual step (set a rate) satisfies the guard.
+        await _configure(tid, admin_id, deposit_interest_annual_rate_pct=Decimal("5.00"))
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(text(migration._DOWN_GUARD))
+
+    asyncio.run(run())
+
+
+def test_system_role_rename_refused_by_db_trigger() -> None:
+    """Review R5: approval-band authorities key off seeded role NAMES,
+    so a rename would silently detach a configured money ceiling. No
+    application path updates roles.name (application/rbac.py mutates
+    permissions only); the 0017 trigger enforces the invariant at the
+    DB, so raw SQL through the app role is refused too. Fails with the
+    trigger dropped."""
+
+    async def run() -> None:
+        tid, _, _ = await seed_actor()
+        with pytest.raises(DBAPIError):
+            async with tenant_session(factory(), tid) as session:
+                await session.execute(
+                    text("UPDATE roles SET name = 'Renamed Officer' WHERE name = 'Loan Officer'")
+                )
+        async with tenant_session(factory(), tid) as session:
+            survivors = (
+                await session.execute(
+                    text("SELECT count(*) FROM roles WHERE name = 'Loan Officer'")
+                )
+            ).scalar_one()
+        assert int(survivors) == 1, "the seeded role name must survive the refused rename"
 
     asyncio.run(run())
 

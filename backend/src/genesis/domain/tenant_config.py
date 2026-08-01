@@ -295,6 +295,12 @@ class ApprovalBand:
     an authority listed at index i may ratify any amount whose band
     index is <= i (its ceiling is its own max_amount). Authorities are
     the code-owned RBAC role names — never free-form caller strings.
+
+    Name-keying is safe because seeded role names are immutable
+    (review R5): no application path updates roles.name
+    (application/rbac.py mutates permissions only) and migration 0017
+    ships a DB trigger refusing renames of is_system roles, so a
+    rename can never silently detach a configured ceiling.
     """
 
     authority: str
