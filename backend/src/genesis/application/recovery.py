@@ -573,7 +573,7 @@ def worklist_sql(*, with_cursor: bool) -> str:
     """
     cursor = "AND (l.days_past_due, l.id) < (:c_dpd, CAST(:c_id AS uuid)) "
     return (
-        "SELECT c.id, c.loan_id, l.member_id, l.days_past_due, l.classification, "
+        "SELECT c.id, c.loan_id, l.member_id, l.days_past_due, l.classification, "  # noqa: S608
         "c.assignee_id, u.status AS assignee_status, c.opened_at, c.first_assigned_at, "
         "c.version "
         "FROM loans l "
@@ -666,7 +666,7 @@ def close_scan_sql(*, with_after: bool) -> str:
     """
     after = "AND c.id > CAST(:after AS uuid) " if with_after else ""
     return (
-        "SELECT c.id, c.loan_id, l.status, l.classification "
+        "SELECT c.id, c.loan_id, l.status, l.classification "  # noqa: S608
         "FROM recovery_cases c "
         "JOIN loans l ON l.tenant_id = c.tenant_id AND l.id = c.loan_id "
         "WHERE c.tenant_id = CAST(:tid AS uuid) AND c.status = 'open' "
