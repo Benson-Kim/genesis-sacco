@@ -769,7 +769,7 @@ def test_dormant_member_with_balances_exits_cleanly_through_p12() -> None:
                 session, tid, v1, exit_record.id, version=fresh.version, channel=Channel.BANK
             )
         assert settled.exit.status is ExitStatus.SETTLED
-        assert settled.net_paid == Decimal("7000.00")
+        assert settled.exit.net_payable == Decimal("7000.00")
         assert (await _status(tid, mid))[0] == "exited"
         for table in ("deposit_accounts", "share_accounts"):
             # Table name from test code, never user input.
@@ -850,9 +850,7 @@ def test_nightly_cycle_refuses_bad_tenants_loudly_and_serves_the_rest(
         # relative to now (period 1 month, activity ~90 days ago).
         await _configure_dormancy(tid_b, admin_b, months=1)
         due_b = await seed_member(tid_b, name="Cycle Due")
-        long_ago = datetime.now(UTC).replace(microsecond=0) - __import__("datetime").timedelta(
-            days=90
-        )
+        long_ago = datetime.now(UTC).replace(microsecond=0) - timedelta(days=90)
         async with tenant_session(factory(), tid_b) as session:
             await session.execute(
                 text(
@@ -931,4 +929,3 @@ def test_dormancy_endpoint_runs_job_and_rejects_caller_supplied_period() -> None
         assert res.status_code == 403
 
     asyncio.run(run())
-io.run(run())

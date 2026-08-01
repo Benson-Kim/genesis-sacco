@@ -25,6 +25,7 @@ from genesis.application.pagination import build_created_id_cursor, parse_create
 from genesis.application.tenant_settings import committee_quorum, enforce_authority_band
 from genesis.domain.committee import Decision, Vote, decide
 from genesis.domain.lending import ApplicationStage, InvalidTransitionError, transition
+from genesis.domain.members import MemberStatus, MoneyOperation, member_may
 from genesis.domain.money import ZERO, to_cents
 from genesis.errors import ConflictError, ForbiddenError, InvalidInputError, NotFoundError
 

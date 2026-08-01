@@ -64,8 +64,8 @@ def test_p1313_dormancy_queries_are_index_backed() -> None:
         await _configure_dormancy(tid, admin_id, months=6)
         mid = await _aged_member(tid, name="Explain Member")
         await _deposit_at(tid, mid, "100.00", OLD)
-        assert AS_OF  # the canonical window the captured plan reflects
 
+        # The canonical test window (test_dormancy.AS_OF / CUTOFF).
         params: dict[str, object] = {"tid": str(tid), "cutoff": CUTOFF, "limit": 200}
         placeholders = _member_initiated_placeholders(params)
         params["after"] = str(uuid.UUID(int=0))
