@@ -1122,6 +1122,32 @@ async def distribute_dividend(
     async def process(
         session: AsyncSession, after_id: uuid.UUID | None
     ) -> tuple[int, uuid.UUID | None, tuple[int, int, int, Decimal, Decimal]]:
+        # Void-vs-distribute TOCTOU (review finding F1): the opening
+        # status check released its row lock with its session, so a
+        # void (legal while zero claims exist) could otherwise commit
+        # between that check and the first batch — paying a REJECTED
+        # declaration and freeing the FY slot for a second one (a
+        # year-level double). Re-verify under FOR SHARE, held to batch
+        # commit: void's FOR UPDATE serialises behind it and then sees
+        # this batch's claims (refused), or its committed rejection is
+        # seen here and nothing is posted. A concurrent runner that
+        # flipped the row to 'distributed' is not a conflict — the
+        # anti-join already yields only unpaid members.
+        status_row = (
+            await session.execute(
+                text(
+                    "SELECT status FROM dividend_declarations "
+                    "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                    "FOR SHARE"
+                ),
+                {"id": str(declaration_id), "tid": str(tenant_id)},
+            )
+        ).first()
+        if status_row is None or str(status_row[0]) == DeclarationStatus.REJECTED.value:
+            raise ConflictError(
+                "dividend declaration was voided while distribution was starting; "
+                "nothing was posted by this batch"
+            )
         params: dict[str, object] = {
             "tid": str(tenant_id),
             "decl": str(declaration_id),

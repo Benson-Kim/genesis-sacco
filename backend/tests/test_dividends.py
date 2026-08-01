@@ -360,6 +360,43 @@ def test_leap_year_fy_and_last_day_parking_earn_exactly_pro_rata() -> None:
     asyncio.run(run())
 
 
+def test_totals_are_the_sum_of_rounded_figures_not_a_rounded_pot() -> None:
+    """Failure mode 1, the residue oracle: two members each with a
+    101.00 share ADB at 2.50% earn 2.525 -> 2.53 EACH (rounded exactly
+    once per member), so the declared total is 5.06 — a naive pot
+    allocation (202.00 x 2.5% = 5.05) differs by a cent and could
+    never reconcile with the member postings. Falsifiable: derive the
+    total from the summed bases instead and this fails by 0.01."""
+
+    async def run() -> None:
+        tid, admin_id, _ = await seed_actor()
+        await _configure_dividends(tid, admin_id, dividend="2.50", rebate="0.00")
+        m_one = await _member_with_share_history(tid, amount="101.00", on=FY.start, name="One")
+        m_two = await _member_with_share_history(tid, amount="101.00", on=FY.start, name="Two")
+        record = await declare_dividend(_scope(tid), tid, admin_id, today=TODAY)
+        assert record.total_share_basis == Decimal("202.00")
+        assert record.total_dividend == Decimal("5.06")  # NOT the pot's 5.05
+        assert record.total_payout == Decimal("5.06")
+
+        await _approve(tid, record.id)
+        result = await distribute_dividend(_scope(tid), tid, None, record.id)
+        assert result.claimed == 2
+        assert result.status is DeclarationStatus.DISTRIBUTED
+        # Conservation: SUM(member postings) == the declared total
+        # exactly (zero residue by construction, by side-effect rows).
+        assert await _sum(
+            tid,
+            "SELECT COALESCE(SUM(le.amount), 0) FROM ledger_entries le "
+            "JOIN transactions t ON t.id = le.transaction_id "
+            "WHERE t.type = 'dividend_posting' AND le.side = 'credit' "
+            "AND le.account = 'member.shares'",
+        ) == Decimal("5.06")
+        assert await _balance(tid, m_one, table="share_accounts") == Decimal("103.53")
+        assert await _balance(tid, m_two, table="share_accounts") == Decimal("103.53")
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # 3. Double distribution — concurrent double-run
 # ---------------------------------------------------------------------------
@@ -532,6 +569,59 @@ def test_approved_snapshot_is_write_once_at_the_database_level() -> None:
     asyncio.run(run())
 
 
+def test_void_racing_the_first_distribution_batch_pays_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review finding F1 (the void-vs-distribute TOCTOU): the opening
+    status check releases its row lock with its session, so a void —
+    legal while no claim exists — can commit between the snapshot
+    verification and the first batch. The per-batch FOR SHARE status
+    re-check refuses with NOTHING posted, and the freed FY slot
+    re-declares cleanly. Falsifiable: remove the per-batch status
+    re-check and the run pays a REJECTED declaration (then the
+    redeclaration would pay the year twice)."""
+
+    async def run() -> None:
+        tid, admin_id, _, _, _ = await _oracle_tenant()
+        record = await declare_dividend(_scope(tid), tid, admin_id, today=TODAY)
+        await _approve(tid, record.id)
+
+        real_verify = dividends_module._verify_snapshot
+
+        async def verify_then_void(*args: Any, **kwargs: Any) -> None:
+            await real_verify(*args, **kwargs)
+            # The race window: a void lands after verification passed,
+            # before the first batch claims anything.
+            async with tenant_session(factory(), tid) as session:
+                await void_declaration(
+                    session,
+                    tid,
+                    admin_id,
+                    record.id,
+                    version=await get_fresh(tid, record.id),
+                )
+
+        with monkeypatch.context() as m:
+            m.setattr(dividends_module, "_verify_snapshot", verify_then_void)
+            with pytest.raises(ConflictError, match="voided"):
+                await distribute_dividend(_scope(tid), tid, None, record.id)
+
+        # ZERO side effects for the rejected declaration.
+        assert await count(tid, "SELECT count(*) FROM dividend_distributions") == 0
+        assert (
+            await count(
+                tid,
+                "SELECT count(*) FROM transactions WHERE type = 'dividend_posting'",
+            )
+            == 0
+        )
+        # No member was paid, so the fresh declaration is the year's first.
+        fresh = await declare_dividend(_scope(tid), tid, admin_id, today=TODAY)
+        assert fresh.eligible_members == 3
+
+    asyncio.run(run())
+
+
 def test_one_live_declaration_per_financial_year() -> None:
     async def run() -> None:
         tid, admin_id, _, _, _ = await _oracle_tenant()
@@ -543,6 +633,37 @@ def test_one_live_declaration_per_financial_year() -> None:
             await void_declaration(session, tid, admin_id, record.id, version=record.version)
         fresh = await declare_dividend(_scope(tid), tid, admin_id, today=TODAY)
         assert fresh.id != record.id
+
+    asyncio.run(run())
+
+
+def test_a_distributed_financial_year_can_never_be_redeclared_or_voided() -> None:
+    """uq_dividend_declarations_fy covers every non-rejected status:
+    once a year is DISTRIBUTED its slot never frees — a second
+    declaration for the same FY is refused, and the terminal status
+    cannot be voided back open. Falsifiable: scope the unique index to
+    'declared' only and the redeclaration lands (the year paid twice)."""
+
+    async def run() -> None:
+        tid, admin_id, _, _, _ = await _oracle_tenant()
+        record = await declare_dividend(_scope(tid), tid, admin_id, today=TODAY)
+        await _approve(tid, record.id)
+        result = await distribute_dividend(_scope(tid), tid, None, record.id)
+        assert result.status is DeclarationStatus.DISTRIBUTED
+
+        with pytest.raises(ConflictError, match="already exists"):
+            await declare_dividend(_scope(tid), tid, admin_id, today=TODAY)
+        with pytest.raises(ConflictError, match="cannot move"):
+            async with tenant_session(factory(), tid) as session:
+                await void_declaration(
+                    session,
+                    tid,
+                    admin_id,
+                    record.id,
+                    version=await get_fresh(tid, record.id),
+                )
+        assert await count(tid, "SELECT count(*) FROM dividend_declarations") == 1
+        assert await count(tid, "SELECT count(*) FROM dividend_distributions") == 3
 
     asyncio.run(run())
 
@@ -836,6 +957,73 @@ def test_locked_member_is_skipped_and_paid_exactly_once_by_the_rerun() -> None:
             == 3
         )
         assert await _balance(tid, m_a, table="share_accounts") == Decimal("12600.00")
+
+    asyncio.run(run())
+
+
+def test_member_exiting_mid_run_is_skipped_and_the_declaration_stays_approved() -> None:
+    """The documented mid-run population change (the verification-vs-
+    rerun convention): a member who leaves the eligible population
+    AFTER the first-run verification is skipped by the status
+    allow-list in the locked batch scan; the declaration stays
+    APPROVED with the shortfall visible as pending_members, the FY
+    slot stays held, and nobody is re-posted. Falsifiable: widen the
+    scan allow-list to exited members and the leaver is paid."""
+
+    async def run() -> None:
+        tid, admin_id, m_a, _, _ = await _oracle_tenant()
+        record = await declare_dividend(_scope(tid), tid, admin_id, today=TODAY)
+        await _approve(tid, record.id)
+
+        # First run with A's member row locked elsewhere (verification
+        # passes; A is SKIP LOCKED-skipped, B and C are paid).
+        holder = tenant_session(factory(), tid)
+        session = await holder.__aenter__()
+        await session.execute(
+            text(
+                "SELECT id FROM members WHERE id = CAST(:m AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
+            ),
+            {"m": str(m_a), "tid": str(tid)},
+        )
+        try:
+            first = await distribute_dividend(_scope(tid), tid, None, record.id)
+        finally:
+            await holder.__aexit__(None, None, None)
+        assert first.claimed == 2
+
+        # A exits between the verification and their batch.
+        async with tenant_session(factory(), tid) as session_two:
+            await session_two.execute(
+                text(
+                    "UPDATE members SET status = 'exited' "
+                    "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+                ),
+                {"id": str(m_a), "tid": str(tid)},
+            )
+
+        second = await distribute_dividend(_scope(tid), tid, None, record.id)
+        assert second.scanned == 0  # the leaver is never even scanned
+        assert second.claimed == 0
+        assert second.pending_members == 1  # the shortfall stays visible
+        assert second.status is DeclarationStatus.APPROVED
+
+        # Paid members were paid exactly once; the leaver never was.
+        assert await count(tid, "SELECT count(*) FROM dividend_distributions") == 2
+        assert (
+            await count(
+                tid,
+                "SELECT count(*) FROM dividend_distributions "
+                "WHERE member_id = CAST(:m AS uuid)",
+                m=str(m_a),
+            )
+            == 0
+        )
+        assert await _balance(tid, m_a, table="share_accounts") == Decimal("12000.00")
+        # The approved declaration still holds the FY slot: the year
+        # can never be re-declared over a distributed remainder.
+        with pytest.raises(ConflictError, match="already exists"):
+            await declare_dividend(_scope(tid), tid, admin_id, today=TODAY)
 
     asyncio.run(run())
 
