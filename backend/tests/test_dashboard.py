@@ -54,9 +54,7 @@ pytestmark = pytest.mark.skipif(
     not os.environ.get("DATABASE_URL"), reason="requires a migrated database"
 )
 
-ALL_SLICES = frozenset(
-    {Module.TRANSACTIONS, Module.MEMBERS, Module.APPLICATIONS, Module.LOAN_BOOK}
-)
+ALL_SLICES = frozenset({Module.TRANSACTIONS, Module.MEMBERS, Module.APPLICATIONS, Module.LOAN_BOOK})
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -144,27 +142,21 @@ async def _seed_application(
     return aid
 
 
-async def _deposit(
-    tid: uuid.UUID, actor: uuid.UUID, mid: uuid.UUID, amount: str
-) -> None:
+async def _deposit(tid: uuid.UUID, actor: uuid.UUID, mid: uuid.UUID, amount: str) -> None:
     async with tenant_session(factory(), tid) as session:
         await txn_service.record_deposit(
             session, tid, actor, mid, amount=Decimal(amount), channel=Channel.MPESA
         )
 
 
-async def _withdraw(
-    tid: uuid.UUID, actor: uuid.UUID, mid: uuid.UUID, amount: str
-) -> None:
+async def _withdraw(tid: uuid.UUID, actor: uuid.UUID, mid: uuid.UUID, amount: str) -> None:
     async with tenant_session(factory(), tid) as session:
         await txn_service.record_withdrawal(
             session, tid, actor, mid, amount=Decimal(amount), channel=Channel.MPESA
         )
 
 
-async def _share_topup(
-    tid: uuid.UUID, actor: uuid.UUID, mid: uuid.UUID, amount: str
-) -> None:
+async def _share_topup(tid: uuid.UUID, actor: uuid.UUID, mid: uuid.UUID, amount: str) -> None:
     async with tenant_session(factory(), tid) as session:
         await txn_service.record_share_topup(
             session, tid, actor, mid, amount=Decimal(amount), channel=Channel.BANK
@@ -442,26 +434,23 @@ def test_fm2_two_tenants_each_see_exactly_their_own_figures() -> None:
 #:   pipeline + guarantors    <- applications:view
 #:   loan_book                <- loan_book:view
 _ROLE_SLICES: dict[str, set[str]] = {
-    "System Admin": {
-        "deposits", "monthly_flows", "members", "pipeline", "guarantors", "loan_book"
-    },
+    "System Admin": {"deposits", "monthly_flows", "members", "pipeline", "guarantors", "loan_book"},
     "Branch Manager": {
-        "deposits", "monthly_flows", "members", "pipeline", "guarantors", "loan_book"
+        "deposits",
+        "monthly_flows",
+        "members",
+        "pipeline",
+        "guarantors",
+        "loan_book",
     },
-    "Loan Officer": {
-        "deposits", "monthly_flows", "members", "pipeline", "guarantors", "loan_book"
-    },
+    "Loan Officer": {"deposits", "monthly_flows", "members", "pipeline", "guarantors", "loan_book"},
     "Teller": {"deposits", "monthly_flows", "members"},
     "Credit Committee": {"pipeline", "guarantors", "loan_book"},
     "Accountant": {"deposits", "monthly_flows", "members", "loan_book"},
-    "Auditor": {
-        "deposits", "monthly_flows", "members", "pipeline", "guarantors", "loan_book"
-    },
+    "Auditor": {"deposits", "monthly_flows", "members", "pipeline", "guarantors", "loan_book"},
 }
 
-_ALL_SLICE_KEYS = {
-    "deposits", "monthly_flows", "members", "pipeline", "guarantors", "loan_book"
-}
+_ALL_SLICE_KEYS = {"deposits", "monthly_flows", "members", "pipeline", "guarantors", "loan_book"}
 
 
 def test_fm3_permission_slicing_full_role_walk() -> None:

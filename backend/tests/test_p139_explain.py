@@ -97,9 +97,7 @@ def test_p139_dashboard_aggregates_are_index_backed() -> None:
             )
             pipeline_plan = await _explain(session, PIPELINE_SQL, tid_param)
             totals_plan = await _explain(session, GUARANTEE_TOTALS_SQL, {**tid_param, **live})
-            top_plan = await _explain(
-                session, TOP_GUARANTORS_SQL, {**tid_param, **live, "cap": 20}
-            )
+            top_plan = await _explain(session, TOP_GUARANTORS_SQL, {**tid_param, **live, "cap": 20})
             pledged_plan = await _explain(
                 session, LIVE_PLEDGED_SQL, {**tid_param, **live, "g": str(guarantor)}
             )

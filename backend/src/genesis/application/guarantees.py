@@ -74,6 +74,7 @@ def live_guarantee_params() -> dict[str, str]:
     """Bound parameters for the LIVE status set (v1.1 rule 6)."""
     return {"live0": LIVE_GUARANTEE_STATUSES[0], "live1": LIVE_GUARANTEE_STATUSES[1]}
 
+
 #: Undisbursed stages whose product cover rule guards an active-guarantee
 #: release (P13.14): while the application is in flight, releasing
 #: consented collateral must never drop remaining cover below the P7

@@ -79,8 +79,7 @@ MAX_GUARANTOR_ROWS = 100
 #: P8/P11 account services (see module docstring for the drift posture).
 #: Served by the deposit_accounts (tenant_id, member_id) UNIQUE index.
 DEPOSIT_TOTAL_SQL = (
-    "SELECT COALESCE(SUM(balance), 0) FROM deposit_accounts "
-    "WHERE tenant_id = CAST(:tid AS uuid)"
+    "SELECT COALESCE(SUM(balance), 0) FROM deposit_accounts WHERE tenant_id = CAST(:tid AS uuid)"
 )
 
 #: Total share capital — same posture, share_accounts.
@@ -279,9 +278,7 @@ async def _monthly_flows(
     return tuple(series)
 
 
-async def _pipeline(
-    session: AsyncSession, tenant_id: uuid.UUID
-) -> tuple[PipelineStageCount, ...]:
+async def _pipeline(session: AsyncSession, tenant_id: uuid.UUID) -> tuple[PipelineStageCount, ...]:
     rows = (await session.execute(text(PIPELINE_SQL), {"tid": str(tenant_id)})).all()
     counts = {str(r[0]): int(r[1]) for r in rows}
     return tuple(
