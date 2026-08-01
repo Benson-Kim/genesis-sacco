@@ -57,16 +57,20 @@ outbox_purgeable_tenant_ids(timestamptz) (0024) — were callable by ANY
 role: a compromised tenant-scoped session could enumerate every active
 tenant id AND observe which tenants have due/purgeable outbox activity
 (a cross-tenant activity oracle). This migration REVOKEs EXECUTE FROM
-PUBLIC on all three and GRANTs EXECUTE only to `genesis`, the single
-database role this project runs end to end: the API, the outbox
-worker, and the migration runner all connect as the DATABASE_URL role
-(env.py reads DATABASE_URL only; CI pins it to genesis for both
-backend:test and backend:migrate-check; 0004 documents the
-"single app role" model — no per-table GRANTs exist). The worker calls
-these registries through its normal session, so `genesis` is exactly
-the grantee it needs. Downgrade restores the pre-0024 grant state:
-PUBLIC is re-granted on active_tenant_ids() only (the 0003 default-ACL
-state — the explicit grant is semantically identical to the NULL-proacl
+PUBLIC on all three and GRANTs EXECUTE only to `genesis_app`, the
+non-superuser NOBYPASSRLS application role of ADR-0002 — the role the
+outbox worker's normal session runs as (env.py/DATABASE_URL; the CI
+backend:test job runs the whole suite, worker included, as
+genesis_app). The GRANT is conditional on the role existing because
+app-role provisioning is environment-owned, not migration-owned: in
+CI, backend:test creates genesis_app only AFTER `alembic upgrade
+head` (its bootstrap grants EXECUTE on these three functions
+alongside its table/sequence grants), and backend:migrate-check has
+no app role at all. The privileged migration role keeps EXECUTE
+implicitly as the function owner. Downgrade restores the pre-0024
+grant state: PUBLIC is re-granted on active_tenant_ids() only and the
+explicit app-role grant dropped (the 0003 default-ACL state — the
+explicit PUBLIC grant is semantically identical to the NULL-proacl
 default it replaces); the two 0024 functions are dropped outright,
 which removes their ACLs with them.
 
@@ -145,16 +149,24 @@ AS $fn$ SELECT id FROM tenants WHERE status = 'active' $fn$;
 --    every role — including a compromised tenant-scoped app session —
 --    could call the three definer registries and use them as a
 --    cross-tenant activity oracle (which tenants exist, which have
---    due/purgeable outbox work). Lock EXECUTE down to `genesis`, the
---    single role this project connects as everywhere (API, outbox
---    worker, migration runner — env.py/DATABASE_URL; see the module
---    docstring). The worker calls these via its normal session.
+--    due/purgeable outbox work). Lock EXECUTE down to genesis_app,
+--    the ADR-0002 application role the outbox worker's normal session
+--    runs as. Conditional: app-role provisioning is environment-owned
+--    (see the module docstring — in CI the role is created after this
+--    migration runs, and the migrate-check database has no app role);
+--    the privileged migration role keeps EXECUTE implicitly as owner.
 REVOKE EXECUTE ON FUNCTION active_tenant_ids() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION outbox_due_tenant_ids() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION outbox_purgeable_tenant_ids(timestamptz) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION active_tenant_ids() TO genesis;
-GRANT EXECUTE ON FUNCTION outbox_due_tenant_ids() TO genesis;
-GRANT EXECUTE ON FUNCTION outbox_purgeable_tenant_ids(timestamptz) TO genesis;
+DO $r7$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'genesis_app') THEN
+        GRANT EXECUTE ON FUNCTION active_tenant_ids() TO genesis_app;
+        GRANT EXECUTE ON FUNCTION outbox_due_tenant_ids() TO genesis_app;
+        GRANT EXECUTE ON FUNCTION outbox_purgeable_tenant_ids(timestamptz) TO genesis_app;
+    END IF;
+END
+$r7$;
 """
 
 _DOWN = """
@@ -168,11 +180,19 @@ AS $fn$ SELECT id FROM tenants WHERE status = 'active' $fn$;
 -- R7 downgrade: restore the pre-0024 grant state. 0003 shipped
 -- active_tenant_ids() with the PostgreSQL DEFAULT function ACL, which
 -- includes EXECUTE to PUBLIC — so PUBLIC is re-granted here
--- explicitly. (Semantically identical to the 0003 state: pg_proc's
+-- explicitly and the explicit app-role grant (redundant under PUBLIC)
+-- is dropped. (Semantically identical to the 0003 state: pg_proc's
 -- NULL proacl *means* owner + PUBLIC EXECUTE; the explicit ACL simply
 -- materialises it.) The two 0024 registries need no grant restore:
 -- the DROPs below remove them together with their ACLs.
 GRANT EXECUTE ON FUNCTION active_tenant_ids() TO PUBLIC;
+DO $r7$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'genesis_app') THEN
+        REVOKE EXECUTE ON FUNCTION active_tenant_ids() FROM genesis_app;
+    END IF;
+END
+$r7$;
 
 DROP FUNCTION IF EXISTS outbox_purgeable_tenant_ids(timestamptz);
 DROP FUNCTION IF EXISTS outbox_due_tenant_ids();

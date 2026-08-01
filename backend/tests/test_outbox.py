@@ -588,8 +588,10 @@ def test_r7_security_definer_functions_deny_public_execute() -> None:
     callable by ANY role — a compromised tenant-scoped session could
     enumerate every active tenant id and observe which tenants have
     due/purgeable outbox activity (a cross-tenant activity oracle).
-    0024 revokes PUBLIC and grants EXECUTE only to the single app/worker
-    role (the DATABASE_URL role, `genesis` in CI).
+    0024 revokes PUBLIC; only the ADR-0002 application role the worker
+    runs as (genesis_app in CI) gets an explicit EXECUTE grant — this
+    suite itself runs as that role, so the worker-path tests above
+    prove the granted role can still call the registries.
 
     Sweeps pg_proc.proacl for EVERY user-schema SECURITY DEFINER
     function. Oracle, hand-computed from the PostgreSQL ACL rules: a
