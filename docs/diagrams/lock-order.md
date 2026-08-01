@@ -394,5 +394,3 @@ ordering bugs, zero blocker issues.** The graph as built is acyclic
    (no row lock is ever acquired after an advisory lock).
 6. **INCOMING claims** (§7) are flipped to as-built by the executing
    MR, never left dashed after merge.
-�7) are flipped to as-built by the executing
-   MR, never left dashed after merge.
