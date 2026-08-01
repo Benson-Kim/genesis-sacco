@@ -31,6 +31,7 @@ PHASE B2 common rules):
 | Diagram | Prompt | Status |
 |---|---|---|
 | [`lock-order.md`](lock-order.md) — **authoritative lock-ordering DAG** (the single authority for every lock-order statement; v1.2 rule 11) | P-DIAG.0 | as-built |
+| [`erd.md`](erd.md) — ERD, all 37 tables at alembic head 0022 (five subject-area diagrams); spot-check: [`erd-spot-check.py`](erd-spot-check.py) | P-DIAG.2 | as-built |
 
-P-DIAG.1–.5 (C4, ERD, DFDs, STRIDE, sequence patterns) land here as
-their prompts execute.
+P-DIAG.1 and P-DIAG.3–.5 (C4, DFDs, STRIDE, sequence patterns) land
+here as their prompts execute.
