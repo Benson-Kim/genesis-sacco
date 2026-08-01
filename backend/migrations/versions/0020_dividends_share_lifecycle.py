@@ -32,8 +32,8 @@ tables.
     declared again (double-dividend at the year level is
     unrepresentable). Rejected/voided declarations free the slot.
 
-  * dividend_declarations immutability trigger — an approved (or
-    distributed) declaration is WRITE-ONCE on its snapshot columns
+  * dividend_declarations immutability trigger — a declaration is
+    WRITE-ONCE on its snapshot columns from the moment it is created
     (fy period, rates, count, bases, totals, requested_by): the
     committee approved THOSE figures, so any later mutation — even
     manual SQL through the app role — must fail loudly (P13.11
@@ -143,9 +143,10 @@ CREATE UNIQUE INDEX uq_dividend_declarations_fy
 CREATE INDEX idx_dividend_declarations_keyset
     ON dividend_declarations (tenant_id, created_at DESC, id DESC);
 
--- Write-once snapshot columns (failure mode 4): once a declaration
--- leaves 'declared', the figures the committee voted on can never be
--- edited -- only the status workflow columns may move. DB-enforced so
+-- Write-once snapshot columns (failure mode 4): the figures the
+-- committee votes on can never be edited after creation, in ANY
+-- status -- only the status workflow columns may move (a drifted
+-- snapshot is voided and redeclared, never edited). DB-enforced so
 -- even manual SQL through the app role fails loudly (0017 precedent).
 CREATE OR REPLACE FUNCTION forbid_dividend_snapshot_mutation() RETURNS trigger
 LANGUAGE plpgsql AS $fn$
