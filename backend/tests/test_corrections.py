@@ -1305,8 +1305,7 @@ def test_fm4_write_off_end_to_end_quorum_bound_to_write_once_snapshot() -> None:
             earlier = (
                 await session.execute(
                     text(
-                        "SELECT id FROM repayments WHERE loan_id = CAST(:l AS uuid) "
-                        "AND amount > 0"
+                        "SELECT id FROM repayments WHERE loan_id = CAST(:l AS uuid) AND amount > 0"
                     ),
                     {"l": str(loan_id)},
                 )
