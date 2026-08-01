@@ -534,3 +534,49 @@ def test_dsa6_purge_and_discovery_queries_are_index_backed() -> None:
         assert "idx_outbox_pending" in due_plan
 
     asyncio.run(run())
+
+
+def test_r6_every_security_definer_function_pins_search_path() -> None:
+    """R6 (!44): SECURITY DEFINER without a pinned search_path is a
+    schema-shadowing privilege-escalation vector — a caller-controlled
+    search_path could resolve hostile relations executed as the
+    BYPASSRLS definer role.
+
+    Sweeps pg_proc for EVERY user-schema SECURITY DEFINER function and
+    asserts its proconfig pins search_path (0024 pins the two new
+    registries and retro-fits the 0003 active_tenant_ids()).
+    Falsifiable: remove any `SET search_path = ...` clause from 0024
+    and this test names the offending function. Also asserts the three
+    known definer functions exist, so the sweep can never pass
+    vacuously against an empty schema.
+    """
+
+    async def run() -> None:
+        tid, _ = await seed_user(unique_email())
+        async with tenant_session(factory(), tid) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT p.proname, COALESCE(p.proconfig, ARRAY[]::text[]) "
+                        "FROM pg_proc p "
+                        "JOIN pg_namespace n ON n.oid = p.pronamespace "
+                        "WHERE p.prosecdef "
+                        "AND n.nspname NOT IN ('pg_catalog', 'information_schema')"
+                    )
+                )
+            ).all()
+        found = {name for name, _ in rows}
+        # Non-vacuous: the 0003 registry and both 0024 registries must exist.
+        assert {
+            "active_tenant_ids",
+            "outbox_due_tenant_ids",
+            "outbox_purgeable_tenant_ids",
+        } <= found
+        unpinned = sorted(
+            name
+            for name, config in rows
+            if not any(str(entry).startswith("search_path=") for entry in config)
+        )
+        assert unpinned == [], f"SECURITY DEFINER unpinned search_path: {unpinned}"
+
+    asyncio.run(run())
