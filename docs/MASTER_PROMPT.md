@@ -33,7 +33,9 @@ Currency: KES, stored as `NUMERIC(18,2)` (or integer minor units) — NEVER floa
 - Email/SMS/push/webhooks go through the **transactional outbox** only:
   write `outbox_events` in the SAME transaction as the domain change; a worker
   dispatches with retry + exponential backoff + dead-letter table. Direct
-  provider calls from request handlers are forbidden.
+  provider calls from request handlers are forbidden. The as-built flow
+  is `docs/diagrams/sequence-outbox-dispatch.md` (P-DIAG.5) — reference
+  it instead of re-describing the pattern.
 - Every service exposes `/healthz` (liveness) and `/readyz` (deps checked).
 
 ### 1.3 Scalability
@@ -65,7 +67,10 @@ Currency: KES, stored as `NUMERIC(18,2)` (or integer minor units) — NEVER floa
   quotes) bind to a PERSISTED snapshot row (amount + component breakdown +
   version); execution re-verifies every component under the full lock set
   and returns 409 if anything moved since approval. Approving "the current
-  state" is a rejected design (quote/approve/execute TOCTOU).
+  state" is a rejected design (quote/approve/execute TOCTOU). As-built
+  sequence diagrams (P-DIAG.5 — reference, never re-describe):
+  committee/voting `docs/diagrams/sequence-committee-voting.md`;
+  snapshot-bind-reverify `docs/diagrams/sequence-snapshot-bind-reverify.md`.
 - Uniqueness/idempotency claims are made atomically:
   `INSERT ... ON CONFLICT DO NOTHING` checked by rowcount. SELECT-then-INSERT
   against a UNIQUE key is a rejected pattern (race -> unhandled IntegrityError).
