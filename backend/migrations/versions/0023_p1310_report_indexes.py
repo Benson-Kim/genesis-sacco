@@ -1,4 +1,5 @@
-"""P13.10 report indexes: membership register keyset (gate 1.3)
+"""P13.10 report registry expansion: register keyset index + report
+vocabulary CHECK widening (gates 1.3, 1.5)
 
 Revision ID: 0023
 Revises: 0022
@@ -6,8 +7,13 @@ Create Date: 2026-08-01
 
 Claimed as 0023 with down_revision 0022 per v1.2 rule 14 — 0022
 (dividends x dormancy policy, !36) verified as main's migration head
-at branch time (0001-0022 linear). Indexes only, no new tables: no
-TENANT_TABLES / ENTITY_MODULES / RLS delta.
+at branch time (0001-0022 linear). NO new tables: no TENANT_TABLES /
+ENTITY_MODULES / RLS delta. Two expand-only changes:
+
+  * the 0013 exports.report CHECK pins the report vocabulary; the
+    P13 registry gains the four P13.10 reports here (the exact 0020
+    dividend_rebate_schedule precedent);
+  * idx_members_register_keyset, below.
 
 The P13.10 membership register streams the full members table through
 the export engine in (created_at, id) keyset order. This composite
@@ -34,10 +40,29 @@ depends_on = None
 _UP = """
 CREATE INDEX idx_members_register_keyset
     ON members (tenant_id, created_at, id);
+
+-- Expand the report vocabulary (0020 precedent, expand-only).
+ALTER TABLE exports DROP CONSTRAINT exports_report_check;
+ALTER TABLE exports ADD CONSTRAINT exports_report_check
+    CHECK (report IN
+        ('member_statement', 'trial_balance', 'loan_book',
+         'disbursement_collections', 'npl_trend', 'member_exit_statement',
+         'dividend_rebate_schedule', 'portfolio_at_risk_aging',
+         'membership_register', 'income_statement', 'sasra_return'));
 """
 
 _DOWN = """
 DROP INDEX IF EXISTS idx_members_register_keyset;
+
+-- Restoring the narrower CHECK validates existing rows: a database
+-- holding P13.10 export jobs refuses this loudly (the 0017/0020
+-- conditional-refusal precedent) instead of stranding invalid rows.
+ALTER TABLE exports DROP CONSTRAINT exports_report_check;
+ALTER TABLE exports ADD CONSTRAINT exports_report_check
+    CHECK (report IN
+        ('member_statement', 'trial_balance', 'loan_book',
+         'disbursement_collections', 'npl_trend', 'member_exit_statement',
+         'dividend_rebate_schedule'));
 """
 
 
