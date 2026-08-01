@@ -694,7 +694,7 @@ def dividend_schedule_page_sql(*, with_cursor: bool) -> str:
         "SELECT d.id, m.member_no, m.name, d.share_basis, "  # noqa: S608
         "d.dividend_rate_pct, d.dividend_amount, d.deposit_basis, "
         "d.rebate_rate_pct, d.rebate_amount, d.total_amount, t.txn_ref, "
-        "d.created_at "
+        "d.disposition, d.created_at "
         "FROM dividend_distributions d "
         "JOIN members m ON m.id = d.member_id AND m.tenant_id = d.tenant_id "
         "LEFT JOIN transactions t ON t.id = d.transaction_id "
@@ -736,7 +736,7 @@ async def _build_dividend_rebate_schedule(
         return list(result.all())
 
     def cursor_key(raw: Any) -> ReportCursor:
-        return (raw[11], str(raw[0]))
+        return (raw[12], str(raw[0]))
 
     def to_cells(raw: Any) -> tuple[Cell, ...]:
         return (
@@ -750,6 +750,9 @@ async def _build_dividend_rebate_schedule(
             Decimal(str(raw[8])),
             Decimal(str(raw[9])),
             str(raw[10]) if raw[10] is not None else None,
+            # Disposition (issue #19 P3): 'paid' or 'unclaimed' — the
+            # report is part of the unclaimed-payable alert surface.
+            str(raw[11]),
         )
 
     return ReportQuery(fetch=fetch, cursor_key=cursor_key, to_cells=to_cells)
@@ -852,6 +855,7 @@ REPORTS: dict[ReportName, ReportDefinition] = {
             ReportColumn("rebate", "Rebate"),
             ReportColumn("total", "Total"),
             ReportColumn("txn_ref", "Reference"),
+            ReportColumn("disposition", "Disposition"),
         ),
         allowed_filters=frozenset({"declaration_id"}),
         required_filters=frozenset({"declaration_id"}),
