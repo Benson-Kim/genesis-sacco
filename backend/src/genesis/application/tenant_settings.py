@@ -26,8 +26,13 @@ their own domain locks.
 Band configuration is validated at WRITE and REVALIDATED at READ
 before any consumer acts on it (defence against manual SQL edits — the
 0017 DB CHECK can only pin the JSON top-level type). Corrupted stored
-bands fail CLOSED: the consumer gets a 409 conflict, never a silently
-skipped guard.
+bands fail CLOSED for CONSUMERS: the money path gets a 409 conflict,
+never a silently skipped guard. The settings VIEWER (GET /settings)
+instead degrades per-key (review R3): a corrupt key is returned as
+null and surfaced by NAME ONLY in ``corrupt_keys`` (never the corrupt
+payload — least disclosure), keeping ``version`` readable so an
+operator can repair the key via PUT instead of guessing versions
+blind.
 
 Every read AND write carries an explicit bound tenant_id predicate on
 top of forced RLS (v1.1 rule 4); every mutation writes its audit row
@@ -88,6 +93,9 @@ class TenantSettingsRecord:
     ``version`` 0 means the tenant has no settings row yet; a first
     write must claim it with version=0. ``None`` values mean "not
     configured": consumers fall back to their code-owned defaults.
+    ``corrupt_keys`` names (by key only, review R3) stored band values
+    that failed read-side revalidation and were degraded to None in
+    this VIEW — consumers of those keys keep failing closed.
     """
 
     configured: bool
@@ -111,6 +119,7 @@ class TenantSettingsRecord:
     committee_size: int | None
     committee_quorum: int | None
     approval_bands: tuple[ApprovalBand, ...] | None
+    corrupt_keys: tuple[str, ...] = ()
 
 
 def settings_row_sql() -> str:
@@ -175,6 +184,24 @@ def _record_from_raw(raw: dict[str, object] | None) -> TenantSettingsRecord:
         value = raw[key] if raw else None
         return _ENUM_TYPES[key](str(value)) if value is not None else None
 
+    corrupt: list[str] = []
+
+    def bands(key: str) -> tuple[Any, ...] | None:
+        value = raw[key] if raw else None
+        if value is None:
+            return None
+        try:
+            return _BAND_VALIDATORS[key](value)
+        except BandConfigError:
+            # Viewer-side degradation (review R3): the settings VIEW
+            # names the corrupt key (never its payload) so an operator
+            # can repair via PUT with the version this read returns.
+            # Consumers keep failing CLOSED via _revalidated_bands.
+            corrupt.append(key)
+            return None
+
+    rate_bands = cast("tuple[RateBand, ...] | None", bands("loan_rate_bands"))
+    approval = cast("tuple[ApprovalBand, ...] | None", bands("approval_bands"))
     return TenantSettingsRecord(
         configured=raw is not None,
         version=int(cast(int, raw["version"])) if raw else 0,
@@ -185,10 +212,7 @@ def _record_from_raw(raw: dict[str, object] | None) -> TenantSettingsRecord:
         penalty_charged_on=enum("penalty_charged_on"),
         loan_interest_method=enum("loan_interest_method"),
         loan_interest_basis=enum("loan_interest_basis"),
-        loan_rate_bands=cast(
-            "tuple[RateBand, ...] | None",
-            _revalidated_bands("loan_rate_bands", raw["loan_rate_bands"] if raw else None),
-        ),
+        loan_rate_bands=rate_bands,
         min_share_capital=dec("min_share_capital"),
         registration_fee=dec("registration_fee"),
         min_monthly_contribution=dec("min_monthly_contribution"),
@@ -199,18 +223,19 @@ def _record_from_raw(raw: dict[str, object] | None) -> TenantSettingsRecord:
         exit_fee=dec("exit_fee"),
         committee_size=num("committee_size"),
         committee_quorum=num("committee_quorum"),
-        approval_bands=cast(
-            "tuple[ApprovalBand, ...] | None",
-            _revalidated_bands("approval_bands", raw["approval_bands"] if raw else None),
-        ),
+        approval_bands=approval,
+        corrupt_keys=tuple(corrupt),
     )
 
 
 async def get_settings(session: AsyncSession, tenant_id: uuid.UUID) -> TenantSettingsRecord:
     """The tenant's settings (single PK lookup); defaults when no row.
 
-    Stored band JSON is revalidated here too, so a corrupted value is
-    visible as a 409 to settings viewers instead of flowing onward.
+    Stored band JSON is revalidated here too. A corrupted value never
+    flows onward: it is degraded to None in this VIEW and named in
+    corrupt_keys (review R3) so the operator keeps a readable version
+    for the repair PUT, while every consumer of the key keeps failing
+    closed (409) via _revalidated_bands.
     """
     return _record_from_raw(await _fetch_raw(session, tenant_id))
 

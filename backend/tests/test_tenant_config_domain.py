@@ -54,7 +54,11 @@ def test_update_body_fields_match_registry_exactly() -> None:
 def test_settings_out_fields_match_registry_exactly() -> None:
     from genesis.api.tenant_settings import SettingsOut
 
-    assert set(SettingsOut.model_fields) == set(SETTINGS_REGISTRY) | {"configured", "version"}
+    assert set(SettingsOut.model_fields) == set(SETTINGS_REGISTRY) | {
+        "configured",
+        "version",
+        "corrupt_keys",
+    }
 
 
 def test_every_registry_key_declares_type_unit_bounds_and_consumers() -> None:

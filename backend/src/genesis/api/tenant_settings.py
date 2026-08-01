@@ -118,10 +118,14 @@ class SettingsUpdateBody(BaseModel):
 
 class SettingsOut(BaseModel):
     """The full settings view; null means "not configured" (fallbacks
-    documented per key in the registry). Decimals travel as strings."""
+    documented per key in the registry). Decimals travel as strings.
+    ``corrupt_keys`` names stored band keys that failed read-side
+    revalidation (degraded to null in this view, review R3) — names
+    only, never the corrupt payload (least disclosure)."""
 
     configured: bool
     version: int
+    corrupt_keys: list[str]
     deposit_interest_annual_rate_pct: str | None
     dividend_rate_pct: str | None
     penalty_rate_pct_per_month: str | None
@@ -177,6 +181,7 @@ def _out(record: settings_service.TenantSettingsRecord) -> SettingsOut:
     return SettingsOut(
         configured=record.configured,
         version=record.version,
+        corrupt_keys=list(record.corrupt_keys),
         deposit_interest_annual_rate_pct=s(record.deposit_interest_annual_rate_pct),
         dividend_rate_pct=s(record.dividend_rate_pct),
         penalty_rate_pct_per_month=s(record.penalty_rate_pct_per_month),

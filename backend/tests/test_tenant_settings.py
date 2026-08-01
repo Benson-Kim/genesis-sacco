@@ -855,7 +855,9 @@ def test_corrupted_stored_bands_fail_closed() -> None:
     """Read-side revalidation (defence against manual SQL edits): a
     stored approval matrix that passes the DB's array CHECK but breaks
     the band contract must refuse ratification (409) rather than
-    silently disable the guard; GET /settings surfaces the same 409."""
+    silently disable the guard. The settings VIEWER degrades per-key
+    instead (review R3): GET /settings stays 200 with the corrupt key
+    NAMED (payload never echoed) and the version intact."""
 
     async def run() -> None:
         tid, admin_id, token = await seed_actor()
@@ -883,7 +885,69 @@ def test_corrupted_stored_bands_fail_closed() -> None:
             )
             assert res.status_code == 409, res.text
             res = await client.get("/settings", headers=_headers(token))
-            assert res.status_code == 409
+            assert res.status_code == 200, res.text
+            body = res.json()
+            assert body["corrupt_keys"] == ["approval_bands"]
+            assert body["approval_bands"] is None
+            assert body["version"] == 1
+        assert await _stage_of(tid, app_id) == "submitted"
+
+    asyncio.run(run())
+
+
+def test_corrupt_bands_repairable_via_get_version_then_put() -> None:
+    """Review R3: the repair path must not deadlock. With corrupt
+    stored bands, GET /settings still returns 200 with the version; a
+    PUT carrying that version and a valid matrix repairs the row; the
+    subsequent GET is clean and the consumer guard is live again.
+    Fails if the viewer read reverts to 409 (the repair PUT would need
+    a blindly guessed version)."""
+
+    async def run() -> None:
+        tid, admin_id, token = await seed_actor()
+        await _configure(tid, admin_id, approval_bands=_PROTO_MATRIX)
+        async with tenant_session(factory(), tid) as session:
+            # Manual corruption bypassing the API (array passes the DB
+            # CHECK; the band contract fails at read).
+            await session.execute(
+                text(
+                    "UPDATE tenant_settings "
+                    "SET approval_bands = CAST(:bands AS jsonb) "
+                    "WHERE tenant_id = CAST(:tid AS uuid)"
+                ),
+                {"bands": '[{"authority": "Loan Officer"}]', "tid": str(tid)},
+            )
+        async with api_client() as client:
+            res = await client.get("/settings", headers=_headers(token))
+            assert res.status_code == 200, res.text
+            body = res.json()
+            assert body["corrupt_keys"] == ["approval_bands"]
+            version = body["version"]
+            res = await client.put(
+                "/settings",
+                json={"version": version, "approval_bands": _PROTO_MATRIX},
+                headers=_headers(token),
+            )
+            assert res.status_code == 200, res.text
+            res = await client.get("/settings", headers=_headers(token))
+            assert res.status_code == 200
+            body = res.json()
+            assert body["corrupt_keys"] == []
+            assert body["approval_bands"] is not None
+        # The guard is enforcing again after the repair: an officer
+        # above their 100 000 ceiling is refused — degradation never
+        # disabled the consumer-side fail-closed contract.
+        app_id = await _make_application(
+            tid, _headers(token), amount="200000.00", name="Post Repair Borrower"
+        )
+        _, officer_token = await add_user(tid, "Loan Officer")
+        async with api_client() as client:
+            res = await client.post(
+                f"/applications/{app_id}/transition",
+                json={"version": 1, "target": "appraisal"},
+                headers=_headers(officer_token),
+            )
+            assert res.status_code == 403
         assert await _stage_of(tid, app_id) == "submitted"
 
     asyncio.run(run())
