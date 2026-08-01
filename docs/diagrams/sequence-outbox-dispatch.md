@@ -28,21 +28,21 @@ sequenceDiagram
     rect rgb(240,248,255)
     Note over SVC,PG: Phase 0 — same-transaction event write
     SVC->>PG: domain writes + application/outbox.py enqueue_event L17<br/>INSERT INTO outbox_events — SAME transaction
-    Note over SVC,PG: rollback removes the event with the domain change<br/>(P5 atomicity test); direct provider calls from handlers<br/>are forbidden by import-linter contract 3
+    Note over SVC,PG: rollback removes the event with the domain change<br/>(P5 atomicity test) — direct provider calls from handlers<br/>are forbidden by import-linter contract 3
     end
 
     loop every interval, per active tenant (active_tenant_ids(), 0003)
         rect rgb(255,250,240)
         Note over W,PG: Phase 1 — claim (short txn, outbox rows ONLY)
-        W->>PG: SELECT ... WHERE status = 'pending' AND next_attempt_at <= now()<br/>ORDER BY next_attempt_at LIMIT batch FOR UPDATE SKIP LOCKED<br/>(dispatch_due L48; served by the partial index)
+        W->>PG: SELECT ... WHERE status = 'pending' AND next_attempt_at <= now()<br/>ORDER BY next_attempt_at LIMIT batch FOR UPDATE SKIP LOCKED<br/>(dispatch_due L48 — served by the partial index)
         W->>PG: lease each claimed row: UPDATE next_attempt_at =<br/>now() + 300s (CLAIM_LEASE_SECONDS L28)
         W->>PG: COMMIT — claim txn ends BEFORE any provider call
-        Note over W,PG: concurrent workers claim disjoint sets (SKIP LOCKED);<br/>a crashed worker's lease expires and the rows are re-claimed.<br/>PLANNED (P13.17/DSA-6): set-based lease UPDATE +<br/>dispatched-row retention purge — as-built leases per row
+        Note over W,PG: concurrent workers claim disjoint sets (SKIP LOCKED) —<br/>a crashed worker's lease expires and the rows are re-claimed.<br/>PLANNED (P13.17/DSA-6): set-based lease UPDATE +<br/>dispatched-row retention purge — as-built leases per row
         end
         rect rgb(240,255,240)
         Note over W,P: Phase 2 — dispatch OUTSIDE any transaction
         W->>P: provider.send(event_id, event_type, payload)
-        Note over W,P: NO domain locks, NO outbox locks held<br/>(lock-order.md §3, outbox row); adapters idempotent<br/>by event id, so redelivery never double-sends
+        Note over W,P: NO domain locks, NO outbox locks held<br/>(lock-order.md §3, outbox row) — adapters idempotent<br/>by event id, so redelivery never double-sends
         end
         rect rgb(255,240,240)
         Note over W,PG: Phase 3 — record outcome (fresh short txn per event)
@@ -51,7 +51,7 @@ sequenceDiagram
         else provider raised
             W->>PG: _record_failure L109: attempts + 1, last_error,<br/>next_attempt_at = now() + backoff_delay(attempts, jitter) L31<br/>(exponential: 30s * 2^attempts, jitter 0.5x-1.0x)
             opt attempts >= MAX_ATTEMPTS (8, L26)
-                W->>PG: UPDATE status = 'dead' (dead-letter; alertable via<br/>outbox_metrics L138)
+                W->>PG: UPDATE status = 'dead' (dead-letter — alertable via<br/>outbox_metrics L138)
             end
         end
         end

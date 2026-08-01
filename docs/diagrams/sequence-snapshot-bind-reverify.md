@@ -42,14 +42,14 @@ sequenceDiagram
 
     rect rgb(255,250,240)
     Note over C,PG: Phase 2 — approval BINDS to the snapshot row (never to "current state")
-    C->>PG: cast votes under the snapshot row lock; quorum decision<br/>flips status requested/declared -> approved (version + 1)
+    C->>PG: cast votes under the snapshot row lock — quorum decision<br/>flips status requested/declared -> approved (version + 1)
     TRG-->>PG: any UPDATE touching dividend snapshot figures is REFUSED<br/>(write-once: void and redeclare — 0020 L151/L172)
     end
 
     rect rgb(240,255,240)
     Note over EXE,PG: Phase 3 — execution re-verifies component-by-component
-    EXE->>PG: lock snapshot row FOR UPDATE; status + version check;<br/>initiator/declarer refused (separation of duties)
-    EXE->>PG: retake the FULL lock set and recompute every component<br/>exit: _compute_under_locks L279 (the SAME function both phases —<br/>gate 1.1); dividends: _verify_snapshot L953 recomputes totals<br/>AT THE SNAPSHOT RATES via the declaration's own function
+    EXE->>PG: lock snapshot row FOR UPDATE — status + version check —<br/>initiator/declarer refused (separation of duties)
+    EXE->>PG: retake the FULL lock set and recompute every component<br/>exit: _compute_under_locks L279 (the SAME function both phases —<br/>gate 1.1) — dividends: _verify_snapshot L953 recomputes totals<br/>AT THE SNAPSHOT RATES via the declaration's own function
     alt any component drifted since approval
         EXE-->>S: 409 conflict — NOTHING posted<br/>(void and request/redeclare afresh)
     else components equal, to the cent
