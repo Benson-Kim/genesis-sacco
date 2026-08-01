@@ -32,6 +32,19 @@ declared in MR !47 at branch time, the !44-after-!40 precedent.
       dpd > 90). Both are copied from the loan row read under its
       FOR UPDATE lock at open time; they are forensic workflow
       snapshots, not balances.
+    - NAMED CONTRACT — CLASSIFICATION-LADDER MIRROR (review N1): the
+      CHECKs above hardcode ('substandard', 'doubtful', 'loss') and
+      dpd > 90 in the DATABASE while domain/lending.classify owns the
+      thresholds in CODE; the NPL_CLASSES<->classify pin test covers
+      the code side only and can never see a stranded DB CHECK. The
+      ladder is FIXED today, so the mirror holds by construction —
+      but if classification bands ever become tenant-configurable
+      (the P13.7 direction), a SUCCESSOR migration MUST relax or
+      regenerate these CHECKs in the same MR that changes the ladder.
+      Changing the ladder without that successor migration is a
+      rejected MR: it would make legitimately-classified loans
+      un-openable (or performing loans openable) at the DB layer,
+      silently diverging from the domain.
     - SLA timestamps (addendum A7): opened_at / first_assigned_at /
       closed_at are written server-side (DEFAULT now() / now() in the
       service SQL) — no caller-supplied timestamps anywhere (v1.1
