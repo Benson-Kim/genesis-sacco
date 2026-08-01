@@ -153,8 +153,7 @@ def parse_penalty_config(
         ) from exc
     if not rate.is_finite() or rate < 0 or rate > 100 or grace < 0 or grace > 365:
         raise ConflictError(
-            "stored penalty configuration is outside its permitted bounds; "
-            "repair via PUT /settings"
+            "stored penalty configuration is outside its permitted bounds; repair via PUT /settings"
         )
     return PenaltyConfig(rate_pct_per_month=rate, grace_days=grace, charged_on=basis)
 
@@ -336,9 +335,7 @@ async def _accrue_penalty(
     if dpd <= config.grace_days:
         return ZERO
     basis_amount = (
-        arrears_amount
-        if config.charged_on is PenaltyChargedOn.INSTALMENT_IN_ARREARS
-        else balance
+        arrears_amount if config.charged_on is PenaltyChargedOn.INSTALMENT_IN_ARREARS else balance
     )
     amount = daily_penalty(basis_amount, config.rate_pct_per_month)
     if amount <= ZERO:

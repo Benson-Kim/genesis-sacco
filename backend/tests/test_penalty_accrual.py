@@ -202,8 +202,7 @@ async def _claims(tid: uuid.UUID, loan_id: uuid.UUID) -> list[tuple[date, Decima
 async def _audit_count(tid: uuid.UUID, loan_id: uuid.UUID) -> int:
     return await count(
         tid,
-        "SELECT count(*) FROM audit_log WHERE action = 'loan.penalty_accrued' "
-        "AND entity_id = :eid",
+        "SELECT count(*) FROM audit_log WHERE action = 'loan.penalty_accrued' AND entity_id = :eid",
         eid=str(loan_id),
     )
 
