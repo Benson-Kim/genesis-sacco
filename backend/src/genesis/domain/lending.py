@@ -150,6 +150,13 @@ def daily_penalty(basis_amount: Decimal, rate_pct_per_month: Decimal) -> Decimal
     final the night it is claimed and never restated, so the accrued
     total always equals the exact sum of the claim rows.
 
+    INTENDED consequence of the per-day rule (review V3): per-day
+    rounding permanently starves sub-half-cent daily penalties — any
+    basis where basis x rate / 3000 < 0.005 rounds to a 0.00 day and
+    therefore accrues 0.00 every day FOREVER and never claims, where
+    period-end rounding would eventually accrue. A "why is this small
+    loan never penalised" incident resolves to design, not defect.
+
     Hand-computed anchor (documented in BUILD_PROMPTS P13.8): 1%/mo on
     a 10,000.00 instalment -> 100.00/month -> 3.3333../day -> 3.33/day;
     12 days past grace accrue exactly 39.96.

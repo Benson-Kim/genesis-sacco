@@ -272,7 +272,10 @@ def test_daily_penalty_rounding_half_up_at_the_single_point() -> None:
     # 75.00 x 1%/mo = 0.75/mo -> exactly 0.025/day -> 0.03 (the exact
     # half-cent rounds UP under ROUND_HALF_UP).
     assert daily_penalty(Decimal("75.00"), Decimal("1.00")) == Decimal("0.03")
-    # A basis too small to yield a cent accrues zero (skipped upstream).
+    # A basis too small to yield half a cent per day accrues 0.00 —
+    # every day, forever, and never claims: per-day rounding
+    # permanently starves sub-half-cent daily penalties BY DESIGN
+    # (documented in daily_penalty; review V3).
     assert daily_penalty(Decimal("1.00"), Decimal("1.00")) == Decimal("0.00")
     assert daily_penalty(Decimal("0.00"), Decimal("5.00")) == Decimal("0.00")
 
