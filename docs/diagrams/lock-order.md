@@ -43,6 +43,9 @@ rule 11).
 flowchart TD
     %% Authored against main @ bb220ad2a9056d6b0daecd646011216b20c5309d
     %% As-built update (P13.13/P13.9 flip) @ 5922b924c68c5ac18e0b097f944855a5786ea268
+    %% P13.16 update (!47): RECOV single-node locker added to the
+    %% disjoint subgraph; §8 totals refreshed (settles the !45 RF3
+    %% re-derivation debt over !36/!37). Zero new edges.
     %% Edge ids E1..E19 are annotated with code sites in lock-order.md §3.
 
     subgraph T0["Tier 0 — workflow anchors"]
@@ -159,6 +162,8 @@ and stop, or never touch it):
 | Guarantee consent | GUAR alone | `guarantees.py:consent_guarantee` L273 |
 | Repayment (P10) | LOANS alone (mid-chain entry) → E7 on payoff (closure releases guarantees) → E15 | `loans.py:record_repayment` L309 |
 | Arrears + penalty batch | LOANS alone, `ORDER BY l.id … FOR UPDATE OF l SKIP LOCKED`; **no ledger rows, no advisory** | `arrears.py:arrears_scan_sql` L223 |
+| Recovery case open (P13.16) | LOANS alone (mid-chain entry at the terminal node, the repayment pattern): NPL check + classification/dpd snapshot under the loan FOR UPDATE; the case row is INSERTed via the ON CONFLICT claim — **no case-row lock, nothing below T4, no ledger rows, no advisory** | `recovery.py:open_recovery_case` |
+| Recovery case mutations (P13.16) | recovery_cases row ALONE: assign/note take the case FOR UPDATE; the arrears close pass scans `ORDER BY c.id … FOR UPDATE OF c SKIP LOCKED` — the joined loans row is read **without** a lock (the job's own persisted classification, MVCC); assignee validation reads users/permissions with **no** locks | `recovery.py:assign_recovery_case` / `add_recovery_note` / `close_scan_sql` |
 | Dormancy batch (P13.13) | MSELF alone, `ORDER BY m.id … FOR UPDATE OF m SKIP LOCKED` (root tier, id order); the transition UPDATE, audit row and outbox INSERT happen under the held member row — **no ledger rows, no advisory, nothing below T1**. Reactivation is NOT this job: it rides E10 inside `record_deposit` | `dormancy.py:dormancy_scan_sql` L215; the worker cycle (`infrastructure/dormancy_worker.py`) takes no locks |
 | Deposit-interest batch | DSELF alone (SKIP LOCKED, id order) → E15/E16 posting | `deposit_interest.py:_accrue_batch` L231 |
 | Ledger reversal | TXN → E15 | `ledger.py:reverse_transaction` L694 |
@@ -298,8 +303,10 @@ verify-vs-suspend deadlock, fixed in P13.5).
 
 ## 5. SKIP LOCKED — how it changes the waiting analysis
 
-`FOR UPDATE SKIP LOCKED` sites (E2 member scan; P13.13 dormancy
-member scan; arrears/penalty loans scan; deposit-interest scan;
+`FOR UPDATE SKIP LOCKED` sites (E2 member scans, incl. the !36
+unclaimed-disposition scan; P13.13 dormancy
+member scan; arrears/penalty loans scan; P13.16 recovery close-pass
+case scan; deposit-interest scan;
 exports claim; outbox claim) **do not
 wait** at their scan tier — a locked row is skipped, not queued. Two
 consequences the MRs rely on:
@@ -308,7 +315,8 @@ consequences the MRs rely on:
    created there. Deadlock analysis for batch jobs therefore reduces to
    the locks they take *after* the scan (E10/E12/E15/E16 for
    distribution and deposit-interest; none for arrears; none for the
-   dormancy batch; none for exports/outbox).
+   dormancy batch; none for the recovery close pass — it writes only
+   the case row it holds; none for exports/outbox).
 2. **They trade waiting for incompleteness** — a skipped row is simply
    not processed this run. Every SKIP LOCKED job is therefore paired
    with an idempotent re-run guard (anti-join + `ON CONFLICT` claim,
@@ -353,6 +361,18 @@ commit/rollback, per-tenant keys so tenants never serialise each other.
   sites (the lock keywords appear only in docstrings stating this);
   all slices read from one `REPEATABLE READ` snapshot. Nothing to
   draw; the no-new-edges claim holds.
+- **P13.16 (recovery worklist) — claimed by !47, verified against its
+  branch:** exactly four executable lock sites, all single-node (§3):
+  case open holds the LOAN row alone (mid-chain entry at the terminal
+  node, the repayment pattern) and INSERTs the case under it; assign/
+  note lock the case row alone; the arrears close pass scans open
+  cases `FOR UPDATE OF c SKIP LOCKED` in id order, reading the joined
+  loans row WITHOUT a lock (the arrears job's own persisted
+  classification, MVCC). recovery_cases is never held together with
+  any other lock, so it joins the disjoint subgraph (§2). **No new
+  lock-graph edges.** The !47 MR statement — "the NPL check locks the
+  loan row — terminal node of member → accounts → loans; case
+  mutations lock the case row only" — matches this file.
 - **P13.15 (corrections/write-off), P19 (M-Pesa)** and later prompts:
   any lock they take must land as an edge here first-class, in the same
   MR.
@@ -365,22 +385,37 @@ from MR prose; re-derived for the P13.13/P13.9 as-built pass at
 
 ```sh
 cd backend/src
-grep -rniE "for update"            --include='*.py' . | wc -l   # 85 (was 75)
-grep -rniE "for share"             --include='*.py' . | wc -l   # 12
-grep -rniE "skip locked"           --include='*.py' . | wc -l   # 18 (was 13)
+grep -rniE "for update"            --include='*.py' . | wc -l   # 96 (was 85)
+grep -rniE "for share"             --include='*.py' . | wc -l   # 15 (was 12)
+grep -rniE "skip locked"           --include='*.py' . | wc -l   # 25 (was 18)
 grep -rniE "for no key update"     --include='*.py' . | wc -l   # 0
-grep -rniE "advisory"              --include='*.py' . | wc -l   # 28
+grep -rniE "advisory"              --include='*.py' . | wc -l   # 32 (was 28)
 grep -rniE "for update|for share|for no key update|skip locked|advisory" \
-                                   --include='*.py' . | wc -l   # 130 (was 118)
+                                   --include='*.py' . | wc -l   # 148 (was 130)
 ```
 
-The 130 matches include comments/docstrings restating the chains; the
-**50 executable SQL lock sites** (lines inside `text()` literals
-matching `FOR UPDATE|FOR SHARE|SKIP LOCKED|pg_advisory`; was 49 —
-P13.13 added exactly one, the dormancy scan, and parameterised the
-`_require_member` mode literal without adding a site) are what §3
+The 148 matches include comments/docstrings restating the chains; the
+**56 executable SQL lock sites** (lines inside `text()` literals
+matching `FOR UPDATE|FOR SHARE|SKIP LOCKED|pg_advisory`) are what §3
 catalogues — every one of them maps to an edge, a single-node locker,
-or the advisory tier above. `FOR NO KEY UPDATE` is not used anywhere.
+or the advisory tier above. Derivation of the delta since the !35
+count of 50 (this update also settles the owed !36/!37 re-derivation —
+the !45 RF3 debt):
+
+  * **!36 (issue #19) added two sites**, both riding the established
+    E2 pattern: `dividends.py:unclaimed_scan_sql` (members
+    `FOR UPDATE OF m SKIP LOCKED` in id order — root tier, no
+    downstream locks) and the declaration `FOR SHARE` re-check held
+    per unclaimed-disposition batch (the same E2 anchor mode). !36
+    also parameterised the paying scan's lock literal into a fragment
+    without adding a site (the !32 precedent). **Zero new edges.**
+  * **!37 added zero lock sites** (worker-level error isolation only).
+  * **P13.16 (!47) added four sites**, all single-node (§3, §7):
+    open (loans FOR UPDATE), assign + note (recovery_cases FOR
+    UPDATE), close pass (recovery_cases `FOR UPDATE OF c SKIP
+    LOCKED`). **Zero new edges.**
+
+`FOR NO KEY UPDATE` is not used anywhere.
 A new grep hit that maps to none of §3's rows means this file is stale
 and the MR introducing it is rejected until it updates this file
 (v1.2 rule 11).
@@ -423,4 +458,6 @@ E10 citation, updated here). The graph as built is acyclic (§4).
 5. **New advisory locks** get a §6 row; they must remain terminal
    (no row lock is ever acquired after an advisory lock).
 6. **INCOMING claims** (§7) are flipped to as-built by the executing
+   MR, never left dashed after merge.
+lipped to as-built by the executing
    MR, never left dashed after merge.
