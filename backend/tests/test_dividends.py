@@ -1013,8 +1013,7 @@ def test_member_exiting_mid_run_is_skipped_and_the_declaration_stays_approved() 
         assert (
             await count(
                 tid,
-                "SELECT count(*) FROM dividend_distributions "
-                "WHERE member_id = CAST(:m AS uuid)",
+                "SELECT count(*) FROM dividend_distributions WHERE member_id = CAST(:m AS uuid)",
                 m=str(m_a),
             )
             == 0
