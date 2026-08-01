@@ -159,9 +159,10 @@ async def create_profile(
 
 @router.get("/{member_id}/profile")
 async def get_profile(member_id: uuid.UUID, ctx: ViewCtx) -> ProfileOut:
+    """Profile read; every access writes an audit row (review K1)."""
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        record = await kyc_service.get_profile(session, ctx.tenant_id, member_id)
+        record = await kyc_service.read_profile(session, ctx.tenant_id, ctx.user_id, member_id)
     return _profile_out(record)
 
 

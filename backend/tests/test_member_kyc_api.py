@@ -505,6 +505,53 @@ def test_document_access_writes_one_audit_row_per_read() -> None:
     asyncio.run(run())
 
 
+def test_profile_access_writes_one_audit_row_per_read() -> None:
+    """Review K1: the profile body is the highest-value PII read (ID
+    numbers, KRA PINs, income, next-of-kin), so every GET writes an
+    in-transaction member_profile.access audit row exactly like the
+    documents listing — who read whose profile. Proven by side-effect
+    counts (2 reads -> 2 rows); a denied (403) read writes none, so
+    the trail never claims an access that never happened. Fails with
+    the record_audit call removed from read_profile."""
+
+    async def run() -> None:
+        tid, uid, token = await seed_actor()
+        async with api_client() as client:
+            mid = await _create_member(client, token, MemberType.PERSON)
+            created = await client.post(
+                f"/members/{mid}/profile",
+                json=_profile_body(MemberType.PERSON),
+                headers=_headers(token, idem=uuid.uuid4().hex),
+            )
+            assert created.status_code == 201
+            first = await client.get(f"/members/{mid}/profile", headers=_headers(token))
+            second = await client.get(f"/members/{mid}/profile", headers=_headers(token))
+            assert first.status_code == 200
+            assert second.status_code == 200
+            # A denied read leaves no trail of an access that never
+            # happened (the documents F4 precedent).
+            _, committee_token = await add_user(tid, "Credit Committee")
+            sealed = await client.get(f"/members/{mid}/profile", headers=_headers(committee_token))
+            assert sealed.status_code == 403
+        async with tenant_session(factory(), tid) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT actor_id, after FROM audit_log "
+                        "WHERE action = 'member_profile.access' AND entity_id = :m"
+                    ),
+                    {"m": mid},
+                )
+            ).all()
+        assert len(rows) == 2  # one audit row for EVERY access, none for the 403
+        for actor_id, after in rows:
+            assert str(actor_id) == str(uid)  # who
+            assert after["member_id"] == mid  # whose profile
+            assert after["profile_id"] == created.json()["id"]
+
+    asyncio.run(run())
+
+
 class _QueryCounter:
     def __init__(self) -> None:
         self.value = 0

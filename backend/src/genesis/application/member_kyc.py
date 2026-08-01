@@ -31,7 +31,10 @@ values — that is the trail — and are disclosed by the audit-log viewer
 only to roles holding members:view (ENTITY_MODULES redaction,
 P13.5 precedent). Document access is audited like exports (P13
 blocker f): every checklist read writes an in-transaction audit row
-recording who accessed which member's documents.
+recording who accessed which member's documents — and the profile
+body, the platform's highest-value PII read (ID numbers, KRA PINs,
+income, next-of-kin), is access-audited the same way (review K1):
+every GET of a profile writes a member_profile.access row.
 
 Lock ordering: these paths take NO explicit row locks — every write is
 a single version-guarded UPDATE or an atomic-claim INSERT on leaf
@@ -170,6 +173,12 @@ def _row_to_document(row: Any) -> DocumentRecord:
 async def get_profile(
     session: AsyncSession, tenant_id: uuid.UUID, member_id: uuid.UUID
 ) -> ProfileRecord:
+    """Internal profile lookup — NOT access-audited by itself.
+
+    API reads must go through read_profile (review K1); this helper
+    also serves create/update read-backs, which are already audited as
+    their own mutations and are not disclosures.
+    """
     row = (
         await session.execute(
             text(profile_lookup_sql()),
@@ -179,6 +188,34 @@ async def get_profile(
     if row is None:
         raise NotFoundError(f"profile for member {member_id} not found")
     return _row_to_profile(row)
+
+
+async def read_profile(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+    member_id: uuid.UUID,
+) -> ProfileRecord:
+    """The API-facing profile read; the ACCESS is audited (review K1).
+
+    The profile body is the platform's highest-value PII surface, so
+    under DPA-2019 every read leaves an in-transaction trail exactly
+    like the document-checklist reads (the list_documents pattern):
+    who read whose profile, when. A 404 (no profile) writes no row —
+    nothing was disclosed; a 403 never reaches this function (authz
+    denies in the route dependency).
+    """
+    record = await get_profile(session, tenant_id, member_id)
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="member_profile.access",
+        entity="member_profiles",
+        entity_id=str(member_id),
+        after={"profile_id": str(record.id), "member_id": str(member_id)},
+    )
+    return record
 
 
 async def create_profile(
