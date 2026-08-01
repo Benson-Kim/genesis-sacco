@@ -26,7 +26,7 @@ import enum
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, cast
 
@@ -777,27 +777,40 @@ async def _build_dividend_rebate_schedule(
 # ---------------------------------------------------------------------------
 
 #: PAR aging buckets over WHOLE-DAY days-past-due (Postgres date
-#: subtraction yields integer days). CLOSED integer intervals matching
-#: the domain classify() thresholds (30/90/180/360):
-#:   [0, 30], [31, 90], [91, 180], [181, 360], [361, +inf)
-#: i.e. the half-open real intervals (30, 90], (90, 180], (180, 360],
-#: (360, +inf) expressed on integer days. A loan with NO unmet
-#: installment at the cutoff has dpd 0 (current). Boundary oracles:
-#: dpd 30 -> "0-30", 31 -> "31-90", 90 -> "31-90", 91 -> "91-180",
-#: 180 -> "91-180", 181 -> "181-360", 360 -> "181-360", 361 -> "360+".
-PAR_BUCKET_LABELS: tuple[str, ...] = ("0-30", "31-90", "91-180", "181-360", "360+")
+#: subtraction yields integer days). "current" is its OWN bucket
+#: (!40 review R1): a loan with NO unmet installment at the cutoff
+#: has dpd 0 and is performing — lumping it into an arrears bucket
+#: would make the PAR>0 / PAR30 ratios underivable from the report
+#: (SASRA, WOCCU PEARLS P1 and CGAP all report current separately).
+#: The buckets are CLOSED integer intervals matching the domain
+#: classify() thresholds (30/90/180/360):
+#:   [0, 0], [1, 30], [31, 90], [91, 180], [181, 360], [361, +inf)
+#: i.e. dpd 0 plus the half-open real intervals (0, 30], (30, 90],
+#: (90, 180], (180, 360], (360, +inf) expressed on integer days.
+#: Boundary oracles: dpd 0 -> "current", 1 -> "1-30", 30 -> "1-30",
+#: 31 -> "31-90", 90 -> "31-90", 91 -> "91-180", 180 -> "91-180",
+#: 181 -> "181-360", 360 -> "181-360", 361 -> "360+".
+PAR_BUCKET_LABELS: tuple[str, ...] = (
+    "current",
+    "1-30",
+    "31-90",
+    "91-180",
+    "181-360",
+    "360+",
+)
 
 #: One as-of snapshot of the loan book bucketed by days past due,
 #: reconstructed ENTIRELY from the append-only record (v1.1 rule 2 —
 #: the NPL-trend method; never loans.balance / days_past_due /
 #: classification, which are mutable state):
 #:   * outstanding principal per loan = disbursed principal minus the
-#:     loans.receivable credit legs of its repayments up to as-of;
+#:     loans.receivable credit legs of its repayments up to as-of
+#:     (apportioned per repayment row — see the CTE comment, R4);
 #:   * days past due = as-of date minus the earliest installment whose
 #:     cumulative schedule due exceeds the cash repaid by as-of.
 #: Loans closed on or before as-of are excluded (terminal postings
 #: zeroed them); written_off is excluded pending a write-off flow.
-#: Cardinality bounded by construction: at most 5 bucket rows.
+#: Cardinality bounded by construction: at most 6 bucket rows.
 PAR_AGING_SQL = """
 WITH paid AS (
     SELECT r.loan_id, COALESCE(SUM(r.amount), 0) AS paid
@@ -807,14 +820,37 @@ WITH paid AS (
     GROUP BY r.loan_id
 ),
 principal_paid AS (
-    SELECT r.loan_id, COALESCE(SUM(le.amount), 0) AS principal_paid
-    FROM ledger_entries le
-    JOIN repayments r
-        ON r.transaction_id = le.transaction_id AND r.tenant_id = le.tenant_id
-    JOIN transactions t ON t.id = le.transaction_id AND t.tenant_id = le.tenant_id
-    WHERE le.tenant_id = CAST(:tid AS uuid)
-      AND le.account = :receivable_account AND le.side = 'credit'
-      AND t.occurred_at <= :as_of
+    -- Principal attribution WITHOUT join fan-out (!40 review R4):
+    -- repayments.transaction_id carries NO DB-level UNIQUE (0001
+    -- ships only the FK; 0014 only a NON-unique index), so joining
+    -- ledger legs to repayments on transaction_id alone would
+    -- attribute every loans.receivable credit leg to EVERY repayment
+    -- row sharing the transaction, silently overstating principal
+    -- paid on all of the joined loans. Instead each transaction's
+    -- receivable credit legs are summed ONCE (tp) and apportioned
+    -- across that transaction's repayment rows pro-rata by repayment
+    -- amount (tr), keyed on the repayment row itself — the attributed
+    -- total equals the legs' total no matter how many repayment rows
+    -- share one transaction.
+    SELECT r.loan_id,
+           COALESCE(SUM(tp.principal * r.amount / tr.repaid), 0) AS principal_paid
+    FROM repayments r
+    JOIN transactions t ON t.id = r.transaction_id AND t.tenant_id = r.tenant_id
+    JOIN (
+        SELECT le.transaction_id, SUM(le.amount) AS principal
+        FROM ledger_entries le
+        WHERE le.tenant_id = CAST(:tid AS uuid)
+          AND le.account = :receivable_account AND le.side = 'credit'
+        GROUP BY le.transaction_id
+    ) tp ON tp.transaction_id = r.transaction_id
+    JOIN (
+        -- repayments.amount CHECK (amount > 0) in 0001 => repaid > 0.
+        SELECT r2.transaction_id, SUM(r2.amount) AS repaid
+        FROM repayments r2
+        WHERE r2.tenant_id = CAST(:tid AS uuid)
+        GROUP BY r2.transaction_id
+    ) tr ON tr.transaction_id = r.transaction_id
+    WHERE r.tenant_id = CAST(:tid AS uuid) AND t.occurred_at <= :as_of
     GROUP BY r.loan_id
 ),
 sched AS (
@@ -843,11 +879,12 @@ loan_state AS (
       AND l.disbursed_at <= :as_of
       AND (l.closed_at IS NULL OR l.closed_at > :as_of)
 )
-SELECT CASE WHEN dpd <= 30 THEN 0
-            WHEN dpd <= 90 THEN 1
-            WHEN dpd <= 180 THEN 2
-            WHEN dpd <= 360 THEN 3
-            ELSE 4 END AS bucket,
+SELECT CASE WHEN dpd = 0 THEN 0
+            WHEN dpd <= 30 THEN 1
+            WHEN dpd <= 90 THEN 2
+            WHEN dpd <= 180 THEN 3
+            WHEN dpd <= 360 THEN 4
+            ELSE 5 END AS bucket,
        COUNT(*) AS loans,
        COALESCE(SUM(outstanding), 0) AS outstanding
 FROM loan_state
@@ -881,16 +918,33 @@ async def _build_par_aging(
     }
     total_loans = sum(loans for loans, _ in by_bucket.values())
     total_outstanding = to_cents(sum((outstanding for _, outstanding in by_bucket.values()), ZERO))
-    rows: list[tuple[Cell, ...]] = []
+    buckets: list[tuple[str, int, Decimal]] = []
     for index, label in enumerate(PAR_BUCKET_LABELS):
         loans, outstanding = by_bucket.get(index, (0, ZERO))
-        outstanding = to_cents(outstanding)
-        share = (
+        buckets.append((label, loans, to_cents(outstanding)))
+    # '% of Portfolio' must FOOT (!40 review R2): rounding every
+    # bucket share independently with to_cents can print a column
+    # summing to 99.99/100.01 against a TOTAL row of 100.00 (three
+    # equal buckets -> 33.33 * 3 = 99.99). Largest-remainder
+    # discipline: every share rounds via to_cents, then the LARGEST
+    # bucket (the first such index on ties — deterministic) is
+    # assigned 100.00 minus the sum of the others, so the printed
+    # column sums to exactly 100.00 by construction.
+    if total_outstanding > ZERO:
+        shares = [
             to_cents(outstanding * Decimal("100") / total_outstanding)
-            if total_outstanding > ZERO
-            else Decimal("0.00")
+            for _, _, outstanding in buckets
+        ]
+        largest = max(range(len(buckets)), key=lambda i: (buckets[i][2], -i))
+        shares[largest] = Decimal("100.00") - sum(
+            (share for i, share in enumerate(shares) if i != largest), ZERO
         )
-        rows.append((label, loans, outstanding, share))
+    else:
+        shares = [Decimal("0.00")] * len(buckets)
+    rows: list[tuple[Cell, ...]] = [
+        (label, loans, outstanding, share)
+        for (label, loans, outstanding), share in zip(buckets, shares, strict=True)
+    ]
     rows.append(
         (
             "TOTAL",
@@ -1000,10 +1054,19 @@ async def _account_activity(
 ) -> dict[str, tuple[Decimal, Decimal]]:
     """(debits, credits) per account string over the filter period."""
     params: dict[str, object] = {"tid": str(tenant_id), "as_of": as_of}
+    # UTC period contract (!40 review R3): date_from/date_to are UTC
+    # calendar dates. Bind explicit UTC datetimes — a bare Python date
+    # compared against occurred_at (timestamptz) is promoted by
+    # Postgres to midnight of the SESSION TimeZone, so the period
+    # boundary would silently shift under any non-UTC session. The
+    # upper bound stays half-open at < date_to + 1 day (inclusive
+    # calendar dates, H5c — semantics unchanged).
     if filters.date_from is not None:
-        params["d_from"] = filters.date_from
+        params["d_from"] = datetime.combine(filters.date_from, time.min, tzinfo=UTC)
     if filters.date_to is not None:
-        params["d_to_excl"] = filters.date_to + timedelta(days=1)
+        params["d_to_excl"] = datetime.combine(
+            filters.date_to + timedelta(days=1), time.min, tzinfo=UTC
+        )
     raw = (
         await session.execute(
             text(

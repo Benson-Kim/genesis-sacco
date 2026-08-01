@@ -143,10 +143,20 @@ def test_h7_issue_17_probe_every_new_report_builder() -> None:
             return [tuple(row) for row in run_result.rows]
 
         # Control arm: tenant A's own renders DO carry its data (so
-        # the zero results below cannot be vacuous).
+        # the zero results below cannot be vacuous). The PAR vector
+        # pins the full post-R1 bucket shape: "current" is its own
+        # row, the 45-dpd loan sits in "31-90" (6 buckets + TOTAL).
         assert len(await render(ReportName.MEMBERSHIP_REGISTER, tid_a)) == 1
         own_par = await render(ReportName.PORTFOLIO_AT_RISK_AGING, tid_a)
-        assert own_par[-1] == ("TOTAL", 1, Decimal("4000.00"), Decimal("100.00"))
+        assert own_par == [
+            ("current", 0, Decimal("0.00"), Decimal("0.00")),
+            ("1-30", 0, Decimal("0.00"), Decimal("0.00")),
+            ("31-90", 1, Decimal("4000.00"), Decimal("100.00")),
+            ("91-180", 0, Decimal("0.00"), Decimal("0.00")),
+            ("181-360", 0, Decimal("0.00"), Decimal("0.00")),
+            ("360+", 0, Decimal("0.00"), Decimal("0.00")),
+            ("TOTAL", 1, Decimal("4000.00"), Decimal("100.00")),
+        ]
         own_income = await render(ReportName.INCOME_STATEMENT, tid_a)
         assert ("income", "income.interest", Decimal("75.00")) in own_income
         own_sasra = await render(ReportName.SASRA_RETURN, tid_a)
@@ -157,7 +167,8 @@ def test_h7_issue_17_probe_every_new_report_builder() -> None:
         # aggregates, although RLS would have shown A's rows.
         assert await render(ReportName.MEMBERSHIP_REGISTER, tid_b) == []
         par = await render(ReportName.PORTFOLIO_AT_RISK_AGING, tid_b)
-        assert par[-1] == ("TOTAL", 0, Decimal("0.00"), Decimal("0.00"))
+        assert len(par) == 7  # 6 buckets (incl. "current", R1) + TOTAL
+        assert all(row[1:] == (0, Decimal("0.00"), Decimal("0.00")) for row in par)
         income = await render(ReportName.INCOME_STATEMENT, tid_b)
         assert income == [
             ("income", "TOTAL INCOME", Decimal("0.00")),

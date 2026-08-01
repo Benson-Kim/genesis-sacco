@@ -99,13 +99,15 @@ def test_p1310_report_queries_are_index_backed() -> None:
                     "limit": 501,
                 },
             )
+            # Mirrors the production binds: _account_activity binds
+            # explicit UTC datetimes, never bare dates (!40 review R3).
             activity_windowed = await _explain(
                 session,
                 account_activity_sql(with_from=True, with_to=True),
                 {
                     **base,
-                    "d_from": now.date() - timedelta(days=30),
-                    "d_to_excl": now.date() + timedelta(days=1),
+                    "d_from": now - timedelta(days=30),
+                    "d_to_excl": now + timedelta(days=1),
                 },
             )
             activity_full = await _explain(
