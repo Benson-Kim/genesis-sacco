@@ -806,8 +806,7 @@ def test_members_type_immutable_no_app_path_and_db_backstop() -> None:
                 )
         survivors = await count(
             tid,
-            "SELECT count(*) FROM members "
-            "WHERE id = CAST(:m AS uuid) AND type = 'person'",
+            "SELECT count(*) FROM members WHERE id = CAST(:m AS uuid) AND type = 'person'",
             m=mid,
         )
         assert survivors == 1, "the member row must survive the refused rewrite"

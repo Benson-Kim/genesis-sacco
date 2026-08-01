@@ -248,9 +248,7 @@ async def update_document(
             # Omitted vs explicit null (review K2): only a field the
             # caller actually sent reaches the service.
             expires_at=(
-                body.expires_at
-                if "expires_at" in body.model_fields_set
-                else kyc_service.UNSET
+                body.expires_at if "expires_at" in body.model_fields_set else kyc_service.UNSET
             ),
         )
     return _document_out(record)
