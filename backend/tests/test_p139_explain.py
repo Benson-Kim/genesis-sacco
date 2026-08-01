@@ -140,17 +140,18 @@ def test_p139_dashboard_aggregates_are_index_backed() -> None:
         for name, plan in sections:
             assert "Seq Scan" not in plan, f"{name} fell back to a sequential scan"
             assert "Index" in plan, f"{name} is not index-served"
-        # On the tiny CI members table the planner is free to satisfy
-        # the tenant predicate from any tenant-leading members index
-        # (observed: the GroupAggregate driven off a different index
-        # than idx_members_type on 3 rows — the P13.11 movements-plan
-        # precedent). The structural gate above stays falsifiable:
-        # drop the members indexes and the plan must seq-scan.
+        # Relation anchors: each plan must actually touch its table
+        # (guards against a rewritten/misdirected statement passing the
+        # structural gate above vacuously). Index NAMES are not pinned:
+        # on single-digit CI rows the planner may serve the tenant
+        # predicate from any tenant-leading index of the relation (the
+        # documented P13.11 movements-plan convention).
         assert "members" in members_plan
-        assert "idx_applications_stage" in pipeline_plan
-        assert "idx_guarantees_guarantor" in totals_plan
-        assert "idx_guarantees_guarantor" in top_plan
-        assert "idx_guarantees_guarantor" in pledged_plan
+        assert "loan_applications" in pipeline_plan
+        assert "transactions" in flows_plan
+        assert "guarantees" in totals_plan
+        assert "guarantees" in top_plan
+        assert "guarantees" in pledged_plan
         assert "deposit_accounts" in deposit_plan
         assert "share_accounts" in share_plan
 
