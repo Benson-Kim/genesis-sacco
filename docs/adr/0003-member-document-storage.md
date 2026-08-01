@@ -53,6 +53,13 @@ recorded". Constraints that bind the eventual choice:
 - Negative: no binary upload until the follow-up ADR lands; clients
   track document state only. This deferral is recorded in the P13.12
   MR description and in `application/member_kyc.py`.
+- Negative (review K4): per-read access auditing (checklist and
+  profile reads) makes `audit_log` grow with browse/poll traffic, not
+  just mutations. Accepted — DPA-2019 traceability of PII reads
+  outweighs storage — with a recorded follow-up: an `audit_log`
+  retention/partitioning policy plus per-(actor, member, day)
+  aggregation for `*.access` rows, tracked in the P13.12 MR
+  follow-ups list.
 - Migration path: adding content is expand-only (new storage keys on
   `member_documents` or a side table + the storage adapter); nothing
   in 0017 needs rework.

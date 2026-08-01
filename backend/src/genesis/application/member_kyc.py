@@ -36,6 +36,16 @@ body, the platform's highest-value PII read (ID numbers, KRA PINs,
 income, next-of-kin), is access-audited the same way (review K1):
 every GET of a profile writes a member_profile.access row.
 
+Audit write amplification (review K4, acknowledged): access-auditing
+browse endpoints means audit_log grows with READ traffic, not just
+mutations — a polling admin UI multiplies rows per (actor, member)
+unboundedly. Accepted for now: DPA-2019 traceability of PII reads
+outweighs the storage cost, audit_log is append-only and cheap to
+write, and no consumer scans it unindexed. Recorded follow-up (P13.12
+MR follow-ups list): an audit_log retention/partitioning policy with
+per-(actor, member, day) aggregation for *.access rows before the
+row count becomes operationally significant.
+
 Lock ordering: these paths take NO explicit row locks — every write is
 a single version-guarded UPDATE or an atomic-claim INSERT on leaf
 tables outside the P12 settlement chain (member -> deposit account ->
