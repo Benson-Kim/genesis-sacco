@@ -118,9 +118,17 @@ def test_terminal_stages_have_no_exits() -> None:
 
 
 def test_loan_status_full_matrix() -> None:
+    """Full matrix (P13.15 FM6 update): CLOSED -> ACTIVE is the ONE
+    documented reopen branch (repayment adjustment reversing the
+    closing repayment); WRITTEN_OFF stays terminal — recoveries are a
+    future explicit branch, never a silent reopen. Falsifiable: adding
+    any other edge (e.g. WRITTEN_OFF -> ACTIVE) fails the else-raises
+    sweep."""
     allowed = {
         (LoanStatus.ACTIVE, LoanStatus.CLOSED),
         (LoanStatus.ACTIVE, LoanStatus.WRITTEN_OFF),
+        # P13.15 FM6: the explicit documented reopen branch.
+        (LoanStatus.CLOSED, LoanStatus.ACTIVE),
     }
     for current in LoanStatus:
         for target in LoanStatus:
