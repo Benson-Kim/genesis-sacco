@@ -106,7 +106,7 @@ flowchart TD
         RT["refresh_tokens<br/>FOR UPDATE"]
         PERM["permissions<br/>FOR UPDATE (single row)"]
         EXP["exports<br/>FOR UPDATE SKIP LOCKED (single-row claim)"]
-        OBX["outbox_events<br/>FOR UPDATE SKIP LOCKED (claim + lease);<br/>dispatch holds NO domain locks"]
+        OBX["outbox_events<br/>FOR UPDATE SKIP LOCKED (claim + set-based lease);<br/>retention purge: batched DELETE via SKIP LOCKED subquery<br/>(dispatched rows only — P13.17e);<br/>dispatch holds NO domain locks"]
         IDEM["idempotency_keys<br/>ON CONFLICT claim in its OWN txn — no locks held"]
         UADM -->|E17| UTGT
         UTGT -->|E18| OTP
@@ -165,7 +165,8 @@ and stop, or never touch it):
 | Period close | ADVP **exclusive** only, then `ON CONFLICT` claim — no row locks | `accounting_periods.py:close_period` L159 |
 | RBAC permission edit | PERM alone | `rbac.py:update_permission` L227 |
 | Export claim | EXP single row SKIP LOCKED, then snapshot-consistent reads | `exports.py:CLAIM_SQL` L85 |
-| Outbox claim | OBX SKIP LOCKED + lease, commit, dispatch **outside** any txn | `infrastructure/outbox_worker.py:dispatch_due` L67 |
+| Outbox claim | OBX SKIP LOCKED + lease (ONE set-based UPDATE per batch since P13.17e), commit, dispatch **outside** any txn | `infrastructure/outbox_worker.py:dispatch_due` |
+| Outbox retention purge (P13.17e) | OBX batched DELETE, at most batch_size rows per txn claimed via a `FOR UPDATE SKIP LOCKED` subquery — dispatched rows ONLY (pending/dead exempt by status); no other table touched | `infrastructure/outbox_worker.py:purge_dispatched` |
 | Idempotency claim | `ON CONFLICT DO NOTHING` in its **own** middleware txn before the handler — never holds domain locks | `api/idempotency.py` L137 |
 | Settings read/write | **no row locks** (single-statement optimistic writes; consumers read config as plain MVCC snapshot while holding their own anchor lock) | `tenant_settings.py` (module docstring), the !26 convention |
 
@@ -308,14 +309,19 @@ consequences the MRs rely on:
    created there. Deadlock analysis for batch jobs therefore reduces to
    the locks they take *after* the scan (E10/E12/E15/E16 for
    distribution and deposit-interest; none for arrears; none for the
-   dormancy batch; none for exports/outbox).
+   dormancy batch; none for exports/outbox, claim or purge).
 2. **They trade waiting for incompleteness** — a skipped row is simply
    not processed this run. Every SKIP LOCKED job is therefore paired
    with an idempotent re-run guard (anti-join + `ON CONFLICT` claim,
    v1.1 rules 5/8) so the skipped row is picked up later: the !30
    `pending_members` reconciliation, the arrears "picked up next run"
    rule, the P13.13 anti-join on status + ledger-derived last activity
-   (a re-run scans zero rows), the outbox lease. A SKIP LOCKED scan **without** a claimed
+   (a re-run scans zero rows), the outbox lease, and the P13.17e
+   retention purge's claimed re-run path: a skipped/failed row still
+   matches `status = 'dispatched' AND dispatched_at < cutoff` and is
+   deleted by the next hourly purge cycle; a re-run after exhaustion
+   matches zero rows and locks nothing (idempotent by side-effect
+   counts). A SKIP LOCKED scan **without** a claimed
    re-run path would be a correctness bug, not just a liveness one.
 
 Concurrent runners of the same job claim disjoint row sets via SKIP
@@ -384,6 +390,22 @@ or the advisory tier above. `FOR NO KEY UPDATE` is not used anywhere.
 A new grep hit that maps to none of §3's rows means this file is stale
 and the MR introducing it is rejected until it updates this file
 (v1.2 rule 11).
+
+**P13.17(e) delta (scoped re-verification, authored on the DSA-6
+branch off `08541b8`):** the outbox hardening adds exactly **one new
+executable SQL lock site** — the retention purge's `FOR UPDATE SKIP
+LOCKED` driving subquery (`outbox_worker.py:purge_dispatched`),
+catalogued as a §3 single-node locker with its §5 re-run path. Grep
+deltas from this change: +2 `for update` lines, +4 `skip locked`
+lines (the extras are docstrings/comments restating the chain); the
+set-based lease UPDATE and the SECURITY DEFINER discovery functions
+take no locks and add no sites. Note honestly: the totals printed
+above predate !36/!37 (merged after the `5922b924` re-verification)
+and current main greps higher (88/15/21/32 = 140 at `08541b8`); the
+!36 disposition scan is an uncatalogued root-tier single-node locker
+per !36's own MR statement. A full re-derivation pass over !36/!37 is
+owed by the next docs as-built update, not this backend MR — this MR's
+own delta is fully catalogued.
 
 ## 9. Cross-check: MR prose vs code-derived DAG (P-DIAG.0 step 3)
 
