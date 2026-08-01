@@ -38,6 +38,7 @@ from genesis.api.params import require_cash_channel
 from genesis.application import corrections as corrections_service
 from genesis.application.auth import AuthContext
 from genesis.domain.committee import Vote
+from genesis.domain.ledger import Channel
 from genesis.domain.rbac import Action, Module
 from genesis.infrastructure.db import get_sessionmaker
 from genesis.infrastructure.tenancy import tenant_session
@@ -88,7 +89,7 @@ class FeeBody(BaseModel):
 
     member_id: uuid.UUID
     fee_type: corrections_service.FeeType
-    channel: str
+    channel: Channel
 
 
 class FeeOut(BaseModel):

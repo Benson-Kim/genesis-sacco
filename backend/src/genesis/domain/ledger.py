@@ -49,6 +49,10 @@ class TxnType(enum.StrEnum):
     DIVIDEND_POSTING = "dividend_posting"
     SHARE_TRANSFER_OUT = "share_transfer_out"
     SHARE_TRANSFER_IN = "share_transfer_in"
+    # P13.15: misc fee (FE-) and the write-off provisioning posting
+    # (WO-); values match the 0025 transactions.type CHECK.
+    FEE = "fee"
+    LOAN_WRITE_OFF = "loan_write_off"
 
 
 class Channel(enum.StrEnum):

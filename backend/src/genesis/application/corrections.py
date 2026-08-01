@@ -613,7 +613,7 @@ async def adjust_repayment(
     # Reopened? Must be decided before the loans UPDATE. FM6: the ONE
     # documented branch of the status map.
     reopened = False
-    new_status = status
+    new_status: LoanStatus = status
     if status is LoanStatus.CLOSED:
         new_status = loan_transition(LoanStatus.CLOSED, LoanStatus.ACTIVE)
         reopened = True
@@ -1025,7 +1025,7 @@ async def cast_write_off_vote(
         after={"vote": vote.value, "approvals": approvals, "rejections": rejections},
     )
     decision = decide(approvals, rejections, quorum=await committee_quorum(session, tenant_id))
-    status = current
+    status: WriteOffStatus = current
     if decision is not None:
         target = (
             WriteOffStatus.APPROVED if decision is Decision.APPROVED else WriteOffStatus.REJECTED
