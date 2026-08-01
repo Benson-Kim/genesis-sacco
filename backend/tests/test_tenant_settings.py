@@ -206,9 +206,9 @@ def test_settings_unconfigured_defaults_then_claim_then_edit() -> None:
         # (2), each carrying the exact figures (gate 1.5).
         audits = await count(
             tid,
-            "SELECT count(*) FROM audit_log WHERE tenant_id = CAST(:tid AS uuid) "
+            "SELECT count(*) FROM audit_log WHERE tenant_id = CAST(:t AS uuid) "
             "AND entity = 'tenant_settings'",
-            tid=str(tid),
+            t=str(tid),
         )
         assert audits == 2
         async with tenant_session(factory(), tid) as session:
@@ -256,9 +256,9 @@ def test_settings_double_submit_race_exactly_one_wins() -> None:
         # Side-effect proof: 1 claim + exactly 1 winning update audited.
         audits = await count(
             tid,
-            "SELECT count(*) FROM audit_log WHERE tenant_id = CAST(:tid AS uuid) "
+            "SELECT count(*) FROM audit_log WHERE tenant_id = CAST(:t AS uuid) "
             "AND entity = 'tenant_settings'",
-            tid=str(tid),
+            t=str(tid),
         )
         assert audits == 2
 
