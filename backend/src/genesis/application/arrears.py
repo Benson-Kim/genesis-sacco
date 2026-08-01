@@ -63,7 +63,16 @@ loan row lock, same short batch transactions:
     node of the P12 settlement chain (member -> accounts -> loans), so
     no new lock-graph edge is introduced and no cycle is possible; a
     concurrent repayment serialises on the same loan row lock (failure
-    mode 8).
+    mode 8). EPQ/snapshot nuance (review V2): under READ COMMITTED the
+    FOR UPDATE re-evaluation (EvalPlanQual) refreshes only the locked
+    loans tuple (balance, penalty_due), while the correlated schedule
+    subqueries (oldest_unpaid, arrears_amount) evaluate against the
+    statement snapshot — a repayment committing between statement
+    start and lock acquisition of a row can yield a dpd/basis computed
+    from pre-repayment schedule state. Bounded to that one day's
+    accrual and fully reconstructable from the claim row; "a repayment
+    that cures the arrears before the job runs -> no accrual" is a
+    snapshot-level guarantee, not a lock-level one.
 """
 
 from __future__ import annotations
@@ -331,6 +340,14 @@ async def _accrue_penalty(
     penalty_due itself (failure mode 4): instalment_in_arrears comes
     from the schedule dues, full_outstanding is the principal
     receivable.
+
+    Snapshot nuance (review V2): balance and penalty_due are
+    lock-fresh (EPQ re-read of the locked loans tuple), but dpd and
+    arrears_amount come from the scan STATEMENT's snapshot — a
+    repayment committing between statement start and lock acquisition
+    can leave this one day's accrual computed from pre-repayment
+    schedule state (reconstructable from the claim row's recorded
+    basis figures).
     """
     if dpd <= config.grace_days:
         return ZERO
