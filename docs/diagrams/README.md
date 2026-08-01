@@ -31,8 +31,13 @@ PHASE B2 common rules):
 | Diagram | Prompt | Status |
 |---|---|---|
 | [`lock-order.md`](lock-order.md) — **authoritative lock-ordering DAG** (the single authority for every lock-order statement; v1.2 rule 11) | P-DIAG.0 | as-built |
+| [`c4-context.md`](c4-context.md) — C4 L1 system context (clients/providers marked PLANNED) | P-DIAG.1 | as-built |
+| [`c4-container.md`](c4-container.md) — C4 L2 containers (layers, workers, migration runner, store properties) | P-DIAG.1 | as-built |
+| [`c4-component.md`](c4-component.md) — C4 L3, one diagram per API router group; spot-check: [`c4-spot-check.py`](c4-spot-check.py) | P-DIAG.1 | as-built |
 | [`dfd.md`](dfd.md) — **data-flow diagrams**: L0 context + L1 money-bearing flows, trust boundaries TB1–TB4, per-element code citations | P-DIAG.3 | as-built |
 | [`stride.md`](stride.md) — **STRIDE-per-element threat model** over the dfd.md elements; residuals with named owners or UNOWNED | P-DIAG.4 | as-built |
+| [`sequence-committee-voting.md`](sequence-committee-voting.md) — committee/voting pattern (P9/P12/!30 consumers) | P-DIAG.5 | as-built |
+| [`sequence-snapshot-bind-reverify.md`](sequence-snapshot-bind-reverify.md) — snapshot-bind-reverify pattern (P12/!30, incl. the !36 unclaimed variant) | P-DIAG.5 | as-built |
+| [`sequence-outbox-dispatch.md`](sequence-outbox-dispatch.md) — outbox dispatch pattern (P5 worker) | P-DIAG.5 | as-built |
 
-P-DIAG.1, .2 and .5 (C4, ERD, sequence patterns) land here as
-their prompts execute.
+P-DIAG.2 (ERD) lands here as its prompt executes.
