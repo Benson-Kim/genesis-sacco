@@ -223,9 +223,13 @@ async def create_application(
     ).first()
     if member_row is None:
         raise NotFoundError(f"member {member_id} not found")
-    if str(member_row[0]) != "active":
+    member_status = MemberStatus(str(member_row[0]))
+    if not member_may(member_status, MoneyOperation.BORROW):
+        # Code-owned capability map (P13.13 FM2): borrowing is strictly
+        # active-only, so arrears/dormant/exited (and any future
+        # status) are refused by construction — the !29 R2 rule.
         raise ConflictError(
-            f"member {member_id} is '{member_row[0]}': only active members may apply"
+            f"member {member_id} is '{member_status.value}': only active members may apply"
         )
     deposits = await _deposit_balance(session, tenant_id, member_id)
     # Deliberately NO deposit-multiplier gate at creation (external
