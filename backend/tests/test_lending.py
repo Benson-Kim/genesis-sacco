@@ -5,6 +5,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from genesis.domain.lending import (
+    NPL_CLASSES,
     ApplicationStage,
     InvalidTransitionError,
     LoanClass,
