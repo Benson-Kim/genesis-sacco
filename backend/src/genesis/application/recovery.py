@@ -517,7 +517,7 @@ def notes_page_sql(*, with_cursor: bool) -> str:
     """
     cursor = "AND (created_at, id) > (CAST(:c_ts AS timestamptz), CAST(:c_id AS uuid)) "
     return (
-        "SELECT id, author_id, note, created_at FROM recovery_case_notes "
+        "SELECT id, author_id, note, created_at FROM recovery_case_notes "  # noqa: S608
         "WHERE tenant_id = CAST(:tid AS uuid) AND case_id = CAST(:cid AS uuid) "
         f"{cursor if with_cursor else ''}"
         "ORDER BY created_at, id LIMIT :limit"
