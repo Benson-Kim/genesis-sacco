@@ -1086,8 +1086,55 @@ outbox in one transaction; daily reconciliation job that alerts on mismatch
 and never auto-mutates the ledger; callback rate limiting; secrets via
 CI/CD variables only. Adversarial tests: replayed, forged, out-of-order,
 timeout-then-success callbacks.
-EXIT: sandbox end-to-end deposit reflected in ledger and member statement;
-all adversarial tests green.
+HARDENED (v1.2) — merge blockers:
+(a) Named failure modes (v1.2 rule 15), the full adversarial set, each
+    falsifiable with hand-computed oracles: FM1 replayed callback —
+    identical callback delivered N times → exactly ONE posting, ONE
+    balance change, ONE outbox event (side-effect counts; the intent
+    claim is `INSERT … ON CONFLICT DO NOTHING` + rowcount, v1.1 rule
+    5 — never SELECT-then-INSERT); FM2 forged callback — bad
+    source/signature/credentials → rejected, ZERO mutations, rate
+    limited, audited as a security event; FM3 out-of-order — a result
+    callback racing/preceding the timeout handler converges to ONE
+    consistent terminal intent state, never a paid-then-expired flip;
+    FM4 timeout-then-success — late success after local expiry lands in
+    a held/reconciliation state, never silently posted or silently
+    dropped; FM5 amount mismatch — callback amount ≠ intent amount →
+    REFUSED LOUDLY into the reconciliation queue, never posted, never
+    "adjusted"; FM6 cross-intent confusion — a callback can only ever
+    settle the intent it validates against (bound by intent id +
+    tenant), probe-tested; FM7 kill-switch — abort between posting and
+    intent update → zero partial state (§4).
+(b) RECONCILIATION NEVER MUTATES: the daily job compares provider
+    records to intents/ledger and ALERTS; discrepancies are resolved by
+    humans through the P13.15 correction paths (append-only reversing
+    entries) — any auto-mutation path in the reconciliation job is a
+    rejected MR, falsifiable by a test proving the job writes no ledger
+    rows.
+(c) Lock order (verbatim): the callback posting path follows the
+    established chain member → deposit account (FOR UPDATE) with the
+    posting via P7 — no new lock-graph edges; NO blocking provider I/O
+    while holding row locks (lock → compute → write → commit → outbox,
+    1.3) — STK initiation talks to the provider BEFORE opening the
+    intent-claiming transaction or via the outbox.
+(d) Parallel track: claim the migration number up front (v1.2 rule 14);
+    `payment_intents` (and any callback-dedup table) additive with RLS
+    enabled AND forced, TENANT_TABLES + leakage suite + ENTITY_MODULES
+    entries; secrets via CI/CD variables only — a literal credential
+    fails secret detection.
+(e) v1.1 restated: no caller-supplied amounts on the posting path
+    beyond the validated intent (rule 1); explicit tenant predicates on
+    reads AND writes (rule 4); bound parameters (rule 6); least
+    disclosure — callback responses and errors never echo balances
+    (rule 7); Idempotency-Key scoped per actor+route on the
+    member-facing initiation (the !29 scoping lesson).
+(f) Honest DoD per v1.2 rule 13; process per v1.2 rule 16; update
+    P-DIAG.3's M-Pesa L3 DFD from PLANNED to as-built and its
+    P-DIAG.4 STRIDE table in the same MR (rule 11).
+EXIT: sandbox end-to-end deposit reflected in ledger and member
+statement; FM1–FM7 green, each failing with its guard removed;
+reconciliation-writes-nothing test green; threat model + ADR signed
+off; diagrams updated.
 
 ### P20 — Notifications
 ROLE: Developer. DEPENDS: P5, P8–P12.
@@ -1095,8 +1142,34 @@ PROMPT: Wire real SMS/email/push providers behind the P5 adapters with
 per-tenant templates and per-channel circuit breakers; delivery-status
 writeback; member notification preferences. All sends outbox-only (1.2);
 no PII beyond the minimum in payloads (1.6).
-EXIT: provider-outage chaos test: actions succeed, events dead-letter and
-replay cleanly.
+HARDENED (v1.2) — merge blockers:
+(a) Named failure modes (v1.2 rule 15): FM1 provider outage — domain
+    actions still succeed (the outbox IS the decoupling); events retry
+    with backoff then dead-letter; replay after recovery delivers
+    exactly once BY EVENT ID (side-effect counts at the adapter,
+    idempotent per P5); FM2 duplicate dispatch — two workers claiming
+    the same event → one send (the SKIP LOCKED + lease pattern,
+    P-DIAG.5 diagram 3); FM3 template PII overreach — templates render
+    from an allow-listed payload contract; a template referencing a
+    non-allow-listed field fails CI; FM4 preference bypass — an opted-
+    out member receives nothing (checked at dispatch, tested); FM5
+    circuit-breaker flap — a tripped channel fails fast without
+    consuming retries of other channels.
+(b) Lock order (verbatim): outbox dispatch holds NO domain row locks
+    (1.4) — restated as the binding rule; delivery-status writeback is
+    its own short transaction on the outbox row only. No new lock-graph
+    edges.
+(c) Parallel track: claim any migration number up front (preferences
+    table additive, RLS forced, TENANT_TABLES + leakage suite +
+    ENTITY_MODULES); provider secrets via CI/CD variables only.
+(d) v1.1 restated: least disclosure in payloads — an SMS never carries
+    balances beyond the documented minimum; exact figures live in the
+    audit row (rule 7); explicit tenant predicates (rule 4).
+(e) Honest DoD per v1.2 rule 13; process per v1.2 rule 16; update the
+    P-DIAG.3 provider trust boundary to as-built (rule 11).
+EXIT: provider-outage chaos test: actions succeed, events dead-letter
+and replay cleanly exactly once; FM1–FM5 green, each failing with its
+guard removed.
 
 ### P21 — Observability & performance
 ROLE: QE + Developer. DEPENDS: Phase B complete.
@@ -1105,8 +1178,38 @@ PROMPT: Add OpenTelemetry traces/metrics/logs (PII-scrubbed), dashboards
 Load tests (k6): 10k-member tenant, 50 concurrent tellers; verify keyset
 pagination flatness and zero lock-wait timeouts; capture EXPLAIN for the
 top 20 queries into `docs/perf/`.
-EXIT: p95 < 300ms on hot reads, < 800ms on posting writes at target load;
-alerts fire in a game-day drill.
+HARDENED (v1.2) — merge blockers:
+(a) EXPLAIN artifact convention (the established one, cited): plans are
+    captured IN CI by `tests/test_*_explain.py` against the migrated
+    Postgres service into `backend/perf/explain_*.txt` artifacts, with
+    `enable_seqscan=off` plan-shape-at-scale assertions falsifiable by
+    dropping the backing index (the P10–P13.8 precedent). The top-20
+    capture into `docs/perf/` DERIVES from those artifacts + load-test
+    plans — no hand-pasted, unreproducible plans.
+(b) Named failure modes (v1.2 rule 15): FM1 perf-gate reward hacking —
+    budgets are enforced by failing CI jobs, no `allow_failure`, no
+    quietly raised thresholds (a threshold change is its own reviewed
+    commit with rationale); FM2 telemetry PII leak — a scrubber test
+    feeds PII through every telemetry path and asserts redaction; FM3
+    telemetry breaking the action — collector outage must not fail
+    domain requests (fire-and-forget + breaker, 1.2, chaos-tested);
+    FM4 pagination flatness — keyset page latency at depth 10 ≈ depth
+    10k (the DSA-7 lesson: filtered listings need their serving index);
+    FM5 DSA validation — the load tests exercise the P13.17 snapshot/
+    rollup paths and prove the NPL-trend/trial-balance exports hold
+    budget at 10k members (the DSA-1/2 rationale, now measured).
+(c) Lock order: observability adds NO locks and NO new lock-graph
+    edges; lock-wait timeout metrics are labelled by the P-DIAG.0 DAG
+    edge names so a violation names its edge.
+(d) Parallel track: ships NO domain migration; `.gitlab-ci.yml` gains
+    only perf/observability jobs (named collision surface —
+    coordinate).
+(e) Honest DoD per v1.2 rule 13: budget numbers come from in-project
+    pipeline artifacts; process per v1.2 rule 16.
+EXIT: p95 < 300ms on hot reads, < 800ms on posting writes at target
+load, enforced by a failing gate (falsifiability demonstrated); FM1–FM5
+green; alerts fire in a game-day drill; top-20 EXPLAIN artifacts
+reproducible from CI.
 
 ### P22 — Deployment & environments
 ROLE: CI/CD Engineer. DEPENDS: P21.
@@ -1116,7 +1219,41 @@ environment). Container scanning on built images; SBOM artifact. Managed
 Postgres with PITR backups; documented + rehearsed restore (DR drill);
 zero-downtime migration policy (expand→migrate→contract) enforced by MR
 template checkbox. Store demo/live app distribution (Flutter) via CI.
-EXIT: full promote path exercised; restore drill documented under 30 min.
+HARDENED (v1.2) — merge blockers:
+(a) FIX THE SECURITY-TEMPLATE NON-SPAWN (v1.2 rule 13's standing debt,
+    recorded honestly on !26/!28/!29): diagnose why the included SAST /
+    Secret-Detection / Dependency-Scanning template jobs do not spawn
+    on MR pipelines, fix the template `rules:`, and prove the jobs run
+    AND block on findings in this project's pipelines. Until this lands
+    green, the security DoD box stays unchecked project-wide; after it
+    lands, rule 13's carve-out is retired (update the standing rule in
+    the same MR).
+(b) Zero-downtime expand→migrate→contract, citing the proven refusal
+    precedents: contract steps that would drop or rewrite money-bearing
+    history must REFUSE LOUDLY exactly like the 0017 re-chain
+    discipline and !30's 0020 downgrade (the transactions.type CHECK
+    restore refusing on dividend history) — rehearse BOTH the clean
+    contract and the loud refusal in migrate-check; the MR-template
+    checkbox references those precedents by number.
+(c) Named failure modes (v1.2 rule 15): FM1 restore drift — the DR
+    drill restores to a point-in-time and PROVES ledger balance/audit
+    integrity post-restore (trial balance equality oracle); FM2 deploy
+    skew — old app + new schema runs one full release (expand phase
+    proven by running the previous release's test suite against the
+    migrated schema); FM3 protected-env bypass — prod deploy is
+    impossible without the manual gate + protected branch (tested by a
+    deliberate attempt); FM4 supply chain — images pinned by digest,
+    SBOM published, container scanning blocks criticals.
+(d) Parallel track: this prompt OWNS `.gitlab-ci.yml` restructuring —
+    schedule it when no feature track has CI edits in flight (v1.2
+    rule 12 merge-sequencing); migration-claim registry (rule 14)
+    becomes part of the deploy runbook.
+(e) Honest DoD per v1.2 rule 13; process per v1.2 rule 16; update
+    P-DIAG.1 C4 L1/L2 with the deployment topology (rule 11).
+EXIT: full promote path exercised; restore drill documented under 30
+min with the integrity oracle green; security-template jobs spawn and
+block (rule 13 carve-out retired); FM1–FM4 green; refusal rehearsal
+recorded in migrate-check.
 
 ### P23 — Security hardening & tenant onboarding
 ROLE: Security Analyst. DEPENDS: P22.
@@ -1127,8 +1264,40 @@ Build tenant onboarding runbook: tenant record, admin bootstrap, product
 config, M-Pesa credentials via secret manager, RBAC seed. Data protection
 (Kenya DPA) checklist: retention, subject access export via P13, breach
 playbook.
+HARDENED (v1.2) — merge blockers:
+(a) DPA-2019 hooks aligned with the MERGED P13.12 KYC surface (0018 —
+    this executed AHEAD of expectation, so the alignment lands here):
+    subject-access export covers the KYC profile tables and document
+    metadata via the P13 export registry with per-role PII allow-lists
+    and full export-audit rows (P13 blockers e/f); a retention schedule
+    is DEFINED AND ENFORCED for KYC documents, idempotency-key stored
+    responses (the DSA-3 expiry work), and dispatched outbox payloads
+    (DSA-6 retention) — retention values from server config, purges via
+    the shared batch runner, idempotent by side-effect counts; the
+    P13.12 consent-flag immutability is re-verified in the audit
+    completeness sampling; the breach playbook names the append-only
+    audit_log + ledger as the forensic sources.
+(b) STRIDE-driven triage: the P-DIAG.4 tables are the DAST triage map —
+    every finding is matched to its DFD element; a finding with no
+    covering test becomes an open blocker issue per the standing rule
+    (no silent accepts).
+(c) Named failure modes (v1.2 rule 15): FM1 leakage regression — the
+    cross-tenant suite is re-run against the FULL table set at the
+    current migration head (cross-checked against TENANT_TABLES — a
+    table missing from the suite fails the check); FM2 subject-access
+    overreach — the export returns exactly the data subject's records,
+    probe-tested across tenants and members; FM3 onboarding drift — the
+    runbook is executed verbatim on staging for a pilot tenant; any
+    manual deviation is a runbook bug; FM4 secret sprawl — M-Pesa/SMS
+    credentials exist only in the secret manager/CI variables,
+    grep+scanner proven.
+(d) Parallel track: retention/purge migrations claim numbers up front
+    (v1.2 rule 14); downgrades never resurrect purged PII.
+(e) Honest DoD per v1.2 rule 13 (by now P22 should have retired the
+    carve-out — verify, don't assume); process per v1.2 rule 16.
 EXIT: zero open critical/high findings; onboarding runbook executed
-successfully for a pilot tenant on staging.
+successfully for a pilot tenant on staging; FM1–FM4 green; DPA
+checklist items each mapped to an enforced mechanism, not a document.
 
 ### P24 — UAT & launch
 ROLE: Product Manager + QE. DEPENDS: P23.
@@ -1138,7 +1307,24 @@ settlement, statements, RBAC per role). Pilot tenant runs 2 weeks on
 staging with real workflows; defects triaged daily, fixes follow the full
 gate process (no shortcuts). Launch checklist: alerts on, on-call rota,
 rollback plan rehearsed, support runbook.
-EXIT: UAT sign-off; production tenant live; week-one error budget intact.
+HARDENED (v1.2) — merge blockers:
+(a) Acceptance oracles are HAND-COMPUTED (the standing anti-reward-
+    hacking rule applied to UAT): dashboard figures, settlement
+    quotes, interest/penalty/dividend amounts in the UAT script carry
+    their arithmetic — sign-off against unexplained numbers is
+    invalid.
+(b) Defect fixes during the pilot follow EVERY gate: named failure-mode
+    test first (v1.2 rule 15), migration-claim registry (rule 14),
+    merge-sequencing/rebase-re-run (rule 12), diagram drift (rule 11 —
+    a fix touching a diagrammed flow updates the diagram in the same
+    MR), honest DoD (rule 13). "It's just UAT" is not a gate waiver.
+(c) Named failure modes: FM1 sign-off theatre — every acceptance case
+    links the pipeline evidence or staging record proving it ran; FM2
+    week-one error budget — breach triggers the documented rollback,
+    rehearsed before go-live, not improvised.
+(d) Process per v1.2 rule 16.
+EXIT: UAT sign-off with hand-computed oracles attached; production
+tenant live; week-one error budget intact; zero gate waivers granted.
 
 ---
 
