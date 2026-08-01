@@ -90,6 +90,7 @@ from genesis.application.ledger import (
 )
 from genesis.application.outbox import enqueue_event
 from genesis.application.tenant_settings import committee_quorum, enforce_authority_band
+
 # Reuse-first (gate 1.1): the P13.13 single member-status gatekeeper —
 # duplicating its FOR SHARE + capability-map logic here would fork the
 # exact policy P13.13 FM2 pins to one code path.
@@ -145,7 +146,7 @@ async def _resolve_fee_amount(
     # Identifier from the code-owned mapping above (v1.1 rule 6).
     row = (
         await session.execute(
-            text(_FEE_AMOUNT_SQL.format(column=column)),  # noqa: S608
+            text(_FEE_AMOUNT_SQL.format(column=column)),
             {"tid": str(tenant_id)},
         )
     ).first()

@@ -1227,7 +1227,7 @@ def test_fm4_write_off_end_to_end_quorum_bound_to_write_once_snapshot() -> None:
         tid, requester, _ = await _seed_actor()
         voter1, _ = await _seed_extra_user(tid, "Credit Committee")
         voter2, _ = await _seed_extra_user(tid, "Credit Committee")
-        loan_id, mid = await _disburse(tid)
+        loan_id, _ = await _disburse(tid)
         await _repay(tid, requester, loan_id, "2000.00")
         await _seed_penalty(tid, loan_id, "300.00")
         await _classify_npl(tid, loan_id)  # FM9: write-off needs a stored NPL class
