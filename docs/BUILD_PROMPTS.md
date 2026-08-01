@@ -727,6 +727,146 @@ loud-refusal paths.
 
 ---
 
+## PHASE B2 — ARCHITECTURE & THREAT-MODEL DIAGRAMS (P-DIAG series)
+
+Placement rationale (v1.2): a dedicated series after P13.17 rather than
+fragments woven into feature prompts, because (1) the diagrams document
+the system AS IT EXISTS on main — their dependency is the merged
+backend, not Phase C/D; (2) a dedicated series adds no renumbering risk
+to P0–P24; (3) it is docs-only and therefore a perfect parallel track
+(no migrations, no TENANT_TABLES/ENTITY_MODULES/.gitlab-ci.yml backend
+collisions); (4) the drift rule (v1.2 rule 11) needs ONE authoritative
+home for each diagram, not per-prompt copies. P-DIAG.1–.6 may run in
+parallel with each other and with Phase C prompts once P-DIAG.0 lands.
+
+Common rules for every P-DIAG prompt:
+- Diagrams-as-code, Mermaid preferred, checked into `docs/diagrams/`
+  (one file per diagram, kebab-case names, a header comment citing the
+  main SHA they were authored against).
+- Diagrams depict main AS-BUILT at the authoring commit. Not-yet-built
+  flows may appear ONLY with an explicit `PLANNED (Pn)` label and must
+  be flipped to as-built in the executing prompt's MR (rule 11).
+- CI validation where feasible: add a `docs:diagrams` job rendering all
+  `.mmd` files with mermaid-cli; if the runner's npm proxy blocks the
+  toolchain, record the gap honestly in the MR (v1.2 rules 13/16
+  spirit) and gate on mermaid syntax review instead — never fake a
+  render check.
+- Each MR: commit + push per diagram batch; reference every new diagram
+  from `docs/MASTER_PROMPT.md` §2 and the repo README; honest DoD.
+- Never invent structure: every box/edge must be traceable to a module,
+  table, lock, or route on main; cite the source file in a comment.
+
+### P-DIAG.0 — Diagram infrastructure & authoritative lock-order DAG
+ROLE: Solutions Architect. DEPENDS: P13 (backend shape settled).
+PROMPT: Create `docs/diagrams/` with the conventions above, the CI
+render job (or its honestly-recorded fallback), and the FIRST and most
+load-bearing diagram: the GLOBAL LOCK-ORDERING DAG — the single
+authoritative statement of the chains every MR since P7 has re-stated
+verbatim: member → deposit account → share account → loans (the P12
+settlement chain, with the P10/P13.8 loan-terminal-node pattern and the
+!30 batch rule: batch scans lock the root tier FOR UPDATE SKIP LOCKED
+in id order; two-member operations lock member rows in global member-id
+order); application/loan row → guarantor member FOR SHARE → guarantor
+deposit account FOR UPDATE (the P9/!29 pledge chain, with the !29
+justification of why the two chains cannot cycle); the per-tenant
+advisory-lock tier (reference generation, close_period) and the
+outbox-holds-no-domain-locks rule as annotated nodes. Every edge cites
+the code that takes it. Future prompts REFERENCE this diagram instead
+of restating chains; restatements in MR descriptions must match it
+verbatim or update it in the same MR (rule 11).
+EXIT: diagram renders (or fallback recorded); every edge carries a code
+citation valid at the authoring SHA; MASTER_PROMPT §2 and README link
+it; standing-rule 11 text updated to name this file as the authority.
+
+### P-DIAG.1 — C4 levels 1–3 (as-built)
+ROLE: Solutions Architect. DEPENDS: P-DIAG.0.
+PROMPT: C4 context (L1: staff users, the single deployed FastAPI
+backend, Postgres 16 with forced RLS, Redis, the outbox worker, and the
+NOT-YET-BUILT clients/providers marked PLANNED), container (L2: api /
+application / domain / infrastructure layering with the import-linter
+enforced dependency direction, worker processes, migration runner), and
+component (L3: one diagram per api router group mapping router →
+application service → domain module → infrastructure adapter, traceable
+to `backend/src/genesis`). As-built on main only — no aspirational
+boxes without PLANNED labels.
+EXIT: three+ diagrams render; a spot-check script or documented review
+confirms every L3 component names a real module at the authoring SHA;
+linked from MASTER_PROMPT §2.1/README; drift rule applies.
+
+### P-DIAG.2 — ERD from the alembic graph (through 0020)
+ROLE: DBA + Solutions Architect. DEPENDS: P-DIAG.0; !30 merged (0020).
+PROMPT: ERD derived from the alembic migration graph 0001–0020 (all
+tables, PK/FK edges, the tenant_id column on every tenant-owned table),
+with the RLS boundary drawn explicitly: forced-RLS tables vs the
+few non-tenant tables, TENANT_TABLES membership annotated, write-once
+tables (dividend declaration snapshots, penalty/interest accrual
+claims) and append-only tables (ledger_entries, audit_log) visually
+distinguished, and every UNIQUE claim key used for idempotency marked.
+Derive from the migrations (generation script welcome, checked in),
+then hand-annotate; document the regeneration procedure so 0021+ MRs
+can update it (rule 11).
+EXIT: ERD renders and names every table present at alembic head 0020;
+tenant/RLS boundary and append-only/write-once annotations present;
+regeneration procedure documented; linked from MASTER_PROMPT §2.2.
+
+### P-DIAG.3 — Data Flow Diagrams L0 → L3 with trust boundaries
+ROLE: Security Analyst + Solutions Architect. DEPENDS: P-DIAG.0.
+PROMPT: DFDs as code: L0 — system context (external entities: staff,
+members (PLANNED until member auth), M-Pesa (PLANNED P19), SMS/email
+providers (PLANNED P20)); L1 — major subsystems: auth/RBAC, members,
+lending, ledger, guarantees, dividends, exports, outbox/notifications,
+settings; L2 — one diagram PER MONEY-MOVER: deposits/withdrawals/share
+top-ups, disbursement, repayment allocation, deposit-interest accrual,
+penalty accrual, dividend distribution, exit settlement, share
+transfer, corrections/fees/write-off (PLANNED P13.15), M-Pesa STK +
+callback (PLANNED P19); L3 — the highest-risk flows in full detail:
+disbursement, repayment allocation, exit settlement, dividend
+distribution, guarantee substitution swap, M-Pesa callback — every
+store (table) named, every lock taken annotated on the edge that takes
+it (cross-referencing the P-DIAG.0 DAG), every idempotency claim and
+outbox write shown. Trust boundaries drawn on every level: tenant/RLS,
+authn (JWT staff session), staff-vs-member actor, external providers,
+and the request-process vs worker-process boundary.
+EXIT: L0 + 9 L1 subsystems + all L2 money-movers + the 6 named L3
+flows render; every L3 store/lock annotation matches code at the
+authoring SHA (spot-check documented); PLANNED labels only where the
+flow is unbuilt; linked from MASTER_PROMPT/README; drift rule applies.
+
+### P-DIAG.4 — STRIDE threat model per DFD element
+ROLE: Security Analyst. DEPENDS: P-DIAG.3.
+PROMPT: For every element (process, store, edge, boundary crossing) of
+the L2/L3 DFDs, a STRIDE table in `docs/diagrams/stride/` (markdown,
+one file per L2/L3 diagram): threat → affected element → existing
+mitigation → THE NAMED FAILURE-MODE TEST THAT COVERS IT (file + test
+name, the !28/!29/!30 tables are the source) or, where no test exists,
+an OPEN BLOCKER ISSUE created per the standing rule and linked. No
+threat may map to "mitigated" without a falsifiable test or an issue —
+that is the anti-reward-hacking rule applied to threat modelling. The
+!29 F3/F4 accepted risks (interim email identity) and rule-13 security
+-template gap MUST appear with their issue/prompt references.
+EXIT: one STRIDE table per L2/L3 diagram; 100% of threats mapped to a
+cited test or an open issue (spot-check documented); P23 references
+these tables as its DAST triage map.
+
+### P-DIAG.5 — Sequence diagrams for the reusable patterns
+ROLE: Developer + Solutions Architect. DEPENDS: P-DIAG.0.
+PROMPT: Mermaid sequence diagrams for the three patterns every MR
+re-explains in prose: (1) committee/voting — vote cast under the row
+lock, quorum read at vote time (P13.7 consumer convention), decision
+produced only by a vote event, one-vote UNIQUE; (2)
+snapshot-bind-reverify — persist snapshot → committee approval binds to
+it → execution re-verifies component-by-component under the full lock
+set → 409 on drift posting nothing (P12/!30 pattern), incl. the
+DB-level write-once trigger; (3) outbox dispatch — same-transaction
+event write, worker claim via partial index + FOR UPDATE SKIP LOCKED +
+set-based lease, backoff/dead-letter, dispatch holding no domain locks.
+Each participant/message cites the implementing function.
+EXIT: three diagrams render with code citations valid at the authoring
+SHA; linked from MASTER_PROMPT §1.4/§1.2; future prompts reference them
+instead of re-describing the patterns; drift rule applies.
+
+---
+
 ## PHASE C — CLIENTS
 
 ### P14 — Web admin scaffold (issue #8)
