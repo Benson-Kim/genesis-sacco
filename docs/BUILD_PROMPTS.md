@@ -658,3 +658,52 @@ every prompt, retroactively on touched code and forward on new code):
    §5.9.
 10. Incremental push discipline: commit + push + observe pipeline per
     coherent unit; a crashed session must never lose completed work.
+
+HARDENED STANDARDS (v1.2 — ADDITIVE to v1.1, which stays in force
+unchanged; proven on !26–!30; apply to every prompt from here forward):
+11. Diagram drift rule: once the P-DIAG diagrams exist under
+    `docs/diagrams/`, any MR that changes a diagrammed flow, table,
+    lock-graph edge, or trust boundary MUST update the affected
+    diagram(s) in the same MR. A stale diagram is a rejected MR — the
+    diagrams are load-bearing review artifacts, not decoration.
+12. Merge-sequencing / rebase-re-run rule: parallel-track MRs declare
+    their merge order up front in the MR description (the !26/!27
+    "merges FIRST" precedent). Before merging, a branch merges current
+    `main` and re-runs its pipeline green on the COMBINED state (the
+    !29 `a0af60c` precedent — !28/0019 landed mid-session and the
+    pipeline was re-observed). Conflicts are resolved with merge
+    commits; force-push only via the documented backup-branch +
+    `--force-with-lease` rebase procedure, never bare.
+13. Security-template honesty rule: the included SAST / Secret-Detection
+    / Dependency-Scanning template jobs currently DO NOT SPAWN on this
+    project's MR pipelines (recorded on !26, !28, !29). Until P22 fixes
+    the template `rules:`, every MR's DoD records the security box
+    UNCHECKED with this exact reason. Ticking it without in-project job
+    evidence is a rejected MR; silently "fixing" it by removing the
+    template is worse.
+14. Migration-claim registry: exactly one in-flight claim per alembic
+    number. State the claim (number + `down_revision`) in the MR
+    description at branch time, before the first commit. Registry at
+    v1.2 authoring: 0001–0019 on main; **0020 is !30's (P13.11)**; the
+    next migration-bearing session claims 0021. Prompts that need no
+    migration state "ships NO migration" explicitly in the MR (the !29
+    precedent). If a reserved number frees up (MR closed) or lands out
+    of order, re-chain `down_revision` in your own MR like the 0017
+    re-chain in !26 — never renumber another track's claim.
+15. Named banking-grade failure modes: every prompt that moves or
+    derives money ships a NUMBERED failure-mode table in its MR
+    description, one falsifiable test per mode (the test fails with its
+    guard removed) with hand-computed oracles in comments — the
+    !28/!29/!30 pattern. "Covered by the general suite" is a rejected
+    answer; each mode is named, each test is cited.
+16. Process rules (every session): commit + push per coherent unit —
+    never one end-of-session commit; never force-push (rule 12 governs
+    the only exception). PyPI is proxy-blocked in the session
+    environment — never attempt local `pip install`; the CI image is
+    the only place Python deps resolve, so CI is the arbiter of
+    lint/test/migrate results. Format with the exact ruff version the
+    CI image resolves (0.16 line at authoring) — an older local ruff
+    formats differently and reds `backend:lint`. After any tool-assisted
+    edit, re-read the touched region and grep-audit for silently
+    dropped or duplicated hunks before committing (the !26 F7 incident
+    class).
