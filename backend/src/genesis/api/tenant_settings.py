@@ -238,5 +238,3 @@ async def update_settings(body: SettingsUpdateBody, ctx: EditCtx) -> SettingsOut
             changes=changes,
         )
     return _out(record)
- )
-    return _out(record)

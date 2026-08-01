@@ -483,10 +483,3 @@ def rate_for_amount(amount: Decimal, bands: tuple[RateBand, ...]) -> Decimal | N
         if band.max_amount is None or amount <= band.max_amount:
             return band.rate_pct
     return None
-op band (callers fall back to the
-    product rate). Linear scan; n <= MAX_RATE_BANDS (documented bound).
-    """
-    for band in bands:
-        if band.max_amount is None or amount <= band.max_amount:
-            return band.rate_pct
-    return None
