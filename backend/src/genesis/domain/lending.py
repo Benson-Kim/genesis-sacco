@@ -105,6 +105,18 @@ def classify(days_past_due: int) -> Classification:
     return Classification(LoanClass.LOSS, Decimal("100"), True)
 
 
+#: The NPL label set, BY LABEL (P13.16). classify() above is the single
+#: source of truth for NPL-ness by days-past-due; consumers that hold a
+#: STORED classification label (the arrears job's persisted output on
+#: loans.classification) test membership here instead of re-deriving
+#: days past due (v1.1 rule 2 — never a parallel dpd recomputation).
+#: tests/test_recovery_domain.py pins this set to classify()'s is_npl
+#: flag across every threshold, so the two can never drift.
+NPL_CLASSES: frozenset[LoanClass] = frozenset(
+    {LoanClass.SUBSTANDARD, LoanClass.DOUBTFUL, LoanClass.LOSS}
+)
+
+
 class LoanStatus(enum.StrEnum):
     ACTIVE = "active"
     CLOSED = "closed"
