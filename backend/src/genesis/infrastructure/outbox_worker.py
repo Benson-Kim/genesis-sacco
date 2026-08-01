@@ -32,8 +32,9 @@ import traceback
 import uuid
 from dataclasses import dataclass
 from functools import partial
+from typing import Any, cast
 
-from sqlalchemy import text
+from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from genesis.application.batch_runner import run_in_batches
@@ -201,14 +202,17 @@ async def purge_dispatched(
     async def _purge_batch(
         session: AsyncSession, _cursor: uuid.UUID | None
     ) -> tuple[int, uuid.UUID | None, None]:
-        result = await session.execute(
-            text(
-                "DELETE FROM outbox_events WHERE id IN ("
-                "SELECT id FROM outbox_events WHERE status = 'dispatched' "
-                "AND dispatched_at < now() - make_interval(days => :days) "
-                "LIMIT :limit FOR UPDATE SKIP LOCKED)"
+        result = cast(
+            CursorResult[Any],
+            await session.execute(
+                text(
+                    "DELETE FROM outbox_events WHERE id IN ("
+                    "SELECT id FROM outbox_events WHERE status = 'dispatched' "
+                    "AND dispatched_at < now() - make_interval(days => :days) "
+                    "LIMIT :limit FOR UPDATE SKIP LOCKED)"
+                ),
+                {"days": DISPATCHED_RETENTION_DAYS, "limit": batch_size},
             ),
-            {"days": DISPATCHED_RETENTION_DAYS, "limit": batch_size},
         )
         return int(result.rowcount or 0), None, None
 
