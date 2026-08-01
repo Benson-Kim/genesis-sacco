@@ -34,8 +34,9 @@ PHASE B2 common rules):
 | [`c4-context.md`](c4-context.md) — C4 L1 system context (clients/providers marked PLANNED) | P-DIAG.1 | as-built |
 | [`c4-container.md`](c4-container.md) — C4 L2 containers (layers, workers, migration runner, store properties) | P-DIAG.1 | as-built |
 | [`c4-component.md`](c4-component.md) — C4 L3, one diagram per API router group; spot-check: [`c4-spot-check.py`](c4-spot-check.py) | P-DIAG.1 | as-built |
+| [`erd.md`](erd.md) — ERD, all 37 tables at alembic head 0022 (five subject-area diagrams); spot-check: [`erd-spot-check.py`](erd-spot-check.py) | P-DIAG.2 | as-built |
 | [`sequence-committee-voting.md`](sequence-committee-voting.md) — committee/voting pattern (P9/P12/!30 consumers) | P-DIAG.5 | as-built |
 | [`sequence-snapshot-bind-reverify.md`](sequence-snapshot-bind-reverify.md) — snapshot-bind-reverify pattern (P12/!30, incl. the !36 unclaimed variant) | P-DIAG.5 | as-built |
 | [`sequence-outbox-dispatch.md`](sequence-outbox-dispatch.md) — outbox dispatch pattern (P5 worker) | P-DIAG.5 | as-built |
 
-P-DIAG.2–.4 (ERD, DFDs, STRIDE) land here as their prompts execute.
+P-DIAG.3–.4 (DFDs, STRIDE) land here as their prompts execute.

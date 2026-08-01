@@ -160,6 +160,9 @@ Layered/hexagonal, dependency direction inward:
   hand-written.
 
 ### 2.2 Data model (core tables)
+As-built ERD (P-DIAG.2, drift-governed per v1.2 rule 11):
+`docs/diagrams/erd.md` — every table and FK at the alembic head,
+gated by `docs/diagrams/erd-spot-check.py`.
 tenants, users, roles, permissions, members (type: person|company|group|vehicle),
 share_accounts, deposit_accounts, loan_products, loan_applications
 (stage machine incl. Rejected), loans, loan_schedules, repayments, guarantees,
