@@ -109,7 +109,7 @@ def test_h4_seven_role_walk_gates_every_pii_column() -> None:
         ):
             _, token = await add_user(tid, role)
             _, completed = await request_and_render(token, tid, {"report": "membership_register"})
-            assert _PII_KEYS <= set(completed["allowed_columns"]), role
+            assert set(completed["allowed_columns"]) >= _PII_KEYS, role
             artifact = completed["artifact"]
             assert artifact is not None
             _, _, body = await download(token, artifact["csv_download"])

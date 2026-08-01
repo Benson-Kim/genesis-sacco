@@ -53,21 +53,21 @@ def test_account_class_side_conventions_are_pinned() -> None:
     assert account_class(Account.REBATE_EXPENSE.value) is AccountClass.EXPENSE
     assert account_class(Account.SHARE_TRANSFER_CLEARING.value) is AccountClass.CLEARING
     assert account_class(Account.SUSPENSE.value) is AccountClass.CLEARING
-    assert DEBIT_NORMAL_CLASSES == {
+    assert {
         AccountClass.ASSET,
         AccountClass.EXPENSE,
         AccountClass.CLEARING,
-    }
+    } == DEBIT_NORMAL_CLASSES
 
 
 def test_unknown_account_string_raises_never_drops() -> None:
     """The render-time fail-loud guard (H1): an account outside the
     code-owned chart raises instead of silently vanishing."""
-    with pytest.raises(ValueError, match="zz.novel"):
+    with pytest.raises(ValueError, match=r"zz\.novel"):
         account_class("zz.novel")
-    with pytest.raises(ValueError, match="zz.novel"):
+    with pytest.raises(ValueError, match=r"zz\.novel"):
         line_for_account("zz.novel")
-    with pytest.raises(ValueError, match="zz.novel"):
+    with pytest.raises(ValueError, match=r"zz\.novel"):
         signed_balance("zz.novel", Decimal("1.00"), Decimal("0.00"))
 
 
