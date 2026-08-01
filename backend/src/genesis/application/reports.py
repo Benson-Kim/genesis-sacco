@@ -37,9 +37,18 @@ from genesis.application import dividends as dividends_service
 from genesis.application import member_exits as exits_service
 from genesis.application.members import get_member
 from genesis.domain.documents import Cell
-from genesis.domain.ledger import Side, TxnType, member_direction
+from genesis.domain.ledger import (
+    Account,
+    AccountClass,
+    Side,
+    TxnType,
+    account_class,
+    member_direction,
+    signed_balance,
+)
 from genesis.domain.money import ZERO, to_cents
-from genesis.errors import InvalidInputError
+from genesis.domain.sasra import SASRA_LINES, SASRA_RETURN_VERSION, line_for_account
+from genesis.errors import InvalidInputError, UnprocessableError
 from genesis.settings import get_settings
 
 #: Opaque keyset cursor used by the export engine; each report's
@@ -59,6 +68,10 @@ class ReportName(enum.StrEnum):
     NPL_TREND = "npl_trend"
     MEMBER_EXIT_STATEMENT = "member_exit_statement"
     DIVIDEND_REBATE_SCHEDULE = "dividend_rebate_schedule"
+    PORTFOLIO_AT_RISK_AGING = "portfolio_at_risk_aging"
+    MEMBERSHIP_REGISTER = "membership_register"
+    INCOME_STATEMENT = "income_statement"
+    SASRA_RETURN = "sasra_return"
 
 
 @dataclass(frozen=True)
@@ -759,6 +772,363 @@ async def _build_dividend_rebate_schedule(
 
 
 # ---------------------------------------------------------------------------
+# Portfolio-at-risk aging (P13.10)
+# ---------------------------------------------------------------------------
+
+#: PAR aging buckets over WHOLE-DAY days-past-due (Postgres date
+#: subtraction yields integer days). CLOSED integer intervals matching
+#: the domain classify() thresholds (30/90/180/360):
+#:   [0, 30], [31, 90], [91, 180], [181, 360], [361, +inf)
+#: i.e. the half-open real intervals (30, 90], (90, 180], (180, 360],
+#: (360, +inf) expressed on integer days. A loan with NO unmet
+#: installment at the cutoff has dpd 0 (current). Boundary oracles:
+#: dpd 30 -> "0-30", 31 -> "31-90", 90 -> "31-90", 91 -> "91-180",
+#: 180 -> "91-180", 181 -> "181-360", 360 -> "181-360", 361 -> "360+".
+PAR_BUCKET_LABELS: tuple[str, ...] = ("0-30", "31-90", "91-180", "181-360", "360+")
+
+#: One as-of snapshot of the loan book bucketed by days past due,
+#: reconstructed ENTIRELY from the append-only record (v1.1 rule 2 —
+#: the NPL-trend method; never loans.balance / days_past_due /
+#: classification, which are mutable state):
+#:   * outstanding principal per loan = disbursed principal minus the
+#:     loans.receivable credit legs of its repayments up to as-of;
+#:   * days past due = as-of date minus the earliest installment whose
+#:     cumulative schedule due exceeds the cash repaid by as-of.
+#: Loans closed on or before as-of are excluded (terminal postings
+#: zeroed them); written_off is excluded pending a write-off flow.
+#: Cardinality bounded by construction: at most 5 bucket rows.
+PAR_AGING_SQL = """
+WITH paid AS (
+    SELECT r.loan_id, COALESCE(SUM(r.amount), 0) AS paid
+    FROM repayments r
+    JOIN transactions t ON t.id = r.transaction_id AND t.tenant_id = r.tenant_id
+    WHERE r.tenant_id = CAST(:tid AS uuid) AND t.occurred_at <= :as_of
+    GROUP BY r.loan_id
+),
+principal_paid AS (
+    SELECT r.loan_id, COALESCE(SUM(le.amount), 0) AS principal_paid
+    FROM ledger_entries le
+    JOIN repayments r
+        ON r.transaction_id = le.transaction_id AND r.tenant_id = le.tenant_id
+    JOIN transactions t ON t.id = le.transaction_id AND t.tenant_id = le.tenant_id
+    WHERE le.tenant_id = CAST(:tid AS uuid)
+      AND le.account = :receivable_account AND le.side = 'credit'
+      AND t.occurred_at <= :as_of
+    GROUP BY r.loan_id
+),
+sched AS (
+    SELECT s.loan_id, s.due_date,
+           SUM(s.total_due) OVER (
+               PARTITION BY s.loan_id ORDER BY s.installment_no
+           ) AS cum_due
+    FROM loan_schedules s
+    WHERE s.tenant_id = CAST(:tid AS uuid) AND s.due_date <= :d_date
+),
+first_unmet AS (
+    SELECT sc.loan_id, MIN(sc.due_date) AS due
+    FROM sched sc
+    LEFT JOIN paid p ON p.loan_id = sc.loan_id
+    WHERE sc.cum_due > COALESCE(p.paid, 0)
+    GROUP BY sc.loan_id
+),
+loan_state AS (
+    SELECT (l.principal - COALESCE(pp.principal_paid, 0)) AS outstanding,
+           CASE WHEN fu.due IS NULL THEN 0 ELSE (:d_date - fu.due) END AS dpd
+    FROM loans l
+    LEFT JOIN principal_paid pp ON pp.loan_id = l.id
+    LEFT JOIN first_unmet fu ON fu.loan_id = l.id
+    WHERE l.tenant_id = CAST(:tid AS uuid)
+      AND l.status <> 'written_off'
+      AND l.disbursed_at <= :as_of
+      AND (l.closed_at IS NULL OR l.closed_at > :as_of)
+)
+SELECT CASE WHEN dpd <= 30 THEN 0
+            WHEN dpd <= 90 THEN 1
+            WHEN dpd <= 180 THEN 2
+            WHEN dpd <= 360 THEN 3
+            ELSE 4 END AS bucket,
+       COUNT(*) AS loans,
+       COALESCE(SUM(outstanding), 0) AS outstanding
+FROM loan_state
+GROUP BY 1
+ORDER BY 1
+"""
+
+
+async def _build_par_aging(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    filters: ExportFilters,
+    as_of: datetime,
+) -> ReportQuery:
+    """As-of semantics: ONE statement against the worker's REPEATABLE
+    READ snapshot; dpd measured to the as-of calendar date (UTC)."""
+    raw = (
+        await session.execute(
+            text(PAR_AGING_SQL),
+            {
+                "tid": str(tenant_id),
+                "as_of": as_of,
+                "d_date": as_of.astimezone(UTC).date(),
+                # Identifier from the code-owned chart (v1.1 rule 6).
+                "receivable_account": Account.LOANS_RECEIVABLE.value,
+            },
+        )
+    ).all()
+    by_bucket: dict[int, tuple[int, Decimal]] = {
+        int(bucket): (int(loans), Decimal(str(outstanding))) for bucket, loans, outstanding in raw
+    }
+    total_loans = sum(loans for loans, _ in by_bucket.values())
+    total_outstanding = to_cents(sum((outstanding for _, outstanding in by_bucket.values()), ZERO))
+    rows: list[tuple[Cell, ...]] = []
+    for index, label in enumerate(PAR_BUCKET_LABELS):
+        loans, outstanding = by_bucket.get(index, (0, ZERO))
+        outstanding = to_cents(outstanding)
+        share = (
+            to_cents(outstanding * Decimal("100") / total_outstanding)
+            if total_outstanding > ZERO
+            else Decimal("0.00")
+        )
+        rows.append((label, loans, outstanding, share))
+    rows.append(
+        (
+            "TOTAL",
+            total_loans,
+            total_outstanding,
+            Decimal("100.00") if total_outstanding > ZERO else Decimal("0.00"),
+        )
+    )
+    return _memory_query(rows)
+
+
+# ---------------------------------------------------------------------------
+# Membership register (P13.10)
+# ---------------------------------------------------------------------------
+
+
+def membership_register_page_sql(*, with_cursor: bool) -> str:
+    """Keyset page over the members register, admission order (gate 1.3).
+
+    Served by idx_members_register_keyset (tenant_id, created_at, id;
+    0023 — shipped with this query). Renders the FULL post-!32 status
+    vocabulary (active/arrears/dormant/exited) verbatim from the
+    status column. Static fragments chosen in code; all values are
+    bound parameters.
+    """
+    cursor_clause = "AND (created_at, id) > (:c_ts, CAST(:c_id AS uuid)) " if with_cursor else ""
+    return (
+        "SELECT id, member_no, name, type, phone, email, status, created_at "  # noqa: S608
+        "FROM members "
+        "WHERE tenant_id = CAST(:tid AS uuid) AND created_at <= :as_of "
+        f"{cursor_clause}"
+        "ORDER BY created_at, id LIMIT :limit"
+    )
+
+
+async def _build_membership_register(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    filters: ExportFilters,
+    as_of: datetime,
+) -> ReportQuery:
+    """As-of semantics: members admitted up to the snapshot as-of, in
+    (created_at, id) keyset order; the snapshot transaction guarantees
+    one consistent register (P13 blocker h)."""
+
+    async def fetch(cursor: ReportCursor | None, limit: int) -> list[Any]:
+        params: dict[str, object] = {"tid": str(tenant_id), "as_of": as_of, "limit": limit}
+        if cursor is not None:
+            params["c_ts"], params["c_id"] = cast(tuple[datetime, str], cursor)
+        page_sql = membership_register_page_sql(with_cursor=cursor is not None)
+        result = await session.execute(text(page_sql), params)
+        return list(result.all())
+
+    def cursor_key(raw: Any) -> ReportCursor:
+        return (raw[7], str(raw[0]))
+
+    def to_cells(raw: Any) -> tuple[Cell, ...]:
+        return (
+            str(raw[1]),
+            str(raw[2]),
+            str(raw[3]),
+            str(raw[4]) if raw[4] is not None else None,
+            str(raw[5]) if raw[5] is not None else None,
+            str(raw[6]),
+            raw[7],
+        )
+
+    return ReportQuery(fetch=fetch, cursor_key=cursor_key, to_cells=to_cells)
+
+
+# ---------------------------------------------------------------------------
+# Income statement (P13.10)
+# ---------------------------------------------------------------------------
+
+
+def account_activity_sql(*, with_from: bool, with_to: bool) -> str:
+    """Per-account, per-side ledger activity, optionally period-scoped.
+
+    The single aggregate behind the income statement and the SASRA
+    return: bounded by the chart-of-accounts cardinality, served by
+    idx_ledger_txn + the transactions primary key (the trial-balance
+    shape). Static fragments chosen in code; all values are bound
+    parameters.
+    """
+    clauses = [
+        "le.tenant_id = CAST(:tid AS uuid)",
+        "t.occurred_at <= :as_of",
+    ]
+    if with_from:
+        clauses.append("t.occurred_at >= :d_from")
+    if with_to:
+        clauses.append("t.occurred_at < :d_to_excl")
+    return (
+        "SELECT le.account, le.side, COALESCE(SUM(le.amount), 0) "  # noqa: S608
+        "FROM ledger_entries le "
+        "JOIN transactions t ON t.id = le.transaction_id AND t.tenant_id = le.tenant_id "
+        f"WHERE {' AND '.join(clauses)} "
+        "GROUP BY le.account, le.side ORDER BY le.account, le.side"
+    )
+
+
+async def _account_activity(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    filters: ExportFilters,
+    as_of: datetime,
+) -> dict[str, tuple[Decimal, Decimal]]:
+    """(debits, credits) per account string over the filter period."""
+    params: dict[str, object] = {"tid": str(tenant_id), "as_of": as_of}
+    if filters.date_from is not None:
+        params["d_from"] = filters.date_from
+    if filters.date_to is not None:
+        params["d_to_excl"] = filters.date_to + timedelta(days=1)
+    raw = (
+        await session.execute(
+            text(
+                account_activity_sql(
+                    with_from=filters.date_from is not None,
+                    with_to=filters.date_to is not None,
+                )
+            ),
+            params,
+        )
+    ).all()
+    activity: dict[str, tuple[Decimal, Decimal]] = {}
+    for account, side, amount_raw in raw:
+        debits, credits = activity.get(str(account), (ZERO, ZERO))
+        amount = Decimal(str(amount_raw))
+        if str(side) == Side.DEBIT.value:
+            debits += amount
+        else:
+            credits += amount
+        activity[str(account)] = (debits, credits)
+    return activity
+
+
+async def _build_income_statement(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    filters: ExportFilters,
+    as_of: datetime,
+) -> ReportQuery:
+    """P&L grouping over the income/expense chart accounts (P13.10).
+
+    Period semantics (explicit, documented): date_from/date_to are
+    INCLUSIVE calendar dates evaluated against transactions.occurred_at
+    (from-midnight to end-of-day via a half-open < date_to + 1 day
+    bound); a missing bound defaults to inception / the snapshot as-of;
+    every leg is additionally capped at occurred_at <= as_of, so the
+    statement can never claim activity after its own cutoff.
+
+    Reversal-aware by construction: a reversing entry posts the SAME
+    accounts on the OPPOSITE sides, so credits-minus-debits (income) /
+    debits-minus-credits (expense) nets original and reversal exactly.
+
+    Fail-loud coverage (gate 1.5): every account with activity must be
+    covered by the code-owned ACCOUNT_CLASS map; an unknown account
+    raises (the export job is marked failed) instead of silently
+    dropping a P&L line.
+    """
+    activity = await _account_activity(session, tenant_id, filters, as_of)
+    income: list[tuple[str, Decimal]] = []
+    expense: list[tuple[str, Decimal]] = []
+    for account in sorted(activity):
+        debits, credits = activity[account]
+        try:
+            cls = account_class(account)
+        except ValueError as exc:
+            # Least disclosure: the account identifier only, no figures.
+            raise UnprocessableError(str(exc)) from exc
+        if cls is AccountClass.INCOME:
+            income.append((account, to_cents(credits - debits)))
+        elif cls is AccountClass.EXPENSE:
+            expense.append((account, to_cents(debits - credits)))
+    total_income = to_cents(sum((amount for _, amount in income), ZERO))
+    total_expense = to_cents(sum((amount for _, amount in expense), ZERO))
+    rows: list[tuple[Cell, ...]] = []
+    rows.extend(("income", account, amount) for account, amount in income)
+    rows.append(("income", "TOTAL INCOME", total_income))
+    rows.extend(("expense", account, amount) for account, amount in expense)
+    rows.append(("expense", "TOTAL EXPENSE", total_expense))
+    rows.append(("net", "NET SURPLUS", to_cents(total_income - total_expense)))
+    return _memory_query(rows)
+
+
+# ---------------------------------------------------------------------------
+# SASRA return skeleton (P13.10)
+# ---------------------------------------------------------------------------
+
+
+async def _build_sasra_return(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    filters: ExportFilters,
+    as_of: datetime,
+) -> ReportQuery:
+    """Trial balance mapped to the regulator's line items (P13.10).
+
+    The mapping is VERSIONED and code-owned (genesis.domain.sasra —
+    v1.1 rules 1/6: never caller-supplied); every rendered row carries
+    the version tag. As-of semantics: cumulative balances at the
+    snapshot as-of (the trial-balance convention).
+
+    Fail-loud coverage (gate 1.5): any ledger account with activity
+    that the versioned mapping does not cover raises (the export job
+    is marked failed) — a future account can never silently vanish
+    from a filed return.
+    """
+    activity = await _account_activity(session, tenant_id, ExportFilters(), as_of)
+    line_totals: dict[str, Decimal] = {line.code: ZERO for line in SASRA_LINES}
+    residual = ZERO
+    for account, (debits, credits) in activity.items():
+        try:
+            code = line_for_account(account)
+            signed = signed_balance(account, debits, credits)
+        except ValueError as exc:
+            # Least disclosure: the account identifier only, no figures.
+            raise UnprocessableError(str(exc)) from exc
+        line_totals[code] += signed
+        residual += signed
+    rows: list[tuple[Cell, ...]] = [
+        (SASRA_RETURN_VERSION, line.code, line.title, to_cents(line_totals[line.code]))
+        for line in SASRA_LINES
+    ]
+    # Double-entry control row: signed balances over ALL accounts sum
+    # to zero on a balanced book (debit-normal positive minus
+    # credit-normal positive) — a non-zero value is a filing stopper.
+    rows.append(
+        (
+            SASRA_RETURN_VERSION,
+            "CHK1",
+            "Balance check (signed balances sum to zero)",
+            to_cents(residual),
+        )
+    )
+    return _memory_query(rows)
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -885,5 +1255,59 @@ REPORTS: dict[ReportName, ReportDefinition] = {
         allowed_filters=frozenset({"exit_id"}),
         required_filters=frozenset({"exit_id"}),
         build=_build_member_exit_statement,
+    ),
+    ReportName.PORTFOLIO_AT_RISK_AGING: ReportDefinition(
+        name=ReportName.PORTFOLIO_AT_RISK_AGING,
+        title="Portfolio at risk — aging",
+        columns=(
+            ReportColumn("bucket", "Bucket (days past due)"),
+            ReportColumn("loans", "Loans"),
+            ReportColumn("outstanding", "Outstanding"),
+            ReportColumn("pct_of_portfolio", "% of Portfolio"),
+        ),
+        allowed_filters=frozenset(),
+        required_filters=frozenset(),
+        build=_build_par_aging,
+    ),
+    ReportName.MEMBERSHIP_REGISTER: ReportDefinition(
+        name=ReportName.MEMBERSHIP_REGISTER,
+        title="Membership register",
+        columns=(
+            ReportColumn("member_no", "Member No"),
+            ReportColumn("member_name", "Member", pii=True),
+            ReportColumn("type", "Type"),
+            ReportColumn("phone", "Phone", pii=True),
+            ReportColumn("email", "Email", pii=True),
+            ReportColumn("status", "Status"),
+            ReportColumn("joined_at", "Joined At"),
+        ),
+        allowed_filters=frozenset(),
+        required_filters=frozenset(),
+        build=_build_membership_register,
+    ),
+    ReportName.INCOME_STATEMENT: ReportDefinition(
+        name=ReportName.INCOME_STATEMENT,
+        title="Income statement",
+        columns=(
+            ReportColumn("section", "Section"),
+            ReportColumn("line", "Line"),
+            ReportColumn("amount", "Amount"),
+        ),
+        allowed_filters=frozenset({"date_from", "date_to"}),
+        required_filters=frozenset(),
+        build=_build_income_statement,
+    ),
+    ReportName.SASRA_RETURN: ReportDefinition(
+        name=ReportName.SASRA_RETURN,
+        title="SASRA return (skeleton)",
+        columns=(
+            ReportColumn("version", "Return Version"),
+            ReportColumn("line_code", "Line Code"),
+            ReportColumn("line_item", "Line Item"),
+            ReportColumn("amount", "Amount"),
+        ),
+        allowed_filters=frozenset(),
+        required_filters=frozenset(),
+        build=_build_sasra_return,
     ),
 }
