@@ -31,6 +31,9 @@ PHASE B2 common rules):
 | Diagram | Prompt | Status |
 |---|---|---|
 | [`lock-order.md`](lock-order.md) — **authoritative lock-ordering DAG** (the single authority for every lock-order statement; v1.2 rule 11) | P-DIAG.0 | as-built |
+| [`c4-context.md`](c4-context.md) — C4 L1 system context (clients/providers marked PLANNED) | P-DIAG.1 | as-built |
+| [`c4-container.md`](c4-container.md) — C4 L2 containers (layers, workers, migration runner, store properties) | P-DIAG.1 | as-built |
+| [`c4-component.md`](c4-component.md) — C4 L3, one diagram per API router group; spot-check: [`c4-spot-check.py`](c4-spot-check.py) | P-DIAG.1 | as-built |
 
-P-DIAG.1–.5 (C4, ERD, DFDs, STRIDE, sequence patterns) land here as
+P-DIAG.2–.5 (ERD, DFDs, STRIDE, sequence patterns) land here as
 their prompts execute.
