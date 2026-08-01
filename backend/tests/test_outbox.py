@@ -580,3 +580,61 @@ def test_r6_every_security_definer_function_pins_search_path() -> None:
         assert unpinned == [], f"SECURITY DEFINER unpinned search_path: {unpinned}"
 
     asyncio.run(run())
+
+
+def test_r7_security_definer_functions_deny_public_execute() -> None:
+    """R7 (!44): PostgreSQL grants EXECUTE to PUBLIC by default on every
+    function, so a SECURITY DEFINER registry left on the default ACL is
+    callable by ANY role — a compromised tenant-scoped session could
+    enumerate every active tenant id and observe which tenants have
+    due/purgeable outbox activity (a cross-tenant activity oracle).
+    0024 revokes PUBLIC and grants EXECUTE only to the single app/worker
+    role (the DATABASE_URL role, `genesis` in CI).
+
+    Sweeps pg_proc.proacl for EVERY user-schema SECURITY DEFINER
+    function. Oracle, hand-computed from the PostgreSQL ACL rules: a
+    NULL proacl MEANS the default ACL — owner plus EXECUTE to PUBLIC —
+    so NULL must FAIL exactly like an explicit PUBLIC grant
+    (aclexplode() grantee oid 0 is the PUBLIC pseudo-role; the LEFT
+    JOIN LATERAL keeps NULL-proacl rows, flagged via the IS NULL arm).
+    Falsifiable: drop any REVOKE from 0024's _UP (or GRANT ... TO
+    PUBLIC on any registry) and this test names the offender.
+    Non-vacuous: the three known definer functions must appear in the
+    sweep, so it can never pass against an empty schema.
+    """
+
+    async def run() -> None:
+        tid, _ = await seed_user(unique_email())
+        async with tenant_session(factory(), tid) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT p.proname, "
+                        "       p.proacl IS NULL AS default_acl, "
+                        "       bool_or(a.grantee = 0 AND a.privilege_type = 'EXECUTE') "
+                        "           AS public_execute "
+                        "FROM pg_proc p "
+                        "JOIN pg_namespace n ON n.oid = p.pronamespace "
+                        "LEFT JOIN LATERAL aclexplode(p.proacl) a ON true "
+                        "WHERE p.prosecdef "
+                        "AND n.nspname NOT IN ('pg_catalog', 'information_schema') "
+                        "GROUP BY p.oid, p.proname, p.proacl"
+                    )
+                )
+            ).all()
+        found = {name for name, _, _ in rows}
+        # Non-vacuous: the 0003 registry and both 0024 registries must exist.
+        assert {
+            "active_tenant_ids",
+            "outbox_due_tenant_ids",
+            "outbox_purgeable_tenant_ids",
+        } <= found
+        offenders = sorted(
+            name
+            for name, default_acl, public_execute in rows
+            # NULL proacl = default ACL = PUBLIC EXECUTE: fails too.
+            if default_acl or bool(public_execute)
+        )
+        assert offenders == [], f"SECURITY DEFINER PUBLIC-executable: {offenders}"
+
+    asyncio.run(run())
