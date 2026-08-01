@@ -286,6 +286,64 @@ def test_dashboard_summary_matches_seeded_fixtures_to_the_cent() -> None:
     asyncio.run(run())
 
 
+def test_dashboard_dormant_member_books_counted_activity_excluded() -> None:
+    """Combined P13.9 + P13.13 state (the v1.2 rule 12 refresh).
+
+    Dashboards report BOOKS, not activity: a dormant member's balances
+    stay in the tenant totals, while active_members and the by_type
+    "active" column exclude them (the members-slice aggregate counts
+    status = 'active' only).
+
+    Fixture arithmetic (hand-computed, never captured from the code):
+      m_active person/active:  +100.00 deposits; +40.00 shares
+      m_dorm   person/dormant: +300.25 deposits; +200.50 shares
+        (deposited while ACTIVE, then flipped to dormant by the fixture
+         — a legal Active->Dormant edge of the P13.13 machine; a NEW
+         deposit cannot be used to build the fixture because it would
+         reactivate the member inside the deposit transaction)
+      total_deposits      = 100.00 + 300.25 = 400.25
+      total_share_capital =  40.00 + 200.50 = 240.50
+      active_members = 1 (m_active); by_type: person total 2, active 1
+
+    Falsifiable both ways: counting dormant members as active breaks
+    the member assertions; dropping dormant balances from the account
+    aggregates breaks the totals.
+    """
+
+    async def run() -> None:
+        tid, admin_id, token = await seed_actor()
+        m_active = await _seed_member(tid, name="Active One")
+        m_dorm = await _seed_member(tid, name="Dormant One")
+        await _deposit(tid, admin_id, m_active, "100.00")
+        await _share_topup(tid, admin_id, m_active, "40.00")
+        await _deposit(tid, admin_id, m_dorm, "300.25")
+        await _share_topup(tid, admin_id, m_dorm, "200.50")
+        # Fixture-level status flip (the arrears direct-seed precedent
+        # above): balances and ledger stay consistent because the money
+        # moved while the member was still active.
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(
+                text(
+                    "UPDATE members SET status = 'dormant' "
+                    "WHERE id = CAST(:m AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+                ),
+                {"m": str(m_dorm), "tid": str(tid)},
+            )
+
+        body = await _get_summary(token)
+
+        assert body["deposits"] == {
+            "total_deposits": "400.25",
+            "total_share_capital": "240.50",
+        }
+        assert body["members"]["active_members"] == 1
+        assert body["members"]["by_type"] == [
+            {"type": "person", "total": 2, "active": 1},
+        ]
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # FM1 — aggregate-vs-ledger drift
 # ---------------------------------------------------------------------------
