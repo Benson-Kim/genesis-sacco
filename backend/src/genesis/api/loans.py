@@ -195,7 +195,10 @@ class GuaranteeReleaseBody(BaseModel):
 
 class GuaranteeSubstituteBody(BaseModel):
     """Atomic-swap request (P13.14). consented records the substitute
-    guarantor's consent — an unconsented substitute is refused (422).
+    guarantor's staff-attested consent and consent_reference cites the
+    evidence it rests on (e.g. the signed guarantorship form) — an
+    unconsented or unreferenced substitute is refused (422) and the
+    attestation is written as a first-class audited fact (review R1).
     amount may only meet or exceed the released amount (server-derived
     from the guarantee row when omitted)."""
 
@@ -204,6 +207,7 @@ class GuaranteeSubstituteBody(BaseModel):
     version: int = Field(ge=1)
     guarantor_member_id: uuid.UUID
     consented: bool
+    consent_reference: str = Field(min_length=1, max_length=200)
     amount: Decimal | None = Field(default=None, gt=0, le=1_000_000_000)
 
 
@@ -492,6 +496,7 @@ async def substitute_guarantee(
             version=body.version,
             guarantor_member_id=body.guarantor_member_id,
             consented=body.consented,
+            consent_reference=body.consent_reference,
             amount=body.amount,
         )
     return SubstitutionOut(

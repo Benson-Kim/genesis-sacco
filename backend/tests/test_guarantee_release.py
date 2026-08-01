@@ -39,12 +39,17 @@ from db_helpers import api_client, factory, seed_user, unique_email
 from genesis.application import guarantees as guarantees_service
 from genesis.application.auth import AuthContext, issue_access_token
 from genesis.application.rbac import seed_permissions
-from genesis.errors import ConflictError, NotFoundError, UnprocessableError
+from genesis.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
 from genesis.infrastructure.tenancy import tenant_session
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("DATABASE_URL"), reason="requires a migrated database"
 )
+
+#: Evidence citation for staff-attested substitute consent (review R1):
+#: mandatory on every substitution; recorded verbatim in the dedicated
+#: guarantee.consent audit row and the confirmation outbox event.
+_CONSENT_REF = "signed guarantorship form GF-1314"
 
 
 # ---------------------------------------------------------------------------
@@ -104,16 +109,27 @@ def _headers(token: str) -> dict[str, str]:
 
 
 async def _seed_member(
-    tid: uuid.UUID, *, deposit: str = "0", shares: str = "0", email: str | None = None
+    tid: uuid.UUID,
+    *,
+    deposit: str = "0",
+    shares: str = "0",
+    email: str | None = None,
+    status: str = "active",
 ) -> uuid.UUID:
     mid = uuid.uuid4()
     async with tenant_session(factory(), tid) as session:
         await session.execute(
             text(
-                "INSERT INTO members (id, tenant_id, member_no, type, name, email) VALUES "
-                "(CAST(:id AS uuid), CAST(:tid AS uuid), :no, 'person', 'G Member', :email)"
+                "INSERT INTO members (id, tenant_id, member_no, type, name, email, status) VALUES "
+                "(CAST(:id AS uuid), CAST(:tid AS uuid), :no, 'person', 'G Member', :email, :st)"
             ),
-            {"id": str(mid), "tid": str(tid), "no": f"GP-{mid.hex[:6].upper()}", "email": email},
+            {
+                "id": str(mid),
+                "tid": str(tid),
+                "no": f"GP-{mid.hex[:6].upper()}",
+                "email": email,
+                "st": status,
+            },
         )
         for table, bal in (("deposit_accounts", deposit), ("share_accounts", shares)):
             await session.execute(
@@ -536,6 +552,7 @@ def test_substitution_swaps_atomically_and_notifies_all_parties() -> None:
                     "version": 1,
                     "guarantor_member_id": str(new_g),
                     "consented": True,
+                    "consent_reference": _CONSENT_REF,
                 },
                 headers=_headers(token),
             )
@@ -605,6 +622,7 @@ def test_substitution_shortfall_and_missing_consent_refused() -> None:
                     "version": 1,
                     "guarantor_member_id": str(new_g),
                     "consented": True,
+                    "consent_reference": _CONSENT_REF,
                     "amount": "4999.99",
                 },
                 headers=_headers(token),
@@ -618,6 +636,7 @@ def test_substitution_shortfall_and_missing_consent_refused() -> None:
                     "version": 1,
                     "guarantor_member_id": str(new_g),
                     "consented": False,
+                    "consent_reference": _CONSENT_REF,
                 },
                 headers=_headers(token),
             )
@@ -626,10 +645,40 @@ def test_substitution_shortfall_and_missing_consent_refused() -> None:
             # consented is mandatory: omitting it is a structural 422.
             missing = await client.post(
                 f"/guarantees/{gid}/substitute",
-                json={"version": 1, "guarantor_member_id": str(new_g)},
+                json={
+                    "version": 1,
+                    "guarantor_member_id": str(new_g),
+                    "consent_reference": _CONSENT_REF,
+                },
                 headers=_headers(token),
             )
             assert missing.status_code == 422, missing.text
+
+            # Review R1: the attestation must cite its evidence — a
+            # missing or blank consent_reference is refused before any
+            # read or write (both 422, zero mutations asserted below).
+            no_ref = await client.post(
+                f"/guarantees/{gid}/substitute",
+                json={
+                    "version": 1,
+                    "guarantor_member_id": str(new_g),
+                    "consented": True,
+                },
+                headers=_headers(token),
+            )
+            assert no_ref.status_code == 422, no_ref.text
+            blank_ref = await client.post(
+                f"/guarantees/{gid}/substitute",
+                json={
+                    "version": 1,
+                    "guarantor_member_id": str(new_g),
+                    "consented": True,
+                    "consent_reference": "   ",
+                },
+                headers=_headers(token),
+            )
+            assert blank_ref.status_code == 422, blank_ref.text
+            assert set(blank_ref.json()) == {"category", "correlation_id"}
 
             # The borrower can never be their own substitute guarantor.
             selfie = await client.post(
@@ -638,6 +687,7 @@ def test_substitution_shortfall_and_missing_consent_refused() -> None:
                     "version": 1,
                     "guarantor_member_id": str(borrower),
                     "consented": True,
+                    "consent_reference": _CONSENT_REF,
                 },
                 headers=_headers(token),
             )
@@ -701,6 +751,7 @@ def test_concurrent_substitutions_never_over_pledge_the_substitute() -> None:
                         version=1,
                         guarantor_member_id=substitute,
                         consented=True,
+                        consent_reference=_CONSENT_REF,
                     )
             except ConflictError as exc:
                 return exc
@@ -760,6 +811,7 @@ def test_substitution_capacity_shortfall_leaves_original_intact() -> None:
                     "version": 1,
                     "guarantor_member_id": str(poor_sub),
                     "consented": True,
+                    "consent_reference": _CONSENT_REF,
                 },
                 headers=_headers(token),
             )
@@ -802,6 +854,7 @@ def test_substitution_of_pledged_or_undisbursed_guarantee_refused() -> None:
                         "version": 1,
                         "guarantor_member_id": str(new_g),
                         "consented": True,
+                        "consent_reference": _CONSENT_REF,
                     },
                     headers=_headers(token),
                 )
@@ -979,6 +1032,7 @@ def test_kill_switch_mid_substitution_leaves_original_guarantee_intact(
                     version=1,
                     guarantor_member_id=new_g,
                     consented=True,
+                    consent_reference=_CONSENT_REF,
                 )
         monkeypatch.undo()
 
@@ -1005,6 +1059,7 @@ def test_kill_switch_mid_substitution_leaves_original_guarantee_intact(
                 version=1,
                 guarantor_member_id=new_g,
                 consented=True,
+                consent_reference=_CONSENT_REF,
             )
         assert released.status == "released"
         assert replacement.status == "active"
@@ -1164,6 +1219,7 @@ def test_release_and_substitute_permission_matrix_per_role() -> None:
                         "version": 1,
                         "guarantor_member_id": str(new_g),
                         "consented": True,
+                        "consent_reference": _CONSENT_REF,
                     },
                     headers=_headers(token),
                 )
@@ -1214,6 +1270,7 @@ def test_release_and_substitute_refuse_foreign_tenant_argument() -> None:
                     version=1,
                     guarantor_member_id=new_g,
                     consented=True,
+                    consent_reference=_CONSENT_REF,
                 )
         assert await _guarantee_state(tid, gid) == ("active", 1)
         assert await _release_side_effects(tid, gid) == (0, 0)
@@ -1337,6 +1394,7 @@ def test_exit_unblocked_after_substitution_end_to_end() -> None:
                     "version": 1,
                     "guarantor_member_id": str(new_g),
                     "consented": True,
+                    "consent_reference": _CONSENT_REF,
                 },
                 headers=admin,
             )
@@ -1362,6 +1420,457 @@ def test_exit_unblocked_after_substitution_end_to_end() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Review R1 — consent attestation is a first-class audited fact
+# ---------------------------------------------------------------------------
+
+
+def test_substitution_consent_attestation_is_first_class_audited_fact() -> None:
+    """Review R1 (consent integrity): the substitute guarantor cannot act
+    for themselves until P14 member auth, so their consent is staff-
+    attested — and the attestation must be a recorded fact, not a bare
+    boolean. Hand-computed oracle: ONE guarantee.consent audit row on
+    the replacement naming the attesting actor and the cited evidence,
+    plus ONE guarantee.consented outbox confirmation addressed to the
+    substitute guarantor (the detection control for a conscripted
+    member). Falsifiable: remove either write in substitute_guarantee
+    and the corresponding count drops to zero."""
+
+    async def run() -> None:
+        tid, uid, _, token = await _seed_actor()
+        borrower = await _seed_member(tid)
+        old_g = await _seed_member(tid, deposit="10000.00")
+        new_g = await _seed_member(tid, deposit="8000.00")
+        pid = await _seed_product(tid)
+        aid = await _seed_application(tid, borrower, pid, amount="5000.00", stage="disbursed")
+        loan_id = await _seed_loan(tid, borrower, pid, aid, balance="5000.00")
+        gid = await _seed_guarantee(
+            tid,
+            guarantor=old_g,
+            borrower=borrower,
+            amount="5000.00",
+            application_id=aid,
+            loan_id=loan_id,
+        )
+        async with api_client() as client:
+            res = await client.post(
+                f"/guarantees/{gid}/substitute",
+                json={
+                    "version": 1,
+                    "guarantor_member_id": str(new_g),
+                    "consented": True,
+                    "consent_reference": _CONSENT_REF,
+                },
+                headers=_headers(token),
+            )
+            assert res.status_code == 201, res.text
+            replacement_id = res.json()["replacement"]["id"]
+
+        async with tenant_session(factory(), tid) as session:
+            consent_audits = (
+                await session.execute(
+                    text(
+                        "SELECT actor_id, after->>'attested_by', "
+                        "after->>'consent_reference', after->>'replaces' "
+                        "FROM audit_log WHERE action = 'guarantee.consent' "
+                        "AND entity_id = :rid"
+                    ),
+                    {"rid": replacement_id},
+                )
+            ).all()
+            assert len(consent_audits) == 1
+            row = consent_audits[0]
+            # WHO attested, on WHAT basis, replacing WHICH guarantee.
+            assert str(row[0]) == str(uid)
+            assert str(row[1]) == str(uid)
+            assert str(row[2]) == _CONSENT_REF
+            assert str(row[3]) == str(gid)
+
+            confirmations = (
+                await session.execute(
+                    text(
+                        "SELECT payload->>'notify_member_id', "
+                        "payload->>'consent_reference' FROM outbox_events "
+                        "WHERE event_type = 'guarantee.consented' "
+                        "AND payload->>'guarantee_id' = :rid"
+                    ),
+                    {"rid": replacement_id},
+                )
+            ).all()
+            assert len(confirmations) == 1
+            # The confirmation goes to the SUBSTITUTE guarantor.
+            assert str(confirmations[0][0]) == str(new_g)
+            assert str(confirmations[0][1]) == _CONSENT_REF
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Review R2 — only ACTIVE members may be substitute guarantors
+# ---------------------------------------------------------------------------
+
+
+def test_non_active_member_cannot_be_substitute_guarantor() -> None:
+    """Review R2: the substitution path must enforce the P9 pledge rule
+    that only ACTIVE members pledge. Hand-computed: both candidates hold
+    deposit 10000 >= replacement 800, so capacity can never be the
+    refusal — only the member-status guard inside
+    _guarantor_available_capacity can refuse. Falsifiable: remove the
+    status check under the member FOR SHARE lock and both swaps land,
+    failing every assertion below. ('dormant' is P13.13 and not on main
+    yet; the guard refuses ANY non-active status, so it is covered by
+    construction when dormancy lands.)"""
+
+    async def run() -> None:
+        tid, _, _, token = await _seed_actor()
+        pid = await _seed_product(tid)
+        for bad_status in ("exited", "arrears"):
+            borrower = await _seed_member(tid)
+            old_g = await _seed_member(tid, deposit="2000.00")
+            bad_sub = await _seed_member(tid, deposit="10000.00", status=bad_status)
+            aid = await _seed_application(tid, borrower, pid, amount="800.00", stage="disbursed")
+            loan_id = await _seed_loan(tid, borrower, pid, aid, balance="800.00")
+            gid = await _seed_guarantee(
+                tid,
+                guarantor=old_g,
+                borrower=borrower,
+                amount="800.00",
+                application_id=aid,
+                loan_id=loan_id,
+            )
+            async with api_client() as client:
+                res = await client.post(
+                    f"/guarantees/{gid}/substitute",
+                    json={
+                        "version": 1,
+                        "guarantor_member_id": str(bad_sub),
+                        "consented": True,
+                        "consent_reference": _CONSENT_REF,
+                    },
+                    headers=_headers(token),
+                )
+            assert res.status_code == 409, f"{bad_status}: {res.text}"
+            assert set(res.json()) == {"category", "correlation_id"}
+            # The release leg rolled back with the refusal: zero
+            # mutations, no replacement row.
+            assert await _guarantee_state(tid, gid) == ("active", 1)
+            assert await _substitution_side_effects(tid, gid) == (0, 0)
+            async with tenant_session(factory(), tid) as session:
+                count = (
+                    await session.execute(
+                        text("SELECT count(*) FROM guarantees WHERE loan_id = CAST(:l AS uuid)"),
+                        {"l": str(loan_id)},
+                    )
+                ).scalar_one()
+            assert int(count) == 1
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Review R3 — the email identity link, proven not asserted
+# ---------------------------------------------------------------------------
+
+
+def test_p4_seeded_matrix_email_rewriters_hold_applications_edit() -> None:
+    """Review R3: the F3 claim — 'no role that can rewrite either email
+    lacks applications:edit' — walked against the SEEDED P4 matrix in
+    the database, not a code comment. Emails are rewritten via
+    members:edit (members.email) or access_control:edit (users.email).
+    Hand-computed from the prototype seedPerms(): exactly System Admin
+    and Branch Manager hold either, and both hold applications:edit.
+    Falsifiable: grant members:edit or access_control:edit to any role
+    without applications:edit in domain/rbac.py and this fails."""
+
+    async def run() -> None:
+        tid, _, _, _ = await _seed_actor()
+        async with tenant_session(factory(), tid) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT r.name, p.module, p.can_edit FROM roles r "
+                        "JOIN permissions p ON p.role_id = r.id "
+                        "WHERE p.module IN ('members', 'access_control', 'applications')"
+                    )
+                )
+            ).all()
+        grants: dict[str, dict[str, bool]] = {}
+        for name, module, can_edit in rows:
+            grants.setdefault(str(name), {})[str(module)] = bool(can_edit)
+        assert set(grants) == {
+            "System Admin",
+            "Branch Manager",
+            "Loan Officer",
+            "Teller",
+            "Credit Committee",
+            "Accountant",
+            "Auditor",
+        }
+        rewriters = {
+            role
+            for role, g in grants.items()
+            if g.get("members", False) or g.get("access_control", False)
+        }
+        assert rewriters == {"System Admin", "Branch Manager"}
+        for role in rewriters:
+            assert grants[role].get("applications", False), (
+                f"{role} can rewrite an email but lacks applications:edit — "
+                "the identity link becomes steerable"
+            )
+
+    asyncio.run(run())
+
+
+def test_email_identity_link_is_byte_exact_and_tenant_fenced() -> None:
+    """Review R3: the users.email <-> members.email link matches
+    byte-exactly (Postgres `=`; no canonicalisation exists anywhere in
+    the codebase) and never crosses a tenant fence. A variant can only
+    fail CLOSED (deny the self-service path), never open it."""
+
+    async def run() -> None:
+        tid, _, _, _ = await _seed_actor()
+        exact = f"Guarantor.CASE-{uuid.uuid4().hex[:8]}@Example.com"
+        borrower = await _seed_member(tid)
+        guarantor = await _seed_member(tid, deposit="10000.00", email=exact)
+        pid = await _seed_product(tid)
+        aid = await _seed_application(tid, borrower, pid, amount="1000.00", stage="submitted")
+        gid = await _seed_guarantee(
+            tid,
+            guarantor=guarantor,
+            borrower=borrower,
+            amount="500.00",
+            status="pledged",
+            application_id=aid,
+        )
+        # Auditor holds applications:view only: every 403 below is the
+        # service-level identity check, not the route gate.
+        _, _, case_token = await _add_user(tid, "Auditor", email=exact.lower())
+        _, _, space_token = await _add_user(tid, "Auditor", email=f" {exact}")
+        _, _, exact_token = await _add_user(tid, "Auditor", email=exact)
+
+        async with api_client() as client:
+            for token in (case_token, space_token):
+                res = await client.post(
+                    f"/guarantees/{gid}/release",
+                    json={"version": 1},
+                    headers=_headers(token),
+                )
+                assert res.status_code == 403, res.text
+                assert await _guarantee_state(tid, gid) == ("pledged", 1)
+            # Positive control: only the byte-exact email links.
+            res = await client.post(
+                f"/guarantees/{gid}/release",
+                json={"version": 1},
+                headers=_headers(exact_token),
+            )
+            assert res.status_code == 200, res.text
+        assert await _guarantee_state(tid, gid) == ("released", 2)
+
+        # Tenant fence: a user in ANOTHER tenant whose email equals the
+        # guarantor's must never link (u.tenant_id predicate + RLS; the
+        # join is additionally anchored on the guarantor member's
+        # globally-unique id). NULL-email guarantor covers the
+        # NULL-never-matches branch at the same time.
+        null_email_guarantor = await _seed_member(tid, deposit="10000.00", email=None)
+        gid2 = await _seed_guarantee(
+            tid,
+            guarantor=null_email_guarantor,
+            borrower=borrower,
+            amount="500.00",
+            status="pledged",
+            application_id=aid,
+        )
+        foreign_email = unique_email()
+        foreign_tid, _ = await seed_user(foreign_email, role_name="System Admin")
+        async with tenant_session(factory(), foreign_tid) as session:
+            foreign_user_row = (
+                await session.execute(
+                    text("SELECT id FROM users WHERE email = :email"),
+                    {"email": foreign_email},
+                )
+            ).scalar_one()
+        foreign_uid = uuid.UUID(str(foreign_user_row))
+        # Same-tenant user with the FOREIGN user's email string exists
+        # nowhere in tid; a tid Auditor with that email must not link to
+        # the NULL-email guarantor either.
+        _, _, twin_token = await _add_user(tid, "Auditor", email=foreign_email)
+        async with api_client() as client:
+            res = await client.post(
+                f"/guarantees/{gid2}/release",
+                json={"version": 1},
+                headers=_headers(twin_token),
+            )
+            assert res.status_code == 403, res.text
+        # Service level: the foreign tenant's user id as actor inside a
+        # tid session must never satisfy _actor_is_guarantor (the
+        # u.tenant_id = :tid predicate and RLS both refuse the row).
+        async with tenant_session(factory(), tid) as session:
+            auditor_role = uuid.UUID(
+                str(
+                    (
+                        await session.execute(
+                            text("SELECT id FROM roles WHERE name = 'Auditor'")
+                        )
+                    ).scalar_one()
+                )
+            )
+            with pytest.raises(ForbiddenError):
+                await guarantees_service.release_guarantee(
+                    session,
+                    tid,
+                    foreign_uid,
+                    gid2,
+                    version=1,
+                    actor_role_id=auditor_role,
+                )
+        assert await _guarantee_state(tid, gid2) == ("pledged", 1)
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Review R4 — Idempotency-Key replay is scoped to (tenant, actor, route)
+# ---------------------------------------------------------------------------
+
+
+def test_idempotency_replay_scoped_to_actor_and_tenant() -> None:
+    """Review R4: a stored response must replay ONLY to the same
+    (tenant, actor, method+path+body). A DIFFERENT user presenting the
+    same key must never read the first caller's stored response (that
+    would bypass the per-handler authorization the original passed) —
+    they get the least-disclosure 409 claim-conflict envelope. A
+    different tenant claims its own (tenant, key) row and hits the real
+    handler (404 here). Falsifiable: drop the actor from the request
+    hash in the idempotency middleware and the second user receives the
+    first caller's 200 replay, failing this test."""
+
+    async def run() -> None:
+        tid, _, _, token_a = await _seed_actor()
+        borrower = await _seed_member(tid)
+        guarantor = await _seed_member(tid, deposit="10000.00")
+        pid = await _seed_product(tid)
+        aid = await _seed_application(tid, borrower, pid, amount="1000.00", stage="submitted")
+        gid = await _seed_guarantee(
+            tid,
+            guarantor=guarantor,
+            borrower=borrower,
+            amount="500.00",
+            status="pledged",
+            application_id=aid,
+        )
+        _, _, token_b = await _add_user(tid, "System Admin")
+        foreign_tid, _, _, token_c = await _seed_actor()
+        assert foreign_tid != tid
+
+        key = f"p1314-scope-{uuid.uuid4().hex[:10]}"
+        body = {"version": 1}
+        async with api_client() as client:
+            first = await client.post(
+                f"/guarantees/{gid}/release",
+                json=body,
+                headers={**_headers(token_a), "idempotency-key": key},
+            )
+            assert first.status_code == 200, first.text
+
+            # Same tenant, DIFFERENT user, same key/path/body: never the
+            # stored response — the claim-conflict envelope instead.
+            other_user = await client.post(
+                f"/guarantees/{gid}/release",
+                json=body,
+                headers={**_headers(token_b), "idempotency-key": key},
+            )
+            assert other_user.status_code == 409, other_user.text
+            assert other_user.headers.get("idempotency-replayed") is None
+            assert set(other_user.json()) == {"category", "correlation_id"}
+
+            # Different tenant, same key: its own claim, the real
+            # handler, and a 404 for the foreign guarantee id.
+            other_tenant = await client.post(
+                f"/guarantees/{gid}/release",
+                json=body,
+                headers={**_headers(token_c), "idempotency-key": key},
+            )
+            assert other_tenant.status_code == 404, other_tenant.text
+            assert other_tenant.headers.get("idempotency-replayed") is None
+
+            # The original caller still replays cleanly.
+            replay = await client.post(
+                f"/guarantees/{gid}/release",
+                json=body,
+                headers={**_headers(token_a), "idempotency-key": key},
+            )
+            assert replay.status_code == 200
+            assert replay.headers.get("idempotency-replayed") == "true"
+            assert replay.json() == first.json()
+
+        # Exactly one release happened (side-effect counts, not return
+        # values): 1 audit row, 2 notifications, one version bump.
+        assert await _guarantee_state(tid, gid) == ("released", 2)
+        assert await _release_side_effects(tid, gid) == (1, 2)
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Review R7 — stage-only DISBURSED rows are substitution-only
+# ---------------------------------------------------------------------------
+
+
+def test_stage_disbursed_without_loan_id_is_substitution_only() -> None:
+    """Review R7: pre-P12.5 data shape — the application reached
+    DISBURSED but the guarantee row carries loan_id NULL. The disbursed
+    determination (loan_id IS NOT NULL OR stage = DISBURSED) must catch
+    the stage-only path: bare release refused (409), substitution the
+    only exit. Falsifiable: drop the `or stage is DISBURSED` branch in
+    release_guarantee and the bare release lands (DISBURSED is not a
+    cover-guarded stage), failing this test."""
+
+    async def run() -> None:
+        tid, _, _, token = await _seed_actor()
+        borrower = await _seed_member(tid)
+        old_g = await _seed_member(tid, deposit="10000.00")
+        new_g = await _seed_member(tid, deposit="8000.00")
+        pid = await _seed_product(tid)
+        aid = await _seed_application(tid, borrower, pid, amount="5000.00", stage="disbursed")
+        gid = await _seed_guarantee(
+            tid,
+            guarantor=old_g,
+            borrower=borrower,
+            amount="5000.00",
+            application_id=aid,
+            loan_id=None,
+        )
+        async with api_client() as client:
+            bare = await client.post(
+                f"/guarantees/{gid}/release",
+                json={"version": 1},
+                headers=_headers(token),
+            )
+            assert bare.status_code == 409, bare.text
+            assert set(bare.json()) == {"category", "correlation_id"}
+            assert await _guarantee_state(tid, gid) == ("active", 1)
+            assert await _release_side_effects(tid, gid) == (0, 0)
+
+            swapped = await client.post(
+                f"/guarantees/{gid}/substitute",
+                json={
+                    "version": 1,
+                    "guarantor_member_id": str(new_g),
+                    "consented": True,
+                    "consent_reference": _CONSENT_REF,
+                },
+                headers=_headers(token),
+            )
+            assert swapped.status_code == 201, swapped.text
+            replacement = swapped.json()["replacement"]
+            assert replacement["application_id"] == str(aid)
+            assert replacement["loan_id"] is None
+        assert await _guarantee_state(tid, gid) == ("released", 2)
+        assert await _substitution_side_effects(tid, gid) == (1, 3)
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
 # Service-level validation: consent flag checked before any read
 # ---------------------------------------------------------------------------
 
@@ -1379,6 +1888,7 @@ def test_unconsented_substitute_refused_at_service_level() -> None:
                     version=1,
                     guarantor_member_id=uuid.uuid4(),
                     consented=False,
+                    consent_reference=_CONSENT_REF,
                 )
 
     asyncio.run(run())

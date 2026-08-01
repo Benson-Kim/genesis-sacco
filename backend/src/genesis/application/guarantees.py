@@ -465,13 +465,19 @@ async def _actor_is_guarantor(
 
     Interim identity link until member-facing authentication lands
     (BUILD_PROMPTS P14): the caller's users.email must equal the
-    guarantor member's members.email inside the same tenant. The join
-    is deny-by-default (a NULL member email never matches) and cannot
-    be steered by callers below staff level: rewriting either email
-    requires members:edit or access_control:edit, and every role
-    holding those already holds applications:edit (the staff release
-    path). Both lookups carry explicit tenant predicates on top of RLS
-    (gate 1.6 v1.1).
+    guarantor member's members.email inside the same tenant. The match
+    is BYTE-EXACT (Postgres `=`, case- and whitespace-sensitive) by
+    decision: no email canonicalisation exists anywhere in this
+    codebase (users and members store emails verbatim), so a variant
+    fails CLOSED — it can only deny the self-service path, never widen
+    it (review R3; tested). The join is deny-by-default (a NULL member
+    email never matches) and cannot be steered by callers below staff
+    level: rewriting either email requires members:edit or
+    access_control:edit, and every role holding those already holds
+    applications:edit (the staff release path) — asserted against the
+    SEEDED P4 matrix by test, not by comment. Both lookups carry
+    explicit tenant predicates on top of RLS, so a user email-linked to
+    a member of ANOTHER tenant never matches (gate 1.6 v1.1; tested).
     """
     row = (
         await session.execute(
@@ -551,22 +557,24 @@ async def release_guarantee(
         raise ConflictError(
             "an active guarantee behind a disbursed loan can only be substituted, never released"
         )
-    result = cast(
-        CursorResult[Any],
+    updated = (
         await session.execute(
             text(
                 # Explicit tenant predicate on the write, on top of RLS
-                # (defence in depth, gate 1.6 v1.1).
+                # (defence in depth, gate 1.6 v1.1). RETURNING makes the
+                # response version the database's word, never arithmetic
+                # on caller input (review R5).
                 "UPDATE guarantees SET status = 'released', "
                 "version = version + 1, updated_at = now() "
                 "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
-                "AND version = :ver"
+                "AND version = :ver RETURNING version"
             ),
             {"id": str(guarantee_id), "tid": str(tenant_id), "ver": version},
-        ),
-    )
-    if result.rowcount != 1:
+        )
+    ).first()
+    if updated is None:
         raise ConflictError(f"stale version {version} for guarantee {guarantee_id}")
+    released_version = int(updated[0])
     if g.status == "active" and stage in _COVER_GUARDED_STAGES and g.application_id is not None:
         # Cover-strip guard (failure mode 1), re-verified under the
         # borrower's deposit-account row lock AFTER the release write:
@@ -628,7 +636,7 @@ async def release_guarantee(
         borrower_member_id=g.borrower_member_id,
         amount=g.amount,
         status="released",
-        version=version + 1,
+        version=released_version,
     )
 
 
@@ -641,6 +649,7 @@ async def substitute_guarantee(
     version: int,
     guarantor_member_id: uuid.UUID,
     consented: bool,
+    consent_reference: str,
     amount: Decimal | None = None,
 ) -> tuple[GuaranteeRecord, GuaranteeRecord]:
     """Atomic swap for a disbursed loan's collateral (P13.14, gate 1.5).
@@ -654,14 +663,28 @@ async def substitute_guarantee(
     NEW guarantor's member FOR SHARE + deposit-account FOR UPDATE locks
     via the single P9 capacity implementation (gate 1.1). Returns
     (released, replacement).
+
+    Consent integrity (review R1 — accepted risk, closed by P14): the
+    substitute guarantor cannot act for themselves until member-facing
+    authentication exists, so their consent is STAFF-ATTESTED here —
+    exactly the trust model of the P9 consent route, which is likewise
+    gated on applications:edit. To keep the attestation honest it is a
+    first-class audited fact, not a bare boolean: the caller must cite
+    the evidence (consent_reference, e.g. the signed guarantorship
+    form), a dedicated guarantee.consent audit row records WHO attested
+    on WHAT basis, and a consent-confirmation outbox notification goes
+    to the substitute guarantor so a conscripted member finds out
+    immediately (detection control).
     """
-    if not consented:
+    consent_reference = consent_reference.strip()
+    if not consented or not consent_reference:
         # Failure mode 4: collateral is never activated without the
         # guarantor's recorded consent (the P9 consent contract); an
         # unconsented substitute would recreate the exact hole the P7
-        # step-2c gate closed.
+        # step-2c gate closed. The attestation must cite its evidence.
         raise UnprocessableError(
-            "the replacement pledge requires the substitute guarantor's recorded consent"
+            "the replacement pledge requires the substitute guarantor's recorded "
+            "consent and a consent reference"
         )
     probe = await _read_guarantee(session, tenant_id, guarantee_id, for_update=False)
     if probe is None:
@@ -686,22 +709,24 @@ async def substitute_guarantee(
         # collateral. Least disclosure: the floor figure lives on the
         # guarantee row and in the audit trail, not in this message.
         raise UnprocessableError("the replacement pledge must cover at least the released amount")
-    result = cast(
-        CursorResult[Any],
+    updated = (
         await session.execute(
             text(
                 # Explicit tenant predicate on the write, on top of RLS
-                # (defence in depth, gate 1.6 v1.1).
+                # (defence in depth, gate 1.6 v1.1). RETURNING makes the
+                # response version the database's word, never arithmetic
+                # on caller input (review R5).
                 "UPDATE guarantees SET status = 'released', "
                 "version = version + 1, updated_at = now() "
                 "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
-                "AND version = :ver"
+                "AND version = :ver RETURNING version"
             ),
             {"id": str(guarantee_id), "tid": str(tenant_id), "ver": version},
-        ),
-    )
-    if result.rowcount != 1:
+        )
+    ).first()
+    if updated is None:
         raise ConflictError(f"stale version {version} for guarantee {guarantee_id}")
+    released_version = int(updated[0])
     # New pledge leg — the established P9 chain: guarantor member FOR
     # SHARE -> guarantor deposit account FOR UPDATE. Runs AFTER the
     # release write so a self-substitution (same guarantor, adjusted
@@ -712,23 +737,30 @@ async def substitute_guarantee(
         # shortfall is echoed.
         raise ConflictError("insufficient guarantor capacity for the replacement pledge")
     replacement_id = uuid.uuid4()
-    await session.execute(
-        text(
-            "INSERT INTO guarantees "
-            "(id, tenant_id, guarantor_member_id, borrower_member_id, "
-            " application_id, loan_id, amount, status) "
-            "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:g AS uuid), "
-            "CAST(:b AS uuid), CAST(:a AS uuid), CAST(:l AS uuid), :amount, 'active')"
-        ),
-        {
-            "id": str(replacement_id),
-            "tid": str(tenant_id),
-            "g": str(guarantor_member_id),
-            "b": str(g.borrower_member_id),
-            "a": str(g.application_id) if g.application_id else None,
-            "l": str(g.loan_id) if g.loan_id else None,
-            "amount": str(replacement_amount),
-        },
+    replacement_version = int(
+        (
+            await session.execute(
+                text(
+                    # RETURNING version: the schema default is the source
+                    # of truth for the new row's version (review R5).
+                    "INSERT INTO guarantees "
+                    "(id, tenant_id, guarantor_member_id, borrower_member_id, "
+                    " application_id, loan_id, amount, status) "
+                    "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:g AS uuid), "
+                    "CAST(:b AS uuid), CAST(:a AS uuid), CAST(:l AS uuid), :amount, 'active') "
+                    "RETURNING version"
+                ),
+                {
+                    "id": str(replacement_id),
+                    "tid": str(tenant_id),
+                    "g": str(guarantor_member_id),
+                    "b": str(g.borrower_member_id),
+                    "a": str(g.application_id) if g.application_id else None,
+                    "l": str(g.loan_id) if g.loan_id else None,
+                    "amount": str(replacement_amount),
+                },
+            )
+        ).scalar_one()
     )
     if g.application_id is not None:
         await recompute_cover(session, tenant_id, g.application_id)
@@ -763,6 +795,38 @@ async def substitute_guarantee(
             "status": "active",
         },
     )
+    # Review R1: the consent attestation is a first-class audited fact
+    # mirroring the P9 consent trail — WHO attested, on WHAT basis —
+    # plus a confirmation notification to the substitute guarantor so
+    # an attestation made in their name never goes unseen (gates 1.5,
+    # 1.2; accepted risk closed by P14 member-facing auth).
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="guarantee.consent",
+        entity="guarantees",
+        entity_id=str(replacement_id),
+        after={
+            "status": "active",
+            "replaces": str(guarantee_id),
+            "guarantor_member_id": str(guarantor_member_id),
+            "attested_by": str(actor_id),
+            "consent_reference": consent_reference,
+        },
+    )
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="guarantee.consented",
+        payload={
+            "guarantee_id": str(replacement_id),
+            "replaces": str(guarantee_id),
+            "attested_by": str(actor_id),
+            "consent_reference": consent_reference,
+            "notify_member_id": str(guarantor_member_id),
+        },
+    )
     # Outbox notifications for BOTH sides of the swap plus the borrower
     # (gates 1.2, 1.5).
     for notify in (g.guarantor_member_id, guarantor_member_id, g.borrower_member_id):
@@ -790,7 +854,7 @@ async def substitute_guarantee(
         borrower_member_id=g.borrower_member_id,
         amount=released_amount,
         status="released",
-        version=version + 1,
+        version=released_version,
     )
     replacement = GuaranteeRecord(
         id=replacement_id,
@@ -800,6 +864,6 @@ async def substitute_guarantee(
         borrower_member_id=g.borrower_member_id,
         amount=replacement_amount,
         status="active",
-        version=1,
+        version=replacement_version,
     )
     return released, replacement
