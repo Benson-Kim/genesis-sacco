@@ -832,9 +832,7 @@ def test_fm8_ledger_balances_and_append_only_triggers_fire_at_sql_level() -> Non
         # A6: the adjustment claim row is write-once (0025 trigger).
         with pytest.raises(DBAPIError, match="write-once"):
             async with tenant_session(factory(), tid) as session:
-                await session.execute(
-                    text("UPDATE repayment_adjustments SET amount = amount + 1")
-                )
+                await session.execute(text("UPDATE repayment_adjustments SET amount = amount + 1"))
         # A6: the claim UNIQUE holds against a direct duplicate INSERT.
         with pytest.raises(IntegrityError):
             async with tenant_session(factory(), tid) as session:
