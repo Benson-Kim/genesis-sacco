@@ -366,8 +366,7 @@ async def release_guarantees_for_loan(
 # ---------------------------------------------------------------------------
 
 _G_COLS = (
-    "id, application_id, loan_id, guarantor_member_id, borrower_member_id, "
-    "amount, status, version"
+    "id, application_id, loan_id, guarantor_member_id, borrower_member_id, amount, status, version"
 )
 
 
@@ -550,8 +549,7 @@ async def release_guarantee(
         # Failure mode 2: no release path exists for a disbursed loan's
         # collateral — substitution is the only exit.
         raise ConflictError(
-            "an active guarantee behind a disbursed loan can only be "
-            "substituted, never released"
+            "an active guarantee behind a disbursed loan can only be substituted, never released"
         )
     result = cast(
         CursorResult[Any],
@@ -584,8 +582,7 @@ async def release_guarantee(
         max_eligible = await application_max_eligible(session, tenant_id, record)
         if record.amount > max_eligible:
             raise ConflictError(
-                "releasing this guarantee would leave the application below "
-                "the product cover rule"
+                "releasing this guarantee would leave the application below the product cover rule"
             )
     if g.application_id is not None:
         await recompute_cover(session, tenant_id, g.application_id)
