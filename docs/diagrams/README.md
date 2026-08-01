@@ -31,6 +31,8 @@ PHASE B2 common rules):
 | Diagram | Prompt | Status |
 |---|---|---|
 | [`lock-order.md`](lock-order.md) — **authoritative lock-ordering DAG** (the single authority for every lock-order statement; v1.2 rule 11) | P-DIAG.0 | as-built |
+| [`dfd.md`](dfd.md) — **data-flow diagrams**: L0 context + L1 money-bearing flows, trust boundaries TB1–TB4, per-element code citations | P-DIAG.3 | as-built |
+| [`stride.md`](stride.md) — **STRIDE-per-element threat model** over the dfd.md elements; residuals with named owners or UNOWNED | P-DIAG.4 | as-built |
 
-P-DIAG.1–.5 (C4, ERD, DFDs, STRIDE, sequence patterns) land here as
+P-DIAG.1, .2 and .5 (C4, ERD, sequence patterns) land here as
 their prompts execute.

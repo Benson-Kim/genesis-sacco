@@ -129,6 +129,11 @@ Currency: KES, stored as `NUMERIC(18,2)` (or integer minor units) — NEVER floa
 - Rate limiting on auth/OTP/M-Pesa callbacks; OTP: 6 digits, <= 5 attempts,
   5-min TTL, single-use, constant-time compare.
 - M-Pesa callbacks: verify source, validate against pending intent, idempotent.
+- Threat model: the as-built data-flow diagrams (`docs/diagrams/dfd.md`,
+  P-DIAG.3) and the STRIDE-per-element table (`docs/diagrams/stride.md`,
+  P-DIAG.4) are the authoritative map of this section's gates onto the
+  code; an MR that changes a money flow or trust boundary updates them
+  in the same MR (BUILD_PROMPTS v1.2 rule 11).
 
 ## 2. ARCHITECTURE
 
@@ -137,6 +142,10 @@ The lock-ordering DAG — `docs/diagrams/lock-order.md` — is the single
 authority for every lock-order statement (concurrency gates in §1.4);
 MRs reference it instead of restating chains, and any MR that changes
 a lock-graph edge updates it in the same MR (BUILD_PROMPTS v1.2 rule 11).
+The data-flow diagrams (`docs/diagrams/dfd.md`, P-DIAG.3) and the STRIDE
+threat model (`docs/diagrams/stride.md`, P-DIAG.4) trace every
+money-bearing flow, store and trust boundary to the implementing
+module or migration.
 
 ### 2.1 Backend (Python 3.12, FastAPI)
 Layered/hexagonal, dependency direction inward:
