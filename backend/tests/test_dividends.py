@@ -394,8 +394,7 @@ def test_concurrent_double_run_pays_every_member_exactly_once() -> None:
         assert (
             await count(
                 tid,
-                "SELECT count(*) FROM dividend_distributions "
-                "WHERE transaction_id IS NULL",
+                "SELECT count(*) FROM dividend_distributions WHERE transaction_id IS NULL",
             )
             == 0
         )
@@ -488,9 +487,7 @@ def test_population_drift_after_approval_returns_409_and_posts_nothing() -> None
 
         # Drift: a fourth member with in-FY share history (backdated
         # through the real P7 contract) joins the eligible set.
-        await _member_with_share_history(
-            tid, amount="1000.00", on=date(2026, 6, 1), name="Drifter"
-        )
+        await _member_with_share_history(tid, amount="1000.00", on=date(2026, 6, 1), name="Drifter")
 
         with pytest.raises(ConflictError, match="stale"):
             await distribute_dividend(_scope(tid), tid, None, record.id)
@@ -774,9 +771,7 @@ def test_api_rejects_caller_supplied_money_parameters_with_422() -> None:
                 {"fy_start": "2020-01-01"},
                 {"total_payout": "1.00"},
             ):
-                response = await client.post(
-                    "/dividends/declarations", json=body, headers=headers
-                )
+                response = await client.post("/dividends/declarations", json=body, headers=headers)
                 assert response.status_code == 422, response.text
             distribution = await client.post(
                 f"/dividends/declarations/{uuid.uuid4()}/distribution",
@@ -947,4 +942,3 @@ def test_foreign_tenant_argument_reads_and_pays_nothing() -> None:
         assert await count(tid, "SELECT count(*) FROM dividend_distributions") == 0
 
     asyncio.run(run())
-

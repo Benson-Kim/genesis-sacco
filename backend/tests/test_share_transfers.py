@@ -80,9 +80,7 @@ async def _set_status(tid: uuid.UUID, mid: uuid.UUID, status: str) -> None:
         )
 
 
-async def _transfer(
-    tid: uuid.UUID, from_mid: uuid.UUID, to_mid: uuid.UUID, amount: str
-) -> None:
+async def _transfer(tid: uuid.UUID, from_mid: uuid.UUID, to_mid: uuid.UUID, amount: str) -> None:
     async with tenant_session(factory(), tid) as session:
         await transfer_shares(
             session, tid, None, from_mid, to_member_id=to_mid, amount=Decimal(amount)

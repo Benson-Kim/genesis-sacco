@@ -116,9 +116,7 @@ class ExportFilters:
         return ExportFilters(
             member_id=uuid.UUID(raw["member_id"]) if "member_id" in raw else None,
             exit_id=uuid.UUID(raw["exit_id"]) if "exit_id" in raw else None,
-            declaration_id=(
-                uuid.UUID(raw["declaration_id"]) if "declaration_id" in raw else None
-            ),
+            declaration_id=(uuid.UUID(raw["declaration_id"]) if "declaration_id" in raw else None),
             date_from=date.fromisoformat(raw["date_from"]) if "date_from" in raw else None,
             date_to=date.fromisoformat(raw["date_to"]) if "date_to" in raw else None,
         )
