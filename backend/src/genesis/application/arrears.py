@@ -205,7 +205,7 @@ def arrears_scan_sql(*, with_after: bool, with_penalty: bool) -> str:
         # gate 1.6); also the leading column of idx_loans_active_scan.
         "SELECT l.id, l.days_past_due, l.classification, l.provision_pct, "  # noqa: S608
         "(SELECT MIN(s.due_date) FROM loan_schedules s "
-        " WHERE s.loan_id = l.id AND s.due_date <= :as_of "
+        " WHERE s.tenant_id = l.tenant_id AND s.loan_id = l.id AND s.due_date <= :as_of "
         " AND s.paid_amount < s.total_due) AS oldest_unpaid"
         f"{penalty_cols} "
         "FROM loans l "
