@@ -119,9 +119,11 @@ async def _configure_dormancy(tid: uuid.UUID, admin_id: uuid.UUID, *, months: in
         )
 
 
-async def _aged_member(tid: uuid.UUID, *, name: str, deposit: str = "0") -> uuid.UUID:
+async def _aged_member(
+    tid: uuid.UUID, *, name: str, deposit: str = "0", shares: str = "0"
+) -> uuid.UUID:
     """A member admitted long before the window (created_at backdated)."""
-    mid = await seed_member(tid, name=name, deposit=deposit)
+    mid = await seed_member(tid, name=name, deposit=deposit, shares=shares)
     async with tenant_session(factory(), tid) as session:
         await session.execute(
             text(
@@ -720,29 +722,19 @@ def test_dormant_member_with_balances_exits_cleanly_through_p12() -> None:
     HAND-COMPUTED settlement (the P12 oracle style): shares 2000.00 +
     deposits 5000.00 - loans 0 - fee 0 (unconfigured) = net 7000.00;
     both balances zeroed; terminal status exited. Settlement math is
-    UNCHANGED by dormancy — the same components, the same posting."""
+    UNCHANGED by dormancy — the same components, the same posting.
+
+    The member holds balances but has NO member-initiated transaction
+    at all, which also pins the documented never-transacted branch:
+    with an empty ledger the window is measured from the IMMUTABLE
+    admission timestamp (created_at, backdated here), consistent with
+    v1.1 rule 2 — the ledger stays append-only, so old activity can
+    only be created historically, never rewritten."""
 
     async def run() -> None:
         tid, admin_id, _ = await seed_actor()
         await _configure_dormancy(tid, admin_id, months=6)
-        mid = await _aged_member(tid, name="Dormant Exiter")
-        async with tenant_session(factory(), tid) as session:
-            await record_deposit(
-                session, tid, None, mid, amount=Decimal("5000.00"), channel=Channel.BANK
-            )
-            await record_share_topup(
-                session, tid, None, mid, amount=Decimal("2000.00"), channel=Channel.BANK
-            )
-        # Age the activity out of the window, then mark dormant via the
-        # REAL job (never a hand-set status).
-        async with tenant_session(factory(), tid) as session:
-            await session.execute(
-                text(
-                    "UPDATE transactions SET occurred_at = :ts "
-                    "WHERE member_id = CAST(:mid AS uuid) AND tenant_id = CAST(:tid AS uuid)"
-                ),
-                {"ts": OLD, "mid": str(mid), "tid": str(tid)},
-            )
+        mid = await _aged_member(tid, name="Dormant Exiter", deposit="5000.00", shares="2000.00")
         result = await run_dormancy_for_tenant(_scope(tid), tid, as_of=AS_OF)
         assert result.transitioned == 1
         assert (await _status(tid, mid))[0] == "dormant"
@@ -911,9 +903,11 @@ def test_dormancy_endpoint_runs_job_and_rejects_caller_supplied_period() -> None
             assert body["cutoff"] == "2026-02-01"
             assert body["transitioned"] == 1
 
-            # Unconfigured tenants surface the loud 409 refusal.
-            res = await client.post("/members/jobs/dormancy", json={}, headers=headers)
-            assert res.status_code == 200  # idempotent re-run, 0 scanned
+            # Idempotent re-run through the API: nothing left to scan.
+            res = await client.post(
+                "/members/jobs/dormancy", json={"as_of": "2026-08-01"}, headers=headers
+            )
+            assert res.status_code == 200
             assert res.json()["scanned"] == 0
 
         assert (await _status(tid, due))[0] == "dormant"
