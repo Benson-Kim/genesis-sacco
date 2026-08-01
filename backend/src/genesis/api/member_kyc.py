@@ -166,9 +166,7 @@ async def get_profile(member_id: uuid.UUID, ctx: ViewCtx) -> ProfileOut:
 
 
 @router.put("/{member_id}/profile")
-async def update_profile(
-    member_id: uuid.UUID, body: ProfileUpdateBody, ctx: EditCtx
-) -> ProfileOut:
+async def update_profile(member_id: uuid.UUID, body: ProfileUpdateBody, ctx: EditCtx) -> ProfileOut:
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         record = await kyc_service.update_profile(

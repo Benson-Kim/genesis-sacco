@@ -105,9 +105,7 @@ _PROFILE_COLUMNS = (
     "p.dpa_consent_at, p.version, p.created_at"
 )
 
-_DOCUMENT_COLUMNS = (
-    "d.id, d.member_id, d.doc_type, d.status, d.expires_at, d.version, d.created_at"
-)
+_DOCUMENT_COLUMNS = "d.id, d.member_id, d.doc_type, d.status, d.expires_at, d.version, d.created_at"
 
 
 def profile_lookup_sql() -> str:
