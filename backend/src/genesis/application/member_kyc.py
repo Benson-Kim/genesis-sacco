@@ -49,12 +49,13 @@ tests/test_tenant_predicates.py style live in tests/test_member_kyc_api.py).
 
 from __future__ import annotations
 
+import enum
 import json
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,6 +73,22 @@ from genesis.domain.member_kyc import (
 )
 from genesis.domain.members import MemberType
 from genesis.errors import ConflictError, NotFoundError, UnprocessableError
+
+
+class Unset(enum.Enum):
+    """Omitted-vs-null marker (review K2).
+
+    The API layer maps a body field that was OMITTED from the request
+    to UNSET ("keep the stored value") and an explicit JSON null to
+    None ("clear the value") — the two must stay distinguishable or a
+    wrongly-entered document expiry becomes permanent.
+    """
+
+    TOKEN = 0
+
+
+#: Singleton sentinel for "field omitted from the request body".
+UNSET: Final = Unset.TOKEN
 
 
 @dataclass(frozen=True)
@@ -508,12 +525,14 @@ async def update_document(
     *,
     version: int,
     status: DocumentStatus | None = None,
-    expires_at: date | None = None,
+    expires_at: date | None | Unset = UNSET,
 ) -> DocumentRecord:
     """Optimistic-locked status/expiry update; stale versions surface 409.
 
     Status moves through the domain transition map only (gate 1.4).
-    Omitted fields keep their current values.
+    Omitted fields keep their current values; an EXPLICIT null expiry
+    CLEARS a wrongly-entered date (review K2) — UNSET keeps, None
+    clears, a date sets.
     """
     current = await _get_document(session, tenant_id, member_id, document_id)
     if status is not None:
@@ -522,7 +541,7 @@ async def update_document(
         except InvalidDocumentTransitionError as exc:
             raise ConflictError(str(exc)) from exc
     new_status = status if status is not None else current.status
-    new_expires = expires_at if expires_at is not None else current.expires_at
+    new_expires = current.expires_at if isinstance(expires_at, Unset) else expires_at
     result = cast(
         CursorResult[Any],
         await session.execute(

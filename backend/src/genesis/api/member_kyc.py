@@ -90,6 +90,10 @@ class DocumentCreateBody(BaseModel):
 
 
 class DocumentUpdateBody(BaseModel):
+    """Omitted fields keep their stored values. expires_at follows
+    exclude-unset semantics (review K2): omitted keeps the current
+    expiry, an EXPLICIT null clears a wrongly-entered date."""
+
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(ge=1)
@@ -241,6 +245,12 @@ async def update_document(
             document_id,
             version=body.version,
             status=body.status,
-            expires_at=body.expires_at,
+            # Omitted vs explicit null (review K2): only a field the
+            # caller actually sent reaches the service.
+            expires_at=(
+                body.expires_at
+                if "expires_at" in body.model_fields_set
+                else kyc_service.UNSET
+            ),
         )
     return _document_out(record)

@@ -467,6 +467,54 @@ def test_document_status_machine_and_stale_version() -> None:
     asyncio.run(run())
 
 
+def test_document_expiry_omitted_kept_explicit_null_cleared() -> None:
+    """Review K2 falsifiability: a wrongly-entered expiry must be
+    clearable. An update that OMITS expires_at keeps the stored value
+    (a status move never wipes the expiry); an EXPLICIT null clears
+    it, proven by the response AND the stored row. Fails with the
+    pre-K2 'None means keep' semantics restored (the clear step would
+    silently keep 2027-01-01)."""
+
+    async def run() -> None:
+        tid, _, token = await seed_actor()
+        async with api_client() as client:
+            mid = await _create_member(client, token, MemberType.PERSON)
+            created = await client.post(
+                f"/members/{mid}/documents",
+                json={"doc_type": "kra_pin", "expires_at": "2027-01-01"},
+                headers=_headers(token, idem=uuid.uuid4().hex),
+            )
+            assert created.status_code == 201
+            assert created.json()["expires_at"] == "2027-01-01"
+            did = created.json()["id"]
+            # Omitted expires_at -> kept.
+            kept = await client.put(
+                f"/members/{mid}/documents/{did}",
+                json={"version": 1, "status": "received"},
+                headers=_headers(token, idem=uuid.uuid4().hex),
+            )
+            assert kept.status_code == 200
+            assert kept.json()["expires_at"] == "2027-01-01"
+            # Explicit null -> cleared.
+            cleared = await client.put(
+                f"/members/{mid}/documents/{did}",
+                json={"version": 2, "expires_at": None},
+                headers=_headers(token, idem=uuid.uuid4().hex),
+            )
+            assert cleared.status_code == 200
+            assert cleared.json()["expires_at"] is None
+        # Side-effect proof: the stored row is cleared, not just the echo.
+        stored_null = await count(
+            tid,
+            "SELECT count(*) FROM member_documents "
+            "WHERE id = CAST(:d AS uuid) AND expires_at IS NULL",
+            d=did,
+        )
+        assert stored_null == 1
+
+    asyncio.run(run())
+
+
 def test_document_access_writes_one_audit_row_per_read() -> None:
     """EXIT: document access audited like exports (P13 blocker f),
     proven by side-effect counts."""
