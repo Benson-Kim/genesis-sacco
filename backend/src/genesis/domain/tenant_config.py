@@ -126,7 +126,15 @@ SETTINGS_REGISTRY: dict[str, SettingSpec] = dict(
             "percent",
             "% per annum",
             ">= 0 and <= 100",
-            ("stored for P13.11 dividend declaration",),
+            ("application/dividends.resolve_dividend_config",),
+        ),
+        _spec(
+            "deposit_rebate_rate_pct",
+            SettingGroup.INTEREST,
+            "percent",
+            "% per annum",
+            ">= 0 and <= 100 (0020 CHECK)",
+            ("application/dividends.resolve_dividend_config",),
         ),
         _spec(
             "penalty_rate_pct_per_month",
@@ -222,7 +230,7 @@ SETTINGS_REGISTRY: dict[str, SettingSpec] = dict(
             "integer",
             "calendar month",
             ">= 1 and <= 12",
-            ("stored for P13.11 dividend year",),
+            ("application/dividends.resolve_dividend_config",),
         ),
         _spec(
             "exit_notice_period_days",
@@ -469,6 +477,13 @@ def rate_for_amount(amount: Decimal, bands: tuple[RateBand, ...]) -> Decimal | N
     """Tiered rate lookup: the unique band containing the amount.
 
     Returns None above a finite top band (callers fall back to the
+    product rate). Linear scan; n <= MAX_RATE_BANDS (documented bound).
+    """
+    for band in bands:
+        if band.max_amount is None or amount <= band.max_amount:
+            return band.rate_pct
+    return None
+op band (callers fall back to the
     product rate). Linear scan; n <= MAX_RATE_BANDS (documented bound).
     """
     for band in bands:
