@@ -876,7 +876,82 @@ zero-warning eslint, design-system package with tokens extracted verbatim
 from prototype CSS variables, OpenAPI-generated client (regeneration script
 in CI drift-check), TanStack Query + Zod, auth/OTP flow, route guards from
 `/me/permissions`, keyset-pagination table component.
-EXIT: `web:*` CI jobs green; client-drift check fails on stale client.
+HARDENED (v1.2) — merge blockers:
+(a) Reconcile with the OPEN scaffold MR !13 (branch
+    `duo/feature/8-web-admin-scaffold`) and the closed throwaway !12:
+    review !13, then rebase/supersede or explicitly close it with a
+    stated reason — a second parallel scaffold is a rejected outcome
+    (1.1 reuse-first applies to in-flight work too).
+(b) This prompt closes NO backend risk by itself: the !29 F3/F4
+    accepted risk (interim tenant-scoped users.email ↔ members.email
+    guarantor identity, and guarantor self-release being impossible for
+    roles without an applications grant) is closed by **P14.5** — a
+    backend prompt this scaffold explicitly depends on being scheduled;
+    reference P14.5 and the !29 findings table in the MR.
+(c) Failure modes (v1.2 rule 15, client flavour): FM1 client drift —
+    the CI drift-check fails on a stale generated client (falsifiable:
+    regenerate against a modified spec); FM2 authz leak — route guards
+    mirror `/me/permissions` but every screen still handles API 403/404
+    (UI hides, API enforces — 1.6); FM3 PII leak — no PII in client
+    analytics/logs/URLs, asserted by a lint/grep gate; FM4 idempotency
+    — the mutation helper attaches `Idempotency-Key` on every POST/PUT
+    and surfaces 409 stale-version conflicts as inline banners, never
+    silent retries.
+(d) Parallel track: `web/` tree only — NO backend/ edits, NO migration
+    (state "ships NO migration" per v1.2 rule 14), no TENANT_TABLES /
+    ENTITY_MODULES delta; `.gitlab-ci.yml` gains only `web:*` jobs (a
+    named collision surface — coordinate; never touch backend job
+    definitions). npm dependencies resolve only through the CI proxy —
+    same honesty rule as PyPI (v1.2 rule 16) if the proxy blocks.
+(e) Honest DoD per v1.2 rule 13; process per v1.2 rule 16; update
+    P-DIAG C4/L1 (mark the web container as-built) in the same MR per
+    rule 11 once the diagrams exist.
+EXIT: `web:*` CI jobs green; client-drift check fails on stale client
+(falsifiability demonstrated); !13 reconciled or closed with reason;
+FM1–FM4 gates in place; P14.5 scheduled and referenced.
+
+### P14.5 — Member identity & member-facing auth (backend)
+ROLE: Developer + Security Analyst. DEPENDS: P3, P4, P8; before P17
+(member app) and before closing !29's F3/F4 accepted risks.
+PROMPT: Introduce a first-class MEMBER principal so member-facing
+actions stop borrowing staff identity: an explicit, audited
+member↔credential link table (additive migration — claim the number up
+front, v1.2 rule 14; RLS enabled AND forced per ADR-0002; TENANT_TABLES
++ leakage suite extended), member OTP login reusing the P3 machinery
+(same TTL/attempt/constant-time rules, separate token audience/claims
+so a member token can NEVER satisfy a staff RequirePermission gate —
+deny by default, falsifiable test), and migration of the !29 interim
+email-match in `_actor_is_guarantor` to the explicit link (closing !29
+F3/F4: guarantor self-release and consent no longer require a staff
+role or an email coincidence). Guarantor CONSENT becomes an act of the
+member principal per the P9 consent contract — a staff-asserted or
+caller-asserted consent flag on behalf of a member is a rejected design
+(the !29 substitution-consent review lesson); substitution consent is
+collected from the substitute guarantor's principal (or recorded as an
+explicit staff-attested override with its own audit category and
+permission, documented). Idempotency-Key scoping (the !29 review
+lesson): keys are scoped (tenant, actor principal, route) so one
+actor's replay can never fetch another actor's stored response — add
+the regression test.
+HARDENED (v1.2): named failure modes each falsifiable — FM1 member
+token on staff route → 403 (and vice versa); FM2 identity spoof via
+email rewrite now IMPOSSIBLE (the !29 attack: rewriting users/members
+email no longer redirects the link — test proves the link, not the
+email, is authoritative); FM3 link takeover — re-linking a credential
+to another member requires the audited admin mutation, never
+self-service; FM4 consent forgery — consent rows carry the member
+principal id; a consent written without it fails the DB constraint;
+FM5 idempotency cross-actor replay → miss. Lock order: link mutations
+lock the member row (chain ROOT) — no new lock-graph edges. v1.1 rules
+4/5/6/7 restated: explicit tenant predicates, atomic claims for the
+link UNIQUE, bound parameters, least disclosure. Honest DoD per rule
+13; process per rule 16; update the P-DIAG.3 actor trust boundary and
+P-DIAG.4 STRIDE rows for the retired interim identity in the same MR
+(rule 11).
+EXIT: FM1–FM5 green and each fails with its guard removed; !29's F3/F4
+risk entries updated/closed with a comment linking this MR; migrate-
+check green; leakage suite extended; member-auth flows documented for
+P17 consumption.
 
 ### P15 — Web admin features
 ROLE: Developer (Frontend) + QE. DEPENDS: P14 + each corresponding API
@@ -888,7 +963,29 @@ PROMPT: Reproduce the prototype screens with real data; optimistic-lock 409
 handling as inline conflict banners; idempotency keys on all mutations;
 no PII in client analytics (1.6). Playwright E2E per module happy path plus
 one adversarial flow (stale edit, forbidden role).
-EXIT: all ten modules E2E-green; Lighthouse perf budget documented.
+HARDENED (v1.2) — merge blockers:
+(a) No client-side money math EVER: installment previews, cover %,
+    capacities, settlement figures come from the API (1.1); a locally
+    computed money figure is a rejected MR — grep gate for arithmetic
+    on money fields in `web/`.
+(b) Failure modes per module (v1.2 rule 15): the adversarial Playwright
+    flow per module must include at least — stale-version edit (409
+    banner, no silent overwrite), forbidden-role access (route guard
+    AND API 403 handled), double-submit (exactly one effect, verified
+    against the API by side-effect, the idempotency key doing the
+    work), and least-disclosure rendering (error toasts never echo
+    balances/figures the API didn't return).
+(c) Module order and evidence: build in the stated order, one MR per
+    module batch, commit+push+pipeline per module (v1.2 rule 16) —
+    never one giant MR.
+(d) Parallel track: `web/` only; no migration ("ships NO migration");
+    `.gitlab-ci.yml` edits confined to `web:*`/E2E jobs.
+(e) Honest DoD per v1.2 rule 13: E2E evidence is in-project pipeline
+    runs, not local screenshots; update P-DIAG diagrams if a flow's
+    client interaction changes documented sequences (rule 11).
+EXIT: all ten modules E2E-green in-project incl. the per-module
+adversarial set; no-client-money-math gate active; Lighthouse perf
+budget documented.
 
 ### P16 — Flutter workspace (issue #9)
 ROLE: Developer (Mobile). DEPENDS: P4.
@@ -896,10 +993,33 @@ PROMPT: Scaffold `mobile/` per MASTER_PROMPT §2.4: `member_app`,
 `admin_app`, shared `gp_ui` (prototype palette tokens) and generated
 `gp_api_client`; Riverpod; secure token storage; certificate pinning;
 biometric step-up; offline read cache. `mobile:*` CI jobs green.
-EXIT: both apps boot to authenticated shell against staging API.
+HARDENED (v1.2) — merge blockers:
+(a) Reconcile with the OPEN draft !11 (branch
+    `duo/feature/9-flutter-workspace-scaffold`) — rebase/supersede or
+    close it with a stated reason; no second parallel scaffold (1.1).
+(b) Issue #11 (staging API unavailable for boot verification) governs
+    the EXIT honestly: if staging still does not exist, the
+    boot-against-staging criterion is recorded UNVERIFIED with the
+    issue link (v1.2 rule 13 spirit) — never faked against a mock and
+    ticked.
+(c) Failure modes (v1.2 rule 15): FM1 token leak — secure storage only,
+    no tokens in logs/crash reports (lint gate); FM2 pin bypass —
+    certificate-pinning failure is a hard connection error, tested;
+    FM3 client drift — generated `gp_api_client` drift-check in CI,
+    falsifiable; FM4 member/staff principal separation (P14.5) — the
+    member app never requests staff scopes.
+(d) Parallel track: `mobile/` only; ships NO migration; `.gitlab-ci.yml`
+    gains only `mobile:*` jobs (named collision surface); pub/npm
+    proxy caveats recorded honestly per v1.2 rule 16.
+(e) Honest DoD per v1.2 rule 13; process per v1.2 rule 16; update
+    P-DIAG C4 L1 containers in the same MR (rule 11).
+EXIT: `mobile:*` CI jobs green; both apps boot to authenticated shell
+against staging API — or the blocker recorded per issue #11, honestly
+unticked; !11 reconciled or closed with reason.
 
 ### P17 — Member app features
-ROLE: Developer (Mobile) + QE. DEPENDS: P16, P8–P13, P19 for payments.
+ROLE: Developer (Mobile) + QE. DEPENDS: P16, P14.5 (member principal —
+hard dependency), P8–P13, P19 for payments.
 PROMPT: Build: onboarding + OTP; balances (shares/deposits/loan);
 statements (cursor-paginated, offline-cached); deposit via M-Pesa STK with
 pending-intent status polling; loan application with product rules and
@@ -907,14 +1027,51 @@ live installment preview (values from API, never local math — 1.1);
 guarantor consent inbox; repayments; notifications. integration_test per
 flow including airplane-mode statement read and double-tap submit
 (exactly-one-effect).
-EXIT: all flows integration-test green on Android + iOS CI matrix.
+HARDENED (v1.2) — merge blockers:
+(a) Every member action authenticates as the P14.5 MEMBER principal —
+    never a staff token, never the retired email-identity link; the
+    guarantor consent inbox records consent AS the member principal
+    (the P9 consent contract; the !29 caller-asserted-consent lesson).
+(b) Failure modes (v1.2 rule 15): FM1 double-tap submit — exactly one
+    effect proven by API side-effect counts (idempotency keys scoped
+    per member principal, the !29 scoping lesson); FM2 offline staleness
+    — cached statements are labelled with their as-of moment, never
+    presented as live; FM3 cross-member leak — a member sees only their
+    own balances/statements (server-enforced; probe test); FM4 payment
+    intent confusion — STK polling binds to the intent id, an
+    out-of-order status can never mark a different intent paid (pairs
+    with the P19 adversarial set).
+(c) No local money math (1.1): previews/quotes only from the API; grep
+    gate as in P15.
+(d) Parallel track: `mobile/` only; ships NO migration; honest DoD per
+    v1.2 rule 13; process per v1.2 rule 16; update the P-DIAG.3 member
+    trust boundary if flows change (rule 11).
+EXIT: all flows integration-test green on Android + iOS CI matrix incl.
+FM1–FM4; consent flows verified against the member principal.
 
 ### P18 — Admin mobile app features
 ROLE: Developer (Mobile). DEPENDS: P16, P8–P12.
 PROMPT: Build the field-officer subset: member lookup + onboarding,
 application capture, committee vote (biometric step-up), arrears worklist,
 txn capture. Same gates as P17.
-EXIT: flows integration-test green; RBAC verified per role on-device.
+HARDENED (v1.2) — merge blockers:
+(a) Committee votes require biometric step-up AND land through the
+    same server-side voting machinery (P9/P13.7 quorum-at-vote-time) —
+    the device never caches or batches votes; a vote is one authorised
+    API call with an idempotency key (double-tap → one vote, the
+    UNIQUE one-vote guard proven from the client path).
+(b) Failure modes (v1.2 rule 15): FM1 role spoof — on-device RBAC is
+    cosmetic; every flow re-verified against API 403 per role (matrix
+    test from the client); FM2 offline capture replay — queued
+    onboarding/txn captures submit exactly once (idempotency keys
+    survive app restarts); FM3 PII at rest — captured KYC data is
+    encrypted at rest on-device and purged after successful submission.
+(c) Arrears worklist consumes the P13.16 endpoint (1.1) — no
+    client-side reconstruction of dpd.
+(d) Parallel track: `mobile/` only; ships NO migration; honest DoD per
+    v1.2 rule 13; process per v1.2 rule 16.
+EXIT: flows integration-test green incl. FM1–FM3; RBAC verified per
+role on-device AND against the API matrix.
 
 ---
 
