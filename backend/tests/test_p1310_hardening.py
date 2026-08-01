@@ -94,9 +94,8 @@ def test_h6_reports_write_nothing_but_export_rows() -> None:
 
             assert await _table_counts(tid) == before, report
             assert await count(tid, "SELECT count(*) FROM exports") == exports_before + 1
-            assert (
-                await count(tid, "SELECT count(*) FROM export_artifacts") == artifacts_before + 1
-            )
+            artifacts_after = await count(tid, "SELECT count(*) FROM export_artifacts")
+            assert artifacts_after == artifacts_before + 1
             assert await count(tid, "SELECT count(*) FROM audit_log") == audit_before + 2
             assert await count(tid, "SELECT count(*) FROM outbox_events") == outbox_before + 2
 
@@ -200,8 +199,7 @@ def test_duplicate_new_report_request_produces_one_of_everything() -> None:
         assert await count(tid, "SELECT count(*) FROM exports") == 1
         assert await count(tid, "SELECT count(*) FROM export_artifacts") == 1
         assert (
-            await count(tid, "SELECT count(*) FROM audit_log WHERE action = 'export.request'")
-            == 1
+            await count(tid, "SELECT count(*) FROM audit_log WHERE action = 'export.request'") == 1
         )
         assert (
             await count(tid, "SELECT count(*) FROM audit_log WHERE action = 'export.completed'")
