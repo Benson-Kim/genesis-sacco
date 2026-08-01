@@ -78,6 +78,13 @@ class Account(enum.StrEnum):
     # Liability accounts
     MEMBER_DEPOSITS = "member.deposits"
     MEMBER_SHARES = "member.shares"
+    # Unclaimed dividends payable (issue #19 P3): the record-date
+    # entitlement of a member who EXITED between declaration and
+    # distribution is parked here as an explicit, reportable liability
+    # — never credited to member accounts, never a silent shortfall.
+    # Resolved only through the P13.15 correction paths (reversing
+    # entries), never UPDATE/DELETE.
+    UNCLAIMED_DIVIDENDS = "liability.unclaimed_dividends"
 
     # Income accounts
     INTEREST_INCOME = "income.interest"
@@ -453,6 +460,49 @@ def build_dividend_distribution_posting(dividend: Decimal, rebate: Decimal) -> P
     if rebate > ZERO:
         lines.append(LedgerLine(account=Account.REBATE_EXPENSE, side=Side.DEBIT, amount=rebate))
         lines.append(LedgerLine(account=Account.MEMBER_DEPOSITS, side=Side.CREDIT, amount=rebate))
+    return PostingSpec(
+        txn_type=TxnType.DIVIDEND_POSTING,
+        channel=Channel.ACCRUAL,
+        amount=total,
+        lines=tuple(lines),
+    )
+
+
+def build_unclaimed_dividend_posting(dividend: Decimal, rebate: Decimal) -> PostingSpec:
+    """Mid-run-exit disposition of one member's entitlement (issue #19 P3).
+
+    DV- ref, ACCRUAL channel — the same transaction type as a paid
+    distribution (dividend_posting stays classified SYSTEM in
+    MEMBER_INITIATED, so the P13.13 dormancy clock is untouched), but
+    the credit legs park the money as an explicit
+    liability.unclaimed_dividends payable instead of member accounts:
+    DR expense.dividends / CR liability.unclaimed_dividends and
+    DR expense.rebates / CR liability.unclaimed_dividends. The exited
+    member holds no balances any more; recognising the payable keeps
+    SUM(expense postings) == the approved declaration totals (the !30
+    zero-residue conservation rule) while the disposition row, its
+    audit row and the outbox event make the position visible.
+    Resolution (pay-out or write-back) happens through the P13.15
+    correction paths as reversing entries.
+    """
+    dividend = to_cents(dividend)
+    rebate = to_cents(rebate)
+    if dividend < ZERO or rebate < ZERO:
+        raise ValueError("dividend components must not be negative")
+    total = to_cents(dividend + rebate)
+    if total <= ZERO:
+        raise ValueError("a zero unclaimed dividend cannot be posted")
+    lines: list[LedgerLine] = []
+    if dividend > ZERO:
+        lines.append(LedgerLine(account=Account.DIVIDEND_EXPENSE, side=Side.DEBIT, amount=dividend))
+        lines.append(
+            LedgerLine(account=Account.UNCLAIMED_DIVIDENDS, side=Side.CREDIT, amount=dividend)
+        )
+    if rebate > ZERO:
+        lines.append(LedgerLine(account=Account.REBATE_EXPENSE, side=Side.DEBIT, amount=rebate))
+        lines.append(
+            LedgerLine(account=Account.UNCLAIMED_DIVIDENDS, side=Side.CREDIT, amount=rebate)
+        )
     return PostingSpec(
         txn_type=TxnType.DIVIDEND_POSTING,
         channel=Channel.ACCRUAL,
