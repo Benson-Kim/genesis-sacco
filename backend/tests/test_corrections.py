@@ -22,6 +22,13 @@ test; every guard test fails with its guard removed (§4):
   FM7 partial correction — kill-switch mid-adjustment leaves zero state.
   FM8 conservation       — DR/CR balance and loans.balance reconstructs
                            from the append-only ledger.
+  FM9 performing WO      — (review B3) write-off requires a stored NPL
+                           classification; service 409 + 0025 DB CHECK.
+  FM10 unsecured reopen  — (review B2) adjusting the closing repayment
+                           of a loan whose guarantees were RELEASED at
+                           closure is refused; an unguaranteed reopen
+                           carries the had_released_guarantees audit
+                           marker.
 
 Core-banking addenda: A1 storno linkage + zero-sum conservation per
 account; A2 occurred_at = NOW + the closed-period 409 gate; A3 dedicated
@@ -39,6 +46,8 @@ interest + 1,892.37 principal.
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import os
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
@@ -50,11 +59,12 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_helpers import api_client, factory, seed_user, unique_email
+from export_helpers import drain_export_queue
 from genesis.application import corrections as corrections_service
 from genesis.application import loans as loans_service
 from genesis.application.accounting_periods import close_period
 from genesis.application.auth import AuthContext, issue_access_token
-from genesis.application.ledger import disburse_loan
+from genesis.application.ledger import disburse_loan, post_loan_interest_accrual
 from genesis.application.rbac import seed_permissions
 from genesis.domain.committee import Vote
 from genesis.domain.ledger import Channel
@@ -205,6 +215,21 @@ async def _seed_penalty(tid: uuid.UUID, loan_id: uuid.UUID, amount: str) -> None
         await session.execute(
             text("UPDATE loans SET penalty_due = :p WHERE id = CAST(:lid AS uuid)"),
             {"p": amount, "lid": str(loan_id)},
+        )
+
+
+async def _classify_npl(tid: uuid.UUID, loan_id: uuid.UUID, cls: str = "substandard") -> None:
+    """Fixture stand-in for the P10 arrears job's persisted output: a
+    stored NPL classification on the loan row (FM9 requires one before
+    any write-off request). Figures consistent with classify(120):
+    substandard, 25% provision."""
+    async with tenant_session(factory(), tid) as session:
+        await session.execute(
+            text(
+                "UPDATE loans SET classification = :cls, days_past_due = 120, "
+                "provision_pct = 25.00 WHERE id = CAST(:lid AS uuid)"
+            ),
+            {"cls": cls, "lid": str(loan_id)},
         )
 
 
@@ -631,6 +656,91 @@ def test_fm6_adjusting_the_closing_repayment_reopens_the_loan_explicitly() -> No
             ).one()
             assert closed_at is None
             assert bool(reopened_flag) is True
+            # FM10 (review B2): the unguaranteed reopen carries the
+            # explicit audit marker proving the released-guarantee
+            # check ran and found nothing.
+            audit_after = (
+                await session.execute(
+                    text(
+                        "SELECT after FROM audit_log "
+                        "WHERE action = 'correction.repayment_adjusted' "
+                        "AND entity_id = :eid"
+                    ),
+                    {"eid": str(result.adjustment_id)},
+                )
+            ).scalar_one()
+            assert audit_after["reopened"] is True
+            assert audit_after["had_released_guarantees"] is False
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# FM10 (review B2) — a reopen must never resurrect an UNSECURED exposure
+# ---------------------------------------------------------------------------
+
+
+async def _seed_active_guarantee(tid: uuid.UUID, loan_id: uuid.UUID, borrower: uuid.UUID) -> None:
+    """A consented (active) guarantee behind the loan, from a second
+    member — the state P9 disbursement linkage leaves behind, so the
+    P10 closure hook releases it through the REAL code path."""
+    guarantor = await _seed_member(tid)
+    async with tenant_session(factory(), tid) as session:
+        await session.execute(
+            text(
+                "INSERT INTO guarantees "
+                "(id, tenant_id, guarantor_member_id, borrower_member_id, "
+                " loan_id, amount, status) "
+                "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:g AS uuid), "
+                "CAST(:b AS uuid), CAST(:l AS uuid), '5000.00', 'active')"
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "tid": str(tid),
+                "g": str(guarantor),
+                "b": str(borrower),
+                "l": str(loan_id),
+            },
+        )
+
+
+def test_fm10_reopen_of_a_guaranteed_loan_is_refused_after_release() -> None:
+    """Banking principle (review B2): a discharged surety cannot be
+    unilaterally re-bound. The closing repayment releases the guarantee
+    (the REAL P10 closure hook, exercised here); adjusting that
+    repayment would reopen the loan UNSECURED, so it is a 409 with
+    ZERO side effects — the remedy is the P13.14 substitution /
+    re-pledge flow BEFORE adjusting. Falsifiable: remove the
+    released-guarantee guard in adjust_repayment and the adjustment
+    succeeds, failing the status and count assertions."""
+
+    async def run() -> None:
+        tid, actor, _ = await _seed_actor()
+        loan_id, mid = await _disburse(tid)
+        await _seed_active_guarantee(tid, loan_id, mid)
+
+        payoff = await _repay(tid, actor, loan_id, "24000.00")
+        assert payoff.status is LoanStatus.CLOSED
+        async with tenant_session(factory(), tid) as session:
+            released = (
+                await session.execute(
+                    text("SELECT status FROM guarantees WHERE loan_id = CAST(:l AS uuid)"),
+                    {"l": str(loan_id)},
+                )
+            ).scalar_one()
+            assert str(released) == "released"  # the P10 closure hook fired
+
+        repayment_id = await _repayment_id_for_txn(tid, payoff.txn_id)
+        before = await _counts(tid)
+        with pytest.raises(ConflictError, match="released at closure"):
+            await _adjust(tid, actor, repayment_id)
+
+        # ZERO side effects: no reversal, no correction row, no claim,
+        # no audit; the loan stays CLOSED and the guarantors stay
+        # discharged.
+        assert await _counts(tid) == before
+        _, _, status = await _loan_state(tid, loan_id)
+        assert status == "closed"
 
     asyncio.run(run())
 
@@ -739,6 +849,51 @@ def test_fm8_ledger_balances_and_append_only_triggers_fire_at_sql_level() -> Non
                     ),
                     {"r": str(repayment_id)},
                 )
+
+    asyncio.run(run())
+
+
+def test_n2_fm8_reconstruction_survives_a_loan_interest_accrual() -> None:
+    """N2 (review): the FM8 in-transaction self-check reconstructs
+    loans.balance from LOANS.RECEIVABLE legs joined through the
+    repayments history. A P11 loan-interest accrual on the same member
+    posts DR interest.receivable / CR income.interest — a DIFFERENT
+    receivable account with no repayments row — so it must neither
+    409 a legitimate adjustment nor leak into the reconstruction.
+    HAND-COMPUTED: accrual 75.00 touches no loans.receivable leg, so
+    the adjustment still restores balance 24,000.00 and the ledger
+    reconstruction equals it to the cent; global DR == CR includes the
+    accrual pair. Falsifiable: point the accrual builder (or the
+    reconstruction SQL) at loans.receivable and the in-transaction FM8
+    check aborts this adjustment."""
+
+    async def run() -> None:
+        tid, actor, _ = await _seed_actor()
+        loan_id, mid = await _disburse(tid)
+        await _backdate_installment(tid, loan_id)
+        await _seed_penalty(tid, loan_id, "150.00")
+        repayment = await _repay(tid, actor, loan_id, "2500.00")
+
+        # The non-repayment posting BEFORE the adjustment (N2).
+        async with tenant_session(factory(), tid) as session:
+            await post_loan_interest_accrual(session, tid, mid, Decimal("75.00"), actor)
+
+        repayment_id = await _repayment_id_for_txn(tid, repayment.txn_id)
+        result = await _adjust(tid, actor, repayment_id)
+        assert result.balance_after == Decimal("24000.00")
+
+        async with tenant_session(factory(), tid) as session:
+            assert await _reconstructed_balance(session, tid, loan_id) == Decimal("24000.00")
+            dr, cr = (
+                await session.execute(
+                    text(
+                        "SELECT COALESCE(SUM(amount) FILTER (WHERE side = 'debit'), 0), "
+                        "COALESCE(SUM(amount) FILTER (WHERE side = 'credit'), 0) "
+                        "FROM ledger_entries"
+                    )
+                )
+            ).one()
+            assert Decimal(str(dr)) == Decimal(str(cr))
 
     asyncio.run(run())
 
@@ -1075,6 +1230,7 @@ def test_fm4_write_off_end_to_end_quorum_bound_to_write_once_snapshot() -> None:
         loan_id, mid = await _disburse(tid)
         await _repay(tid, requester, loan_id, "2000.00")
         await _seed_penalty(tid, loan_id, "300.00")
+        await _classify_npl(tid, loan_id)  # FM9: write-off needs a stored NPL class
 
         record = await _request_write_off(tid, requester, loan_id)
         assert record.balance == Decimal("22000.00")
@@ -1176,6 +1332,7 @@ def test_write_off_drift_409s_posting_nothing_then_void_frees_the_slot() -> None
         voter1, _ = await _seed_extra_user(tid, "Credit Committee")
         voter2, _ = await _seed_extra_user(tid, "Credit Committee")
         loan_id, _ = await _disburse(tid)
+        await _classify_npl(tid, loan_id)  # FM9: write-off needs a stored NPL class
         record = await _request_write_off(tid, requester, loan_id)
         assert record.balance == Decimal("24000.00")
         await _vote(tid, voter1, record.id)
@@ -1211,6 +1368,7 @@ def test_write_off_kill_switch_leaves_zero_partial_state() -> None:
         voter1, _ = await _seed_extra_user(tid, "Credit Committee")
         voter2, _ = await _seed_extra_user(tid, "Credit Committee")
         loan_id, _ = await _disburse(tid)
+        await _classify_npl(tid, loan_id)  # FM9: write-off needs a stored NPL class
         record = await _request_write_off(tid, requester, loan_id)
         await _vote(tid, voter1, record.id)
         await _vote(tid, voter2, record.id)
@@ -1244,6 +1402,143 @@ def test_write_off_requires_an_active_loan_with_something_to_write_off() -> None
         await _repay(tid, requester, loan_id, "24000.00")  # closes it
         with pytest.raises(ConflictError, match="only active loans"):
             await _request_write_off(tid, requester, loan_id)
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# FM9 (review B3) — a PERFORMING loan can never be written off
+# ---------------------------------------------------------------------------
+
+
+def test_fm9_write_off_request_on_a_performing_loan_is_refused() -> None:
+    """Prudential gate (SASRA-aligned, IFRS-9-consistent): write-off is
+    the LAST stage of credit deterioration. A fresh disbursement is
+    stored 'normal' (0001 default) — the classic insider vector is a
+    quorum writing off a crony's GOOD loan, so the request is a 409
+    BEFORE any vote can exist, with zero side effects. 'watch' (31-90
+    dpd, still performing) is refused identically. Falsifiable: remove
+    the NPL_CLASSES guard in request_write_off and both requests
+    succeed, failing the count assertion."""
+
+    async def run() -> None:
+        tid, requester, _ = await _seed_actor()
+        loan_id, _ = await _disburse(tid)  # classification 'normal'
+        with pytest.raises(ConflictError, match="non-performing"):
+            await _request_write_off(tid, requester, loan_id)
+
+        await _classify_npl(tid, loan_id, cls="watch")  # performing: 31-90 dpd
+        with pytest.raises(ConflictError, match="non-performing"):
+            await _request_write_off(tid, requester, loan_id)
+
+        async with tenant_session(factory(), tid) as session:
+            count = (
+                await session.execute(text("SELECT count(*) FROM loan_write_offs"))
+            ).scalar_one()
+            assert int(count) == 0  # nothing persisted, nothing to vote on
+
+        # A stored NPL class passes the gate (the same loan,
+        # reclassified): the guard refuses exactly the non-NPL set.
+        await _classify_npl(tid, loan_id, cls="substandard")
+        record = await _request_write_off(tid, requester, loan_id)
+        assert record.classification == "substandard"
+
+    asyncio.run(run())
+
+
+def test_fm9_db_check_refuses_a_performing_snapshot_via_direct_sql() -> None:
+    """The DB backstop (0025 CHECK): even a direct SQL INSERT through
+    the app role — bypassing the service guard entirely (collusion /
+    compromised-session scenario) — cannot persist a write-off
+    snapshot of a 'normal' loan. Falsifiable: widen the classification
+    CHECK in 0025 back to the performing classes and this INSERT
+    succeeds."""
+
+    async def run() -> None:
+        tid, requester, _ = await _seed_actor()
+        loan_id, mid = await _disburse(tid)
+        with pytest.raises((IntegrityError, DBAPIError), match="classification"):
+            async with tenant_session(factory(), tid) as session:
+                await session.execute(
+                    text(
+                        "INSERT INTO loan_write_offs "
+                        "(tenant_id, loan_id, member_id, balance, penalty_due, "
+                        " total_written_off, classification, provision_pct, reason, "
+                        " status, requested_by) "
+                        "VALUES (CAST(:tid AS uuid), CAST(:lid AS uuid), "
+                        " CAST(:mid AS uuid), '24000.00', '0.00', '24000.00', "
+                        " 'normal', 1.00, 'insider vector', 'requested', "
+                        " CAST(:actor AS uuid))"
+                    ),
+                    {
+                        "tid": str(tid),
+                        "lid": str(loan_id),
+                        "mid": str(mid),
+                        "actor": str(requester),
+                    },
+                )
+
+    asyncio.run(run())
+
+
+def test_n3_member_statement_renders_the_write_off_distinctly_typed() -> None:
+    """N3 (review): the WO- entry credits the member's position, so on
+    a statement its amount sits in the Credit column exactly like a
+    repayment's — an auditor must never be able to mistake it for a
+    receipt. The statement's Type column comes straight from
+    transactions.type, so the write-off row must read
+    'loan_write_off', never 'loan_repayment'. HAND-COMPUTED: repayment
+    2,000.00 (Type loan_repayment, Credit 2,000.00) then write-off of
+    the remaining 22,000.00 (Type loan_write_off, Credit 22,000.00,
+    Reference WO-*). Falsifiable: render the WO- row under a
+    payment-like type (or drop the Type column) and the assertions
+    below fail."""
+
+    async def run() -> None:
+        tid, requester, token = await _seed_actor()
+        voter1, _ = await _seed_extra_user(tid, "Credit Committee")
+        voter2, _ = await _seed_extra_user(tid, "Credit Committee")
+        loan_id, mid = await _disburse(tid)
+        await _repay(tid, requester, loan_id, "2000.00")
+        await _classify_npl(tid, loan_id)
+        record = await _request_write_off(tid, requester, loan_id)
+        await _vote(tid, voter1, record.id)
+        await _vote(tid, voter2, record.id)
+        async with tenant_session(factory(), tid) as session:
+            await corrections_service.post_write_off(session, tid, voter1, record.id)
+
+        headers = _headers(token)
+        async with api_client() as client:
+            created = await client.post(
+                "/exports",
+                json={"report": "member_statement", "filters": {"member_id": str(mid)}},
+                headers=headers,
+            )
+            assert created.status_code == 201
+            export = created.json()
+            summary = await drain_export_queue(tid)
+            assert summary.failed == 0
+            fetched = await client.get(f"/exports/{export['id']}", headers=headers)
+            artifact = fetched.json()["artifact"]
+            downloaded = await client.get(artifact["csv_download"], headers=headers)
+            assert downloaded.status_code == 200
+
+        rows = list(csv.reader(io.StringIO(downloaded.content.decode("utf-8"))))
+        header = rows[0]
+        ref_col = header.index("Reference")
+        type_col = header.index("Type")
+        credit_col = header.index("Credit")
+        wo_rows = [r for r in rows[1:] if r[ref_col].startswith("WO-")]
+        assert len(wo_rows) == 1
+        # Distinctly typed: the label is the write-off's own type,
+        # never a payment's — the Credit-column amount alone is
+        # ambiguous, the Type cell is not.
+        assert wo_rows[0][type_col] == "loan_write_off"
+        assert wo_rows[0][credit_col] == "22000.00"
+        repayment_rows = [r for r in rows[1:] if r[type_col] == "loan_repayment"]
+        assert len(repayment_rows) == 1
+        assert repayment_rows[0][credit_col] == "2000.00"
+        assert repayment_rows[0][type_col] != wo_rows[0][type_col]
 
     asyncio.run(run())
 

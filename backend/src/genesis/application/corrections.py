@@ -96,7 +96,7 @@ from genesis.application.tenant_settings import committee_quorum, enforce_author
 from genesis.application.transactions import _require_member
 from genesis.domain.committee import Decision, Vote, decide
 from genesis.domain.ledger import Account, Channel
-from genesis.domain.lending import LoanStatus, loan_transition
+from genesis.domain.lending import NPL_CLASSES, LoanClass, LoanStatus, loan_transition
 from genesis.domain.members import MemberStatus, MoneyOperation
 from genesis.domain.money import ZERO, to_cents
 from genesis.domain.tenant_config import SETTINGS_REGISTRY
@@ -338,7 +338,39 @@ async def _reconstructed_balance(
     """loans.balance reconstructed from the append-only ledger (FM8):
     disbursed principal minus the signed net of every loans.receivable
     leg attached to this loan's repayments history (originals credit,
-    reversals debit — a storno pair nets to zero by construction)."""
+    reversals debit — a storno pair nets to zero by construction).
+
+    SCOPE PROOF (N2, review): the repayments join is COMPLETE for an
+    adjustable loan. Builder-by-builder over domain/ledger.py, every
+    posting that carries a loans.receivable leg:
+
+      * build_disbursement_posting (DR) — the ``principal`` starting
+        term of this reconstruction (loans.principal), by definition
+        outside the repayments join.
+      * build_repayment_posting / build_allocated_repayment_posting
+        (CR) — every caller writes a repayments row in the same
+        transaction (post_repayment / post_allocated_repayment), so
+        both are IN the join.
+      * the adjustment reversal (DR mirror) — adjust_repayment writes
+        the negative-linked repayments correction row for it, IN the
+        join. Generic post_reversal refuses repayment-linked
+        transactions and has no API route; the only other receivable
+        carrier it could mirror is a disbursement, and no code path
+        calls it with one.
+      * build_exit_settlement_posting (CR) — only reachable through
+        the P12 exit settlement, which terminal-EXITs the member in
+        the same transaction; adjust_repayment refuses EXITED members
+        before this check can run.
+      * build_write_off_posting (CR) — only reachable through
+        post_write_off, which moves the loan to WRITTEN_OFF in the
+        same transaction; adjust_repayment refuses written-off loans
+        before this check can run.
+
+    Every other builder (fees, deposits, dividends, transfers, and
+    BOTH interest postings — loan accrual uses interest.receivable,
+    deposit interest uses member.deposits) never touches
+    loans.receivable; test_n2_fm8_reconstruction_survives_a_loan_
+    interest_accrual proves the accrual case end-to-end."""
     net = (
         await session.execute(
             text(
@@ -378,6 +410,26 @@ async def adjust_repayment(
     adjustment can never re-open a loan underneath a posting
     settlement (A5: an EXITED member's loan is refused — the P12
     terminal-state rule).
+
+    REOPEN SECURITY GATE (FM10, review B2 — banking principle: a
+    discharged surety cannot be unilaterally re-bound). P10 releases
+    the loan's guarantees at closure, legally discharging the
+    guarantors; an adjustment that reopens the loan would therefore
+    resurrect an UNSECURED exposure. Default posture is REFUSE: when
+    the CLOSED -> ACTIVE branch would trigger and any guarantee linked
+    to this loan is 'released', the adjustment is a 409 (least
+    disclosure: the error names the guarantee disposition, never
+    amounts or guarantors). The operator's remedy is the P13.14
+    substitution / re-pledge flow — re-secure the exposure FIRST, then
+    adjust. The read runs under the loan FOR UPDATE (no guarantee-row
+    lock is taken — no new lock-graph edge); release itself only ever
+    happens under the same loan lock (P10 closure) or the P13.14
+    guarantee workflow, so the plain read cannot race a concurrent
+    release. If the closed loan had no released guarantees the reopen
+    proceeds, and the audit row carries an explicit
+    had_released_guarantees: false so an auditor can prove the check
+    ran. The guarantor reinstatement/substitution policy decision this
+    defers is recorded on issue #21.
     """
     ts = datetime.now(UTC)
     repayment = (
@@ -457,6 +509,36 @@ async def adjust_repayment(
         # the write-once snapshot; recovery is the future explicit
         # branch, never an adjustment.
         raise ConflictError(f"loan {loan_id} is written off; adjustments are refused")
+
+    # FM10 (review B2): an adjustment that would REOPEN a closed loan
+    # must not resurrect an unsecured exposure. P10 released the
+    # guarantees at closure (guarantees.status -> 'released'), legally
+    # discharging the guarantors — so if any released guarantee is
+    # linked to this loan, REFUSE before any side effect. Plain read
+    # under the loan FOR UPDATE (no guarantee lock — no new lock-graph
+    # edge; every release path holds this same loan lock). Least
+    # disclosure: the category, never amounts or guarantor identities.
+    had_released_guarantees = False
+    if status is LoanStatus.CLOSED:
+        released_row = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM guarantees "
+                    "WHERE loan_id = CAST(:lid AS uuid) "
+                    "AND tenant_id = CAST(:tid AS uuid) "
+                    "AND status = 'released' LIMIT 1"
+                ),
+                {"lid": str(loan_id), "tid": str(tenant_id)},
+            )
+        ).first()
+        had_released_guarantees = released_row is not None
+        if had_released_guarantees:
+            raise ConflictError(
+                f"loan {loan_id} cannot be reopened by this adjustment: its "
+                "guarantees were released at closure and the guarantors are "
+                "discharged; substitute or re-pledge security (P13.14) "
+                "before adjusting"
+            )
 
     # The COMPLETE original allocation, reconstructed from the
     # append-only legs (A1: all components together, never a subset).
@@ -593,6 +675,25 @@ async def adjust_repayment(
             f"reconstruct from the ledger ({reconstructed})"
         )
 
+    audit_after: dict[str, Any] = {
+        "balance": str(balance_after),
+        "penalty_due": str(penalty_after),
+        "status": new_status.value,
+        "repayment_id": str(repayment_id),
+        "original_txn_id": str(original_txn_id),
+        "reversal_txn_ref": reversal.txn_ref,
+        "amount": str(amount),
+        "penalties": str(penalties),
+        "interest": str(interest),
+        "principal": str(principal),
+        "reopened": reopened,
+        "reason": reason,
+    }
+    if reopened:
+        # FM10 evidence: the auditor can prove the released-guarantee
+        # check RAN and found nothing — a reopen only ever proceeds on
+        # this value being false (true is an unconditional 409 above).
+        audit_after["had_released_guarantees"] = had_released_guarantees
     await record_audit(
         session,
         tenant_id,
@@ -605,20 +706,7 @@ async def adjust_repayment(
             "penalty_due": str(penalty_due),
             "status": status.value,
         },
-        after={
-            "balance": str(balance_after),
-            "penalty_due": str(penalty_after),
-            "status": new_status.value,
-            "repayment_id": str(repayment_id),
-            "original_txn_id": str(original_txn_id),
-            "reversal_txn_ref": reversal.txn_ref,
-            "amount": str(amount),
-            "penalties": str(penalties),
-            "interest": str(interest),
-            "principal": str(principal),
-            "reopened": reopened,
-            "reason": reason,
-        },
+        after=audit_after,
     )
     await enqueue_event(
         session,
@@ -751,7 +839,23 @@ async def request_write_off(
     (v1.1 rule 3; FM4). The snapshot is DB-level WRITE-ONCE from this
     moment (0025 trigger): the committee approves THESE figures, and
     posting re-verifies them component-by-component. Concurrent
-    double-requests collapse to one row (uq_loan_write_offs_open)."""
+    double-requests collapse to one row (uq_loan_write_offs_open).
+
+    PRUDENTIAL GATE (FM9, review B3 — SASRA-aligned, IFRS-9-consistent):
+    write-off is the LAST stage of credit deterioration — derecognition
+    of an asset whose recovery is no longer reasonably expected. The
+    loan's STORED classification (the arrears job's persisted output)
+    must be in NPL_CLASSES (substandard/doubtful/loss); a performing
+    ('normal'/'watch') loan is refused with a 409 regardless of quorum
+    — a committee vote is an authorisation control, not a prudential
+    one, and the 0025 CHECK on loan_write_offs.classification is the
+    collusion-resistant DB backstop. A performing-loan write-off
+    (death/insurance settlement) is a FUTURE, separately permissioned,
+    explicitly named override — tracked on issue #21, never this path.
+    N5 (recorded): posting re-verifies balance + penalty_due but NOT
+    classification/provision drift — the money components are the
+    snapshot contract; a classification that improves between request
+    and posting is a policy question for #21, not a ledger risk."""
     row = (
         await session.execute(
             text(
@@ -772,6 +876,16 @@ async def request_write_off(
     status = LoanStatus(str(row[5]))
     if status is not LoanStatus.ACTIVE:
         raise ConflictError(f"loan {loan_id} is '{status.value}': only active loans write off")
+    # FM9 (review B3): the prudential gate — only a stored NPL
+    # classification may be written off. Least disclosure: the error
+    # names the category, never the figures (they live in the audit
+    # row when a write-off does proceed).
+    if LoanClass(classification) not in NPL_CLASSES:
+        raise ConflictError(
+            f"loan {loan_id} is not classified as non-performing; "
+            "write-off requires an NPL classification "
+            "(see the arrears classification job)"
+        )
     total = to_cents(balance + penalty_due)
     if total <= ZERO:
         raise ConflictError(f"loan {loan_id} has nothing to write off")

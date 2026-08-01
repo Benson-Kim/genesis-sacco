@@ -45,7 +45,11 @@ leakage suite is extended to all three tables.
     ANY status — even manual SQL through the app role fails loudly
     (FM4/A6); only the status workflow columns (status, decided_at,
     posted_at, version, updated_at) and the NULL -> value fill of
-    transaction_id may move. A4 (write-off is NOT forgiveness): the
+    transaction_id may move. The classification CHECK restricts the
+    snapshot to NPL classes ('substandard'/'doubtful'/'loss') — the
+    prudential DB backstop behind the request_write_off service gate
+    (review B3/FM9): a performing-loan write-off snapshot is
+    unrepresentable at the database. A4 (write-off is NOT forgiveness): the
     snapshot persists the written-off claim on the member after the
     receivable is derecognised; post-write-off recovery is a future
     explicit branch (follow-up issue referencing P13.16/P19).
@@ -193,9 +197,15 @@ CREATE TABLE loan_write_offs (
     -- A4: the surviving legal claim on the member. Writing off
     -- nothing is unrepresentable.
     total_written_off numeric(18,2) NOT NULL CHECK (total_written_off > 0),
+    -- Review B3 / FM9: the prudential DB backstop. Write-off is the
+    -- LAST stage of credit deterioration (SASRA-aligned, IFRS-9
+    -- consistent), so a snapshot of a PERFORMING loan is
+    -- unrepresentable — even via direct SQL through the app role
+    -- (collusion resistance: a committee quorum is an authorisation
+    -- control, not a prudential one). The service guard in
+    -- request_write_off refuses first; this CHECK is the backstop.
     classification text NOT NULL
-        CHECK (classification IN
-            ('normal', 'watch', 'substandard', 'doubtful', 'loss')),
+        CHECK (classification IN ('substandard', 'doubtful', 'loss')),
     provision_pct numeric(5,2) NOT NULL
         CHECK (provision_pct >= 0 AND provision_pct <= 100),
     reason text NOT NULL CHECK (length(reason) BETWEEN 1 AND 500),
