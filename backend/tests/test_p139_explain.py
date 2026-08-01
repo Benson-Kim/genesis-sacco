@@ -22,9 +22,14 @@ rule 14); every aggregate rides indexes that shipped with their tables:
 
 Tiny CI tables make seqscan the cheaper plan; the capture disables it
 for the session to prove each relation is SERVABLE by its index (plan
-shape at scale — the P10..P13.11 precedent). Falsifiable guards: drop
-idx_members_type, idx_applications_stage or idx_guarantees_guarantor
-and the index-name / no-sequential-scan gates below fail.
+shape at scale — the P10..P13.11 precedent). On single-digit row
+counts the planner is free to satisfy the tenant predicate from ANY
+tenant-leading index of the relation (observed for members and
+loan_applications), so the gates are STRUCTURAL per the documented
+P13.11 movements-plan convention: every relation index-served, zero
+sequential scans. Falsifiable: drop a relation's indexes and its plan
+must seq-scan (enable_seqscan=off only penalises the cost), failing
+the gate.
 """
 
 from __future__ import annotations
@@ -109,13 +114,15 @@ def test_p139_dashboard_aggregates_are_index_backed() -> None:
             "P13.9 dashboard EXPLAIN (ANALYZE, BUFFERS) — captured in CI\n"
             "against the migrated Postgres service under the RLS app role.\n"
             "enable_seqscan=off because CI tables are tiny; the assertion is\n"
-            "that every aggregate is index-served at scale: account totals by\n"
-            "the (tenant_id, member_id) UNIQUE keys (0001), members-by-type by\n"
-            "idx_members_type (0001), the monthly flow window by the\n"
-            "tenant-leading occurred_at indexes (0001/0008), the pipeline by\n"
-            "idx_applications_stage (0001) and the guarantor aggregates —\n"
-            "including LIVE_PLEDGED_SQL behind live_pledged_total — by\n"
-            "idx_guarantees_guarantor (0001). P13.9 ships NO migration.\n"
+            "that every aggregate is index-served at scale by the\n"
+            "tenant-leading indexes that shipped with the tables (0001/0008):\n"
+            "the account-table (tenant_id, member_id) UNIQUE keys,\n"
+            "idx_members_type/idx_members_status, the occurred_at indexes,\n"
+            "idx_applications_stage and idx_guarantees_guarantor — on\n"
+            "single-digit CI row counts the planner may pick any\n"
+            "tenant-leading index of the relation, so the gate is\n"
+            "structural (index-served, zero seq scans; the P13.11\n"
+            "movements-plan convention). P13.9 ships NO migration.\n"
         )
         sections = [
             ("total deposits (balance-column aggregate)", deposit_plan),
