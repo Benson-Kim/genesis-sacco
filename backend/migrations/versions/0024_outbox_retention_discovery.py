@@ -37,6 +37,19 @@ expand-only objects backing P13.17(e):
 Both functions join tenants ON status = 'active' — parity with 0003:
 suspended tenants are neither dispatched nor purged.
 
+SECURITY (review finding R6): every SECURITY DEFINER function here is
+created with `SET search_path = public, pg_temp`. A definer-rights
+function with a mutable search_path is a PostgreSQL privilege-
+escalation vector — a caller-controlled search_path could shadow
+outbox_events/tenants with hostile relations resolved and executed as
+the BYPASSRLS migration role. The same audit found the precedent
+function active_tenant_ids() (0003) shipped WITHOUT a pinned
+search_path, so this migration also hardens it in place via CREATE OR
+REPLACE with the identical body plus the pinned search_path. The
+downgrade restores active_tenant_ids() to its original 0003 definition
+(no SET clause) so 0024's downgrade leaves the database exactly at the
+0023 state.
+
 Lock posture (honest per the !40 R5 disposition): CREATE INDEX
 (non-CONCURRENT) takes a SHARE lock on outbox_events, blocking event
 INSERTs (i.e. every mutating request) for the duration of the build.
@@ -46,7 +59,8 @@ takes no table locks. If a zero-downtime posture is adopted later, the
 index moves to CREATE INDEX CONCURRENTLY outside the migration
 transaction.
 
-Downgrade drops the two functions and the index — no data is touched,
+Downgrade drops the two new functions and the index, and restores
+active_tenant_ids() to its 0003 definition — no data is touched,
 nothing money-bearing is lost, so no conditional refusal is needed
 (the purge itself only ever deletes dispatched delivery receipts;
 pending and dead rows are exempt by status in the worker SQL).
@@ -72,8 +86,12 @@ CREATE INDEX idx_outbox_dispatched_purge
 --    tenants with due work without weakening RLS on any other table
 --    (the 0003 active_tenant_ids() pattern). The defining role is the
 --    migration role (BYPASSRLS/superuser in CI and ops environments).
+--    R6: search_path pinned — a definer-rights function with a mutable
+--    search_path lets a caller shadow outbox_events/tenants with
+--    hostile relations executed as the BYPASSRLS definer role.
 CREATE FUNCTION outbox_due_tenant_ids() RETURNS SETOF uuid
 LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $fn$
     SELECT DISTINCT o.tenant_id
     FROM outbox_events o
@@ -85,15 +103,33 @@ $fn$;
 --    passes now() - DISPATCHED_RETENTION_DAYS (module-owned constant).
 CREATE FUNCTION outbox_purgeable_tenant_ids(cutoff timestamptz) RETURNS SETOF uuid
 LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $fn$
     SELECT DISTINCT o.tenant_id
     FROM outbox_events o
     JOIN tenants t ON t.id = o.tenant_id AND t.status = 'active'
     WHERE o.status = 'dispatched' AND o.dispatched_at < cutoff
 $fn$;
+
+-- 4. R6 audit fix for the 0003 precedent: active_tenant_ids() shipped
+--    SECURITY DEFINER without a pinned search_path — the same schema-
+--    shadowing escalation vector. Re-created in place with the
+--    identical body plus the pinned search_path (no signature change,
+--    dependents unaffected).
+CREATE OR REPLACE FUNCTION active_tenant_ids() RETURNS SETOF uuid
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$ SELECT id FROM tenants WHERE status = 'active' $fn$;
 """
 
 _DOWN = """
+-- Restore active_tenant_ids() to its original 0003 definition (no SET
+-- search_path clause) so downgrading 0024 lands exactly on the 0023
+-- state.
+CREATE OR REPLACE FUNCTION active_tenant_ids() RETURNS SETOF uuid
+LANGUAGE sql STABLE SECURITY DEFINER
+AS $fn$ SELECT id FROM tenants WHERE status = 'active' $fn$;
+
 DROP FUNCTION IF EXISTS outbox_purgeable_tenant_ids(timestamptz);
 DROP FUNCTION IF EXISTS outbox_due_tenant_ids();
 DROP INDEX IF EXISTS idx_outbox_dispatched_purge;
