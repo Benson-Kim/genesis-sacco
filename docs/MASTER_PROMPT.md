@@ -139,6 +139,10 @@ MRs reference it instead of restating chains, and any MR that changes
 a lock-graph edge updates it in the same MR (BUILD_PROMPTS v1.2 rule 11).
 
 ### 2.1 Backend (Python 3.12, FastAPI)
+As-built C4 diagrams (P-DIAG.1, drift-governed per v1.2 rule 11):
+context `docs/diagrams/c4-context.md`, containers
+`docs/diagrams/c4-container.md`, components (one per API router group)
+`docs/diagrams/c4-component.md`.
 Layered/hexagonal, dependency direction inward:
 `api (routers/schemas) -> application (use-case services, owns transactions)
 -> domain (entities, transitions, pure logic — no I/O) -> infrastructure
