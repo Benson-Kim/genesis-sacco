@@ -1259,8 +1259,7 @@ def test_fm4_write_off_end_to_end_quorum_bound_to_write_once_snapshot() -> None:
             async with tenant_session(factory(), tid) as session:
                 await session.execute(
                     text(
-                        "UPDATE loan_write_offs SET balance = '1.00' "
-                        "WHERE id = CAST(:id AS uuid)"
+                        "UPDATE loan_write_offs SET balance = '1.00' WHERE id = CAST(:id AS uuid)"
                     ),
                     {"id": str(record.id)},
                 )
