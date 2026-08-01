@@ -46,7 +46,7 @@ or test/artifact present on main).
 | P13.13 | ✅ DONE | 0021 dormancy (+0022 dividend-dormant policy fix); test_dormancy |
 | P13.14 | ✅ DONE | test_guarantee_release |
 | P13.15 | ❌ TODO | no corrections/write-off tables or tests on main — claims 0025 |
-| P13.16 | ❌ TODO | no recovery_cases on main — claims the number after P13.15's |
+| P13.16 | 🔄 IN PROGRESS | branch duo/feature/p13-16-collections-recovery (MR ref recorded at MR creation) — claims 0026, down_revision '0025'; merges AFTER the P13.15 track (rule 12); the merging maintainer flips this row to ✅ DONE upon merge |
 | P13.17 | 🔄 IN PROGRESS | (e) DSA-6 in !44 (0024) with maintainer-review fixes R6/R7 + flake disposition in flight; (a)–(d) NOT found on main — verify no in-flight MR before claiming |
 | P-DIAG.0 | ✅ DONE | docs/diagrams/lock-order.md |
 | P-DIAG.1 | ✅ DONE | c4-context/container/component + c4-spot-check.py |
