@@ -1030,7 +1030,9 @@ def test_guarantor_releases_own_unconsented_pledge_only() -> None:
         other_email = unique_email()
         borrower = await _seed_member(tid)
         guarantor = await _seed_member(tid, deposit="10000.00", email=g_email)
-        other_member = await _seed_member(tid, deposit="10000.00", email=other_email)
+        # A second member exists solely so other_token below is a real
+        # member-linked user ("random member") — the id is never needed.
+        await _seed_member(tid, deposit="10000.00", email=other_email)
         pid = await _seed_product(tid)
         aid = await _seed_application(tid, borrower, pid, amount="1000.00", stage="submitted")
         own_pledged = await _seed_guarantee(
