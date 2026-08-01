@@ -47,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(member_exits_router)
     app.include_router(loans_router)
     app.include_router(loan_book_router)
+    app.include_router(recovery_router)
     app.include_router(transactions_router)
     app.include_router(dashboard_router)
     app.include_router(dividends_router)
