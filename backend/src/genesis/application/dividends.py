@@ -113,9 +113,9 @@ __all__ = [
     "DeclarationRecord",
     "DeclarationStatus",
     "DeclarationTotals",
+    "DistributionRunResult",
     "DividendConfig",
     "DividendVoteTally",
-    "DistributionRunResult",
     "MemberEntitlement",
     "ShareTransferResult",
     "cast_dividend_vote",
@@ -1182,7 +1182,7 @@ async def distribute_dividend(
                         # The unpaid remainder: eligible members without a
                         # claim (SKIP LOCKED skips, zero-entitlement
                         # members). Static literals chosen in code.
-                        "SELECT count(*) FROM members m "  # noqa: S608
+                        "SELECT count(*) FROM members m "
                         "WHERE m.tenant_id = CAST(:tid AS uuid) "
                         "AND m.status IN ('active', 'arrears') "
                         "AND NOT EXISTS (SELECT 1 FROM dividend_distributions dd "

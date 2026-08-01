@@ -21,7 +21,6 @@ from functools import partial
 from typing import Any
 
 import pytest
-from sqlalchemy import text
 
 from db_helpers import api_client, factory
 from export_helpers import add_user, count, drain_export_queue, seed_actor, seed_member
@@ -267,7 +266,7 @@ def test_schedule_pages_by_keyset_and_respects_the_row_cap(
 
 def test_schedule_scope_validation_and_foreign_tenant_invisibility() -> None:
     async def run() -> None:
-        tid, _, token, decl_id = await _distributed_declaration()
+        _tid, _, token, decl_id = await _distributed_declaration()
         headers = {"authorization": f"Bearer {token}"}
         async with api_client() as client:
             # Missing required filter -> 4xx, nothing queued.

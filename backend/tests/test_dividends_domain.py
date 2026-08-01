@@ -59,9 +59,9 @@ def test_last_completed_year_excludes_the_running_and_the_closing_day() -> None:
 
 
 def test_month_out_of_bounds_is_a_domain_error() -> None:
-    with pytest.raises(ValueError, match="1..12"):
+    with pytest.raises(ValueError, match=r"1\.\.12"):
         financial_year_ending(0, 2026)
-    with pytest.raises(ValueError, match="1..12"):
+    with pytest.raises(ValueError, match=r"1\.\.12"):
         financial_year_ending(13, 2026)
 
 
