@@ -661,3 +661,83 @@ MEMBER_INITIATED: dict[TxnType, bool] = {
 def member_initiated_types() -> tuple[str, ...]:
     """The sorted member-initiated type values (for bound SQL parameters)."""
     return tuple(sorted(t.value for t, member in MEMBER_INITIATED.items() if member))
+
+
+# ---------------------------------------------------------------------------
+# Account classification (P13.10 income statement / SASRA return)
+# ---------------------------------------------------------------------------
+
+
+class AccountClass(enum.StrEnum):
+    """Financial-statement class of a ledger account (code-owned).
+
+    DEBIT-normal classes (balance = debits - credits): ASSET, EXPENSE,
+    CLEARING (clearing/suspense accounts net to zero inside their
+    flows, reported debit-normal so a non-zero residue is visible).
+    CREDIT-normal classes (balance = credits - debits): LIABILITY,
+    EQUITY, INCOME.
+    """
+
+    ASSET = "asset"
+    LIABILITY = "liability"
+    EQUITY = "equity"
+    INCOME = "income"
+    EXPENSE = "expense"
+    CLEARING = "clearing"
+
+
+#: Code-owned classification of EVERY chart account (v1.1 rule 6: the
+#: account identifiers interpolated into report groupings come from
+#: THIS mapping, never from callers). The completeness test pins this
+#: map to the Account enum, so a new account cannot land unclassified
+#: — and the P13.10 report builders FAIL LOUDLY (UnprocessableError)
+#: on any ledger account string not covered here, so a future account
+#: can never silently vanish from an income statement or a regulator
+#: return (the classic silent-drop return defect).
+ACCOUNT_CLASS: dict[Account, AccountClass] = {
+    Account.CASH_MPESA: AccountClass.ASSET,
+    Account.CASH_BANK: AccountClass.ASSET,
+    Account.LOANS_RECEIVABLE: AccountClass.ASSET,
+    Account.INTEREST_RECEIVABLE: AccountClass.ASSET,
+    Account.MEMBER_DEPOSITS: AccountClass.LIABILITY,
+    Account.UNCLAIMED_DIVIDENDS: AccountClass.LIABILITY,
+    Account.MEMBER_SHARES: AccountClass.EQUITY,
+    Account.INTEREST_INCOME: AccountClass.INCOME,
+    Account.PENALTY_INCOME: AccountClass.INCOME,
+    Account.FEE_INCOME: AccountClass.INCOME,
+    Account.INTEREST_EXPENSE: AccountClass.EXPENSE,
+    Account.DIVIDEND_EXPENSE: AccountClass.EXPENSE,
+    Account.REBATE_EXPENSE: AccountClass.EXPENSE,
+    Account.SHARE_TRANSFER_CLEARING: AccountClass.CLEARING,
+    Account.SUSPENSE: AccountClass.CLEARING,
+}
+
+#: Classes whose accounts carry a DEBIT-normal balance.
+DEBIT_NORMAL_CLASSES: frozenset[AccountClass] = frozenset(
+    {AccountClass.ASSET, AccountClass.EXPENSE, AccountClass.CLEARING}
+)
+
+
+def account_class(account_value: str) -> AccountClass:
+    """Classify a raw ledger account string; unknown accounts RAISE.
+
+    ValueError (unknown enum value) or KeyError (enum member missing
+    from ACCOUNT_CLASS) both surface as ValueError so report builders
+    can translate the failure into a loud, sanitized domain error —
+    never a silently dropped line (gate 1.5).
+    """
+    try:
+        return ACCOUNT_CLASS[Account(account_value)]
+    except KeyError as exc:  # pragma: no cover - the completeness pin
+        raise ValueError(f"ledger account {account_value!r} has no class mapping") from exc
+    except ValueError:
+        raise ValueError(f"unknown ledger account {account_value!r}") from None
+
+
+def signed_balance(account_value: str, debits: Decimal, credits: Decimal) -> Decimal:
+    """Natural-sign balance of one account (debit-normal positive for
+    asset/expense/clearing; credit-normal positive for liability/
+    equity/income). Raises ValueError on an unmapped account."""
+    if account_class(account_value) in DEBIT_NORMAL_CLASSES:
+        return debits - credits
+    return credits - debits
