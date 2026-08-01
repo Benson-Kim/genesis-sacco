@@ -1175,25 +1175,6 @@ async def distribute_dividend(
     rebate_total = sum((p[4] for p in payloads), ZERO)
 
     async with session_scope() as session:
-        pending = int(
-            (
-                await session.execute(
-                    text(
-                        # The unpaid remainder: eligible members without a
-                        # claim (SKIP LOCKED skips, zero-entitlement
-                        # members). Static literals chosen in code.
-                        "SELECT count(*) FROM members m "
-                        "WHERE m.tenant_id = CAST(:tid AS uuid) "
-                        "AND m.status IN ('active', 'arrears') "
-                        "AND NOT EXISTS (SELECT 1 FROM dividend_distributions dd "
-                        "WHERE dd.tenant_id = m.tenant_id "
-                        "AND dd.declaration_id = CAST(:decl AS uuid) "
-                        "AND dd.member_id = m.id)"
-                    ),
-                    {"tid": str(tenant_id), "decl": str(declaration_id)},
-                )
-            ).scalar_one()
-        )
         claims_row = (
             await session.execute(
                 text(
@@ -1207,12 +1188,15 @@ async def distribute_dividend(
         ).one()
         claims_count = int(claims_row[0])
         claims_total = Decimal(str(claims_row[1]))
+        # The unpaid remainder of the APPROVED eligible set. A member
+        # whose claim is still missing was either SKIP LOCKED-skipped
+        # (an idempotent re-run picks them up) or left the population
+        # mid-run (the documented permanent shortfall). Zero-entitlement
+        # members are not part of the eligible count and never hold the
+        # declaration open.
+        pending = snapshot.eligible_members - claims_count
         status = DeclarationStatus.APPROVED
-        if (
-            claims_count == snapshot.eligible_members
-            and claims_total == snapshot.total_payout
-            and pending == 0
-        ):
+        if claims_count == snapshot.eligible_members and claims_total == snapshot.total_payout:
             _transition(DeclarationStatus.APPROVED, DeclarationStatus.DISTRIBUTED)
             done = cast(
                 CursorResult[Any],

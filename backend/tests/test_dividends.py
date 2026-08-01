@@ -169,6 +169,13 @@ async def _approve(tid: uuid.UUID, declaration_id: uuid.UUID) -> None:
     assert tally.status is DeclarationStatus.APPROVED
 
 
+async def _sum(tid: uuid.UUID, sql: str, **params: object) -> Decimal:
+    """Decimal aggregate (the shared count() coerces to int)."""
+    async with tenant_session(factory(), tid) as session:
+        value = (await session.execute(text(sql), params)).scalar_one()
+    return Decimal(str(value))
+
+
 async def _balance(tid: uuid.UUID, mid: uuid.UUID, *, table: str) -> Decimal:
     async with tenant_session(factory(), tid) as session:
         value = (
@@ -264,35 +271,22 @@ def test_distribution_pays_the_oracle_figures_and_conserves_every_cent() -> None
         # the ledger's member.shares credits across DV- postings sum to
         # the declared dividend, member.deposits credits to the rebate,
         # and the claim rows to the payout — all exactly.
-        assert Decimal(
-            str(
-                await count(
-                    tid,
-                    "SELECT COALESCE(SUM(le.amount), 0) FROM ledger_entries le "
-                    "JOIN transactions t ON t.id = le.transaction_id "
-                    "WHERE t.type = 'dividend_posting' AND le.side = 'credit' "
-                    "AND le.account = 'member.shares'",
-                )
-            )
+        assert await _sum(
+            tid,
+            "SELECT COALESCE(SUM(le.amount), 0) FROM ledger_entries le "
+            "JOIN transactions t ON t.id = le.transaction_id "
+            "WHERE t.type = 'dividend_posting' AND le.side = 'credit' "
+            "AND le.account = 'member.shares'",
         ) == Decimal("897.53")
-        assert Decimal(
-            str(
-                await count(
-                    tid,
-                    "SELECT COALESCE(SUM(le.amount), 0) FROM ledger_entries le "
-                    "JOIN transactions t ON t.id = le.transaction_id "
-                    "WHERE t.type = 'dividend_posting' AND le.side = 'credit' "
-                    "AND le.account = 'member.deposits'",
-                )
-            )
+        assert await _sum(
+            tid,
+            "SELECT COALESCE(SUM(le.amount), 0) FROM ledger_entries le "
+            "JOIN transactions t ON t.id = le.transaction_id "
+            "WHERE t.type = 'dividend_posting' AND le.side = 'credit' "
+            "AND le.account = 'member.deposits'",
         ) == Decimal("36.00")
-        assert Decimal(
-            str(
-                await count(
-                    tid,
-                    "SELECT COALESCE(SUM(total_amount), 0) FROM dividend_distributions",
-                )
-            )
+        assert await _sum(
+            tid, "SELECT COALESCE(SUM(total_amount), 0) FROM dividend_distributions"
         ) == Decimal("933.53")
 
         # Postings carry occurred_at at the very end of the FY (1.5)

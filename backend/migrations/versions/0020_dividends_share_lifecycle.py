@@ -293,9 +293,24 @@ ALTER TABLE transactions ADD CONSTRAINT transactions_type_check
         ('deposit', 'withdrawal', 'share_topup', 'loan_disbursement',
          'loan_repayment', 'interest_posting', 'exit_settlement',
          'dividend_posting', 'share_transfer_out', 'share_transfer_in'));
+
+-- The 0013 exports.report CHECK pins the report vocabulary; the P13
+-- registry gains the dividend & rebate schedule here (expand-only).
+ALTER TABLE exports DROP CONSTRAINT exports_report_check;
+ALTER TABLE exports ADD CONSTRAINT exports_report_check
+    CHECK (report IN
+        ('member_statement', 'trial_balance', 'loan_book',
+         'disbursement_collections', 'npl_trend', 'member_exit_statement',
+         'dividend_rebate_schedule'));
 """
 
 _DOWN = """
+ALTER TABLE exports DROP CONSTRAINT exports_report_check;
+ALTER TABLE exports ADD CONSTRAINT exports_report_check
+    CHECK (report IN
+        ('member_statement', 'trial_balance', 'loan_book',
+         'disbursement_collections', 'npl_trend', 'member_exit_statement'));
+
 ALTER TABLE transactions DROP CONSTRAINT transactions_type_check;
 -- Restoring the narrower CHECK validates existing rows: a database
 -- holding dividend/share-transfer history refuses this loudly (0017

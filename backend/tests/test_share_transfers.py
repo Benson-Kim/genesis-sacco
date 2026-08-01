@@ -114,16 +114,17 @@ def test_transfer_moves_shares_atomically_with_member_attributed_legs() -> None:
             )
             == 2
         )
-        assert Decimal(
-            str(
-                await count(
-                    tid,
-                    "SELECT COALESCE(SUM(CASE WHEN side = 'debit' THEN amount "
-                    "ELSE -amount END), 0) FROM ledger_entries "
-                    "WHERE account = 'clearing.share_transfers'",
+        async with tenant_session(factory(), tid) as session:
+            clearing_net = (
+                await session.execute(
+                    text(
+                        "SELECT COALESCE(SUM(CASE WHEN side = 'debit' THEN amount "
+                        "ELSE -amount END), 0) FROM ledger_entries "
+                        "WHERE account = 'clearing.share_transfers'"
+                    )
                 )
-            )
-        ) == Decimal("0")
+            ).scalar_one()
+        assert Decimal(str(clearing_net)) == Decimal("0")
 
         # The member-attributed legs keep the ledger-reconstructed
         # share history exact for BOTH sides: reconstructing today's
