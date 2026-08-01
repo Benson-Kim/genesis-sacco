@@ -46,6 +46,7 @@ tests/test_tenant_predicates.py style live in tests/test_member_kyc_api.py).
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass

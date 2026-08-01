@@ -39,6 +39,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(members_router)
+    app.include_router(member_kyc_router)
     app.include_router(member_exits_router)
     app.include_router(loans_router)
     app.include_router(loan_book_router)

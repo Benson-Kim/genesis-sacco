@@ -100,4 +100,3 @@ def test_document_cursor_is_a_bound_parameter_only() -> None:
     sql = documents_page_sql(with_cursor=True)
     assert ":cursor" in sql
     assert "kra_pin" not in sql
-    _ = uuid  # silence linters if unused in future edits
