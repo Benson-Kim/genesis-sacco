@@ -12,10 +12,13 @@ note edit/delete route (append-only, addendum A2).
 Permissions (P4 matrix, documented interpretation): the worklist and
 case reads sit on loan_book:view (the loan-detail entitlement — the
 worklist itself discloses no balances); opening a case is
-loan_book:create; assignment and notes are loan_book:edit. The
-"recovery permission" an ASSIGNEE must hold is loan_book:view — the
-grant that lets them see the worklist they work (enforced in the
-application service, addendum A4).
+loan_book:create; assignment and notes are loan_book:edit. An
+ASSIGNEE must be an active same-tenant user holding loan_book:view —
+the grant that lets them see the worklist they work — EXCLUDING
+assurance roles (the Auditor) for audit-independence: segregation of
+duties forbids the collections trail's reviewer from being workable
+in it (review B2; enforced in the application service against the
+role resolved server-side from the assignee's role_id, addendum A4).
 """
 
 from __future__ import annotations

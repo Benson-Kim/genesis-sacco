@@ -30,11 +30,17 @@ Design decisions (each a named gate of the prompt):
   matches only status='open' rows, so a re-run scans nothing and
   closes nothing new. Every close passes through the single
   domain/recovery.transition gatekeeper (addendum A1).
-* ASSIGNMENT (FM4, addendum A4): the assignee must be an ACTIVE user
-  of the SAME tenant whose role holds the recovery permission —
-  loan_book:view, the grant that lets them see the worklist they work
-  (checked via the shared rbac.actor_access, 1.1). A user suspended
-  AFTER assignment stays on the case, surfaced in the worklist as
+* ASSIGNMENT (FM4, addendum A4; review B2): the assignee must be an
+  ACTIVE user of the SAME tenant whose role holds the recovery
+  permission — loan_book:view, the grant that lets them see the
+  worklist they work (checked via the shared rbac.actor_access, 1.1)
+  — EXCLUDING assurance roles (the Auditor) for audit-independence:
+  segregation of duties (three lines of defense) forbids the function
+  that reviews the collections trail from being workable in it, or
+  recovery_case_notes/audit_log lose their forensic value. The
+  exclusion is resolved server-side from the assignee's role_id
+  (never a client-supplied flag). A user suspended AFTER assignment
+  stays on the case, surfaced in the worklist as
   assignee_unassignable=true (no silent orphan). Reassignment is
   audited with before/after.
 * WORKLIST (addendum A5): keyset only, ORDER BY l.days_past_due DESC,
@@ -84,7 +90,7 @@ from genesis.application.batch_runner import SessionScope, run_in_batches
 from genesis.application.outbox import enqueue_event
 from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
 from genesis.domain.lending import NPL_CLASSES, LoanStatus
-from genesis.domain.rbac import Action, Module
+from genesis.domain.rbac import AUDITOR, Action, Module
 from genesis.domain.recovery import RecoveryCaseStatus, transition
 from genesis.domain.users import UserStatus
 from genesis.errors import ConflictError, InvalidInputError, NotFoundError
@@ -110,6 +116,19 @@ __all__ = [
 ]
 
 DEFAULT_CLOSE_BATCH_SIZE = 200
+
+#: Review B2 (segregation of duties / three lines of defense): roles
+#: whose FUNCTION is assurance are excluded from collections
+#: assignability even though their RBAC grants include loan_book:view
+#: (the Auditor views everything BY DESIGN, so the permission matrix
+#: alone can never express this exclusion). Identified by role NAME:
+#: names are the codebase's canonical role identity — domain/rbac
+#: seeds the system matrix keyed by ROLE_NAMES, rbac.seed_permissions
+#: looks roles up by name, and the roles table carries no role-type
+#: flag column — so a name constant is the least-fragile mechanism
+#: available. The name is resolved SERVER-SIDE from the assignee's
+#: role_id (users -> roles join), never from a client-supplied flag.
+_ASSURANCE_ROLES: frozenset[str] = frozenset({AUDITOR})
 
 #: Bound-parameter set for the NPL labels (v1.1 rule 6: enum values are
 #: never string-interpolated). Sorted for a deterministic SQL text so
@@ -323,9 +342,12 @@ async def assign_recovery_case(
     lock site). The assignee must be an active user of the SAME tenant
     (explicit tenant predicate + RLS; a foreign id is a plain 404)
     whose role holds the recovery permission — loan_book:view, checked
-    through the shared rbac.actor_access (1.1). first_assigned_at is
-    set server-side exactly once (addendum A7). Reassignment is
-    audited with before/after (gate 1.5).
+    through the shared rbac.actor_access (1.1) — and whose role is NOT
+    an assurance role (review B2: the Auditor is excluded for
+    audit-independence; the role name is resolved server-side from the
+    assignee's role_id, refusal is a least-disclosure 409).
+    first_assigned_at is set server-side exactly once (addendum A7).
+    Reassignment is audited with before/after (gate 1.5).
     """
     row = (
         await session.execute(
@@ -373,6 +395,12 @@ async def assign_recovery_case(
         # The recovery permission (documented interpretation): the
         # grant that lets the assignee see the worklist they work.
         raise ConflictError("assignee lacks the recovery permission (loan_book:view)")
+    if str(assignee[2]) in _ASSURANCE_ROLES:
+        # Review B2 — segregation of duties: the assurance function
+        # (Auditor) must never be assignable operational work in the
+        # process it audits, even though its grants include
+        # loan_book:view. Least-disclosure category (rule 7).
+        raise ConflictError("assignee role is excluded from collections work")
     result = cast(
         CursorResult[Any],
         await session.execute(

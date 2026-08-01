@@ -25,6 +25,9 @@ oracles in comments:
        suspended AFTER assignment is flagged unassignable in the
        worklist (never silently orphaned); reassignment audited with
        before/after; first_assigned_at is server-side and write-once.
+       Review B2: an assurance-role (Auditor) assignee is refused for
+       audit-independence even though it holds loan_book:view —
+       falsifiable, the guard alone produces the 409.
   FM5  cross-tenant probe — the issue-#17 pattern on every new route AND
        the tenant-predicate falsifiability probe (session AS the row's
        own tenant, foreign tenant argument -> 404/zero rows).
@@ -56,7 +59,7 @@ from db_helpers import api_client, factory, seed_user, unique_email
 from export_helpers import add_user, count, seed_actor
 from genesis.application import recovery as recovery_service
 from genesis.application.arrears import run_arrears_for_tenant
-from genesis.domain.rbac import ROLE_NAMES, Action, Module, seed_matrix
+from genesis.domain.rbac import AUDITOR, ROLE_NAMES, Action, Module, seed_matrix
 from genesis.errors import ConflictError, NotFoundError
 from genesis.infrastructure.tenancy import tenant_session
 from test_penalty_accrual import _disburse, _pin_first_instalment, _scope
@@ -435,6 +438,60 @@ def test_fm4_assignment_guards_and_unassignable_flag() -> None:
             rows_out = [r for r in res.json()["items"] if r["case_id"] == case["id"]]
             assert len(rows_out) == 1
             assert rows_out[0]["assignee_unassignable"] is True
+
+    asyncio.run(run())
+
+
+def test_b2_auditor_excluded_from_assignment_audit_independence() -> None:
+    """Review B2 (segregation of duties / three lines of defense): an
+    active same-tenant Auditor HOLDS loan_book:view by design (it views
+    everything), so the RBAC matrix alone can never refuse it — this
+    test fails if the explicit assurance-role exclusion guard in
+    assign_recovery_case is removed (the assignment would then return
+    200). A Loan Officer stays assignable (no over-blocking)."""
+
+    async def run() -> None:
+        tid, _, token = await seed_actor()
+        loan_id = await _npl_loan(tid)
+        case = await _open_case_api(token, loan_id)
+        headers = {"authorization": f"Bearer {token}"}
+
+        # Precondition that makes the guard non-redundant: the seeded
+        # Auditor role DOES hold the assignee permission. If this ever
+        # fails the exclusion is moot and must be revisited.
+        assert seed_matrix()[AUDITOR][Module.LOAN_BOOK][Action.VIEW] is True
+
+        auditor_id, _ = await add_user(tid, AUDITOR)  # active, same tenant
+        officer_id, _ = await add_user(tid, "Loan Officer")
+
+        async with api_client() as client:
+            # Assurance role refused: 409, least-disclosure envelope
+            # (category only — no role details leave the service).
+            res = await client.post(
+                f"/recovery-cases/{case['id']}/assign",
+                json={"version": 1, "assignee_id": str(auditor_id)},
+                headers=headers,
+            )
+            assert res.status_code == 409, res.text
+
+            # The refused attempt left the case untouched: unassigned,
+            # version unchanged, no first_assigned_at.
+            res = await client.get(f"/recovery-cases/{case['id']}", headers=headers)
+            assert res.status_code == 200
+            body = res.json()
+            assert body["assignee_id"] is None
+            assert body["first_assigned_at"] is None
+            assert body["version"] == 1
+
+            # No over-blocking: a Loan Officer remains assignable with
+            # the same version — the guard refused, it did not consume.
+            res = await client.post(
+                f"/recovery-cases/{case['id']}/assign",
+                json={"version": 1, "assignee_id": str(officer_id)},
+                headers=headers,
+            )
+            assert res.status_code == 200, res.text
+            assert res.json()["assignee_id"] == str(officer_id)
 
     asyncio.run(run())
 
