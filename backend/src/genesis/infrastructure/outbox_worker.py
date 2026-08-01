@@ -278,19 +278,11 @@ async def list_purgeable_tenants(
     idx_outbox_dispatched_purge (migration 0024).
     """
     async with factory() as session:
-        rows = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT outbox_purgeable_tenant_ids("
-                        "now() - make_interval(days => :days))"
-                    ),
-                    {"days": DISPATCHED_RETENTION_DAYS},
-                )
-            )
-            .scalars()
-            .all()
+        result = await session.execute(
+            text("SELECT outbox_purgeable_tenant_ids(now() - make_interval(days => :days))"),
+            {"days": DISPATCHED_RETENTION_DAYS},
         )
+        rows = result.scalars().all()
     return [uuid.UUID(str(value)) for value in rows]
 
 
