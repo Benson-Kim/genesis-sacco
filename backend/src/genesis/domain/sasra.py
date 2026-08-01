@@ -24,8 +24,10 @@ Line amounts use the natural-sign convention from
 ``genesis.domain.ledger.signed_balance``: debit-normal positive for
 asset/expense/clearing lines, credit-normal positive for liability/
 equity/income lines. Because every posting is balanced (gate 1.5), the
-signed balances of ALL accounts sum to zero — rendered as the final
-``CHK1`` control row, which a correct return shows as 0.00.
+double-entry identity holds on natural-sign balances — assets +
+expenses + clearing == liabilities + equity + income — rendered as the
+final ``CHK1`` control row (debit-normal minus credit-normal), which a
+correct return shows as 0.00.
 """
 
 from __future__ import annotations

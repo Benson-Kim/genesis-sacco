@@ -38,6 +38,7 @@ from genesis.application import member_exits as exits_service
 from genesis.application.members import get_member
 from genesis.domain.documents import Cell
 from genesis.domain.ledger import (
+    DEBIT_NORMAL_CLASSES,
     Account,
     AccountClass,
     Side,
@@ -1105,23 +1106,26 @@ async def _build_sasra_return(
         try:
             code = line_for_account(account)
             signed = signed_balance(account, debits, credits)
+            debit_normal = account_class(account) in DEBIT_NORMAL_CLASSES
         except ValueError as exc:
             # Least disclosure: the account identifier only, no figures.
             raise UnprocessableError(str(exc)) from exc
         line_totals[code] += signed
-        residual += signed
+        # The double-entry identity on natural-sign balances:
+        # assets + expenses + clearing == liabilities + equity + income
+        # (every posting balances, so total DR == total CR). The
+        # residual is debit-normal MINUS credit-normal and must be 0.
+        residual += signed if debit_normal else -signed
     rows: list[tuple[Cell, ...]] = [
         (SASRA_RETURN_VERSION, line.code, line.title, to_cents(line_totals[line.code]))
         for line in SASRA_LINES
     ]
-    # Double-entry control row: signed balances over ALL accounts sum
-    # to zero on a balanced book (debit-normal positive minus
-    # credit-normal positive) — a non-zero value is a filing stopper.
+    # Control row: a non-zero value is a filing stopper.
     rows.append(
         (
             SASRA_RETURN_VERSION,
             "CHK1",
-            "Balance check (signed balances sum to zero)",
+            "Balance check (debit-normal minus credit-normal, must be zero)",
             to_cents(residual),
         )
     )
