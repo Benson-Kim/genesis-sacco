@@ -77,9 +77,7 @@ def test_p1316_worklist_and_close_scan_are_index_backed() -> None:
         await run_arrears_for_tenant(_scope(tid), tid, as_of=date(2026, 6, 1))
         async with tenant_session(factory(), tid) as session:
             case = await open_recovery_case(session, tid, admin_id, loan_id=loan_id)
-            await add_recovery_note(
-                session, tid, admin_id, case_id=case.id, note="explain fixture"
-            )
+            await add_recovery_note(session, tid, admin_id, case_id=case.id, note="explain fixture")
 
         async with tenant_session(factory(), tid) as session:
             # Tiny-table planner discipline (the established precedent):

@@ -556,9 +556,7 @@ def test_notes_append_only_keyset_and_closed_case_refusal() -> None:
                 note_ids.append(res.json()["id"])
 
             # Keyset paging, oldest first, cursor round-trip.
-            res = await client.get(
-                f"/recovery-cases/{case['id']}/notes?limit=1", headers=headers
-            )
+            res = await client.get(f"/recovery-cases/{case['id']}/notes?limit=1", headers=headers)
             page1 = res.json()
             assert [n["id"] for n in page1["items"]] == [note_ids[0]]
             assert page1["next_cursor"] is not None
@@ -578,9 +576,7 @@ def test_notes_append_only_keyset_and_closed_case_refusal() -> None:
                 headers=headers,
             )
             assert res.status_code == 405
-            res = await client.delete(
-                f"/recovery-cases/{case['id']}/notes", headers=headers
-            )
+            res = await client.delete(f"/recovery-cases/{case['id']}/notes", headers=headers)
             assert res.status_code == 405
 
             # Whitespace-only note is a 400 (semantic validation).
@@ -680,9 +676,7 @@ def test_fm5_cross_tenant_probes_and_explicit_predicates() -> None:
             assert res.json()["items"] == []
             res = await client.get(f"/recovery-cases/{case_a['id']}", headers=headers_b)
             assert res.status_code == 404
-            res = await client.get(
-                f"/recovery-cases/{case_a['id']}/notes", headers=headers_b
-            )
+            res = await client.get(f"/recovery-cases/{case_a['id']}/notes", headers=headers_b)
             assert res.status_code == 404
             res = await client.post(
                 "/recovery-cases", json={"loan_id": str(loan_a)}, headers=headers_b
@@ -709,13 +703,9 @@ def test_fm5_cross_tenant_probes_and_explicit_predicates() -> None:
         foreign = uuid.uuid4()
         async with tenant_session(factory(), tid_a) as session:
             with pytest.raises(NotFoundError):
-                await recovery_service.get_recovery_case(
-                    session, foreign, uuid.UUID(case_a["id"])
-                )
+                await recovery_service.get_recovery_case(session, foreign, uuid.UUID(case_a["id"]))
             with pytest.raises(NotFoundError):
-                await recovery_service.open_recovery_case(
-                    session, foreign, admin_a, loan_id=loan_a
-                )
+                await recovery_service.open_recovery_case(session, foreign, admin_a, loan_id=loan_a)
             with pytest.raises(NotFoundError):
                 await recovery_service.assign_recovery_case(
                     session,
@@ -729,9 +719,7 @@ def test_fm5_cross_tenant_probes_and_explicit_predicates() -> None:
                 await recovery_service.add_recovery_note(
                     session, foreign, admin_a, case_id=uuid.UUID(case_a["id"]), note="x"
                 )
-            page = await recovery_service.list_worklist(
-                session, foreign, cursor=None, limit=50
-            )
+            page = await recovery_service.list_worklist(session, foreign, cursor=None, limit=50)
             assert page.items == []
 
     asyncio.run(run())
@@ -764,9 +752,7 @@ def test_recovery_routes_matrix_every_role() -> None:
                 assert res.status_code == (200 if can_view else 403), role_name
                 res = await client.get(f"/recovery-cases/{case['id']}", headers=headers)
                 assert res.status_code == (200 if can_view else 403), role_name
-                res = await client.get(
-                    f"/recovery-cases/{case['id']}/notes", headers=headers
-                )
+                res = await client.get(f"/recovery-cases/{case['id']}/notes", headers=headers)
                 assert res.status_code == (200 if can_view else 403), role_name
 
                 if can_create:
@@ -785,9 +771,7 @@ def test_recovery_routes_matrix_every_role() -> None:
                     assert res.status_code == 403, role_name
 
                 if can_edit:
-                    res = await client.get(
-                        f"/recovery-cases/{case['id']}", headers=headers
-                    )
+                    res = await client.get(f"/recovery-cases/{case['id']}", headers=headers)
                     version = res.json()["version"]
                     res = await client.post(
                         f"/recovery-cases/{case['id']}/assign",
