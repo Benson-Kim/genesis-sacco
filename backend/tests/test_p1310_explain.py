@@ -136,8 +136,14 @@ def test_p1310_report_queries_are_index_backed() -> None:
         # The register keyset page must ride its 0023 index (shipped
         # in the same MR as the query, gate 1.3).
         assert "idx_members_register_keyset" in register_page
-        # PAR aging rides the NPL-trend index set (0001/0013).
-        assert "idx_schedules_due" in par_aging
+        # PAR aging rides the NPL-trend index set (0001/0013). The
+        # schedules CTE may be served by idx_schedules_due (due-led
+        # range scan) or idx_schedules_loan (loan-led nested loop) —
+        # the planner flips between them on near-empty CI tables (the
+        # test_p13_explain disb_coll precedent; observed run-to-run on
+        # identical SQL). Both are tenant-led composite indexes from
+        # 0001; the falsifiable guard is the no-Seq-Scan gate below.
+        assert "idx_schedules_due" in par_aging or "idx_schedules_loan" in par_aging
         # The ledger aggregates must be index-served (trial-balance
         # precedent: any of the composite ledger/transactions indexes).
         assert "Index" in activity_windowed
