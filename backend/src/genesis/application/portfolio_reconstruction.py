@@ -25,6 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.domain.ledger import Account
+from genesis.domain.money import to_cents
 
 #: One month-end snapshot, reconstructed from the append-only record
 #: (gate 1.5: never from current mutable state):
@@ -143,10 +144,18 @@ async def reconstruct_month(
             },
         )
     ).one()
+    # Canonical cents (domain.money.to_cents, the single rounding
+    # truth): the SQL's COALESCE(SUM(..), 0) yields a scale-0 zero for
+    # empty aggregates, while the numeric(18,2) snapshot columns read
+    # back at scale 2 - quantizing HERE makes the reconstruction and
+    # the stored snapshot byte-identical in every rendering (values
+    # were always numerically equal; pipeline 2725330879 caught the
+    # '0' vs '0.00' artifact divergence the moment backend:test could
+    # first run this suite).
     return MonthPortfolio(
         month_end=month_end,
         loans=int(raw[0]),
-        gross_outstanding=Decimal(str(raw[1])),
+        gross_outstanding=to_cents(Decimal(str(raw[1]))),
         npl_loans=int(raw[2]),
-        npl_balance=Decimal(str(raw[3])),
+        npl_balance=to_cents(Decimal(str(raw[3]))),
     )

@@ -528,7 +528,12 @@ def test_npl_trend_reconstructs_month_end_state() -> None:
         # gross = 10000.00.
         first = rows[1]
         assert first[1] == "10000.00"
-        assert (first[2], first[3], first[4]) == ("0", "0", "0.00")
+        # NPL balance renders canonical cents ("0.00"; value identical
+        # to the pre-P13.17 "0"): the reconstruction quantizes via
+        # domain.money.to_cents so the artifact is byte-identical
+        # whichever path (snapshot row vs reconstruction) serves the
+        # month — the disclosed formatting-only rendering delta.
+        assert (first[2], first[3], first[4]) == ("0.00", "0", "0.00")
 
         # Hand-computed, current month (as-of today): days past due =
         # 200 > 90 -> NPL; ledger-reconstructed outstanding = 10000 -
