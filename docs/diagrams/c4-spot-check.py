@@ -15,6 +15,12 @@ Checks (stdlib only, no dependencies):
    wired via ``include_router`` in ``genesis/api/app.py`` equals the
    set of ``genesis/api/*.py`` router modules cited in
    c4-component.md.
+3. Pinned function claims (P-DIAG drift MR): every named
+   function/class the diagrams claim for the corrections/recovery
+   component boxes (and the cross-cutting seams they cite) is defined
+   in the module the box names — a claim without a matching ``def`` /
+   ``class`` is a FAIL. Extend ``PINNED_CLAIMS`` whenever a diagram
+   names a new load-bearing callable.
 
 This script is the falsifiable half of the P-DIAG.1 EXIT criterion:
 the CI ``docs:diagrams`` render job is a SYNTAX gate only; the
@@ -45,10 +51,74 @@ MODULE_RE = re.compile(r"\bgenesis/[a-z_/]+\.py\b")
 PACKAGE_RE = re.compile(r"\bgenesis/[a-z_]+(?=[^./a-z_]|$)")
 INCLUDE_RE = re.compile(r"from genesis\.api\.([a-z_]+) import router")
 
+#: Check 3 — function/class claims the diagrams make, pinned to code.
+#: module path (under backend/src/) -> names that must be defined via
+#: ``def`` / ``async def`` / ``class`` in that file.
+PINNED_CLAIMS: dict[str, tuple[str, ...]] = {
+    # Diagram 19 — corrections (P13.15 !46, issue #21 !51, issue #24 !52)
+    "genesis/application/corrections.py": (
+        "post_misc_fee",
+        "request_repayment_adjustment",
+        "approve_repayment_adjustment",
+        "reject_repayment_adjustment",
+        "request_write_off",
+        "cast_write_off_vote",
+        "void_write_off",
+        "post_write_off",
+        "record_recovery_receipt",
+    ),
+    "genesis/application/ledger.py": (
+        "post_fee",
+        "post_reversal",
+        "post_loan_write_off",
+        "post_loan_recovery",
+        "disburse_loan",
+    ),
+    "genesis/application/guarantees.py": (
+        "release_guarantees_for_loan",
+        "live_pledged_total",
+    ),
+    # Diagram 20 — recovery cases (P13.16 !47) + the diagram-7 seam
+    "genesis/application/recovery.py": (
+        "open_recovery_case",
+        "assign_recovery_case",
+        "add_recovery_note",
+        "list_worklist",
+        "run_recovery_close_pass",
+    ),
+    "genesis/domain/recovery.py": ("transition",),
+    "genesis/application/arrears.py": ("run_arrears_for_tenant",),
+    # Cross-cutting seams cited by diagram 0 and the L1/L2 files
+    "genesis/api/idempotency.py": ("IdempotencyMiddleware",),
+    "genesis/infrastructure/tenancy.py": (
+        "tenant_session",
+        "tenant_snapshot_session",
+    ),
+}
+
 
 def fail(msg: str) -> None:
     print(f"FAIL: {msg}", file=sys.stderr)
     sys.exit(1)
+
+
+def check_pinned_claims() -> int:
+    """Check 3: return the number of verified claims; fail on a miss."""
+    verified = 0
+    for module, names in PINNED_CLAIMS.items():
+        path = BACKEND_SRC / module
+        if not path.is_file():
+            fail(f"PINNED_CLAIMS names a module that does not exist: {module}")
+        text = path.read_text(encoding="utf-8")
+        for name in names:
+            if not re.search(
+                rf"^\s*(?:async\s+def|def|class)\s+{re.escape(name)}\b",
+                text,
+                re.MULTILINE,
+            ):
+                fail(f"claim not found in code: {module} does not define {name!r}")
+            verified += 1
+    return verified
 
 
 def main() -> None:
@@ -100,10 +170,14 @@ def main() -> None:
             "L3 diagrams cite router modules NOT wired in app.py:\n  " + "\n  ".join(invented)
         )
 
+    # --- Check 3: pinned function/class claims --------------------------
+    verified_claims = check_pinned_claims()
+
     print(
         f"OK: {len(cited_modules)} cited module paths exist; "
         f"{len(wired)} routers wired in app.py all have L3 diagrams; "
-        "no invented routers."
+        f"no invented routers; {verified_claims} pinned function claims "
+        "verified."
     )
 
 

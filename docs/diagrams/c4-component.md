@@ -1,8 +1,11 @@
 <!--
   P-DIAG.1 — C4 Level 3: Components, one diagram per API router group (as-built)
   Authored against main @ 08541b860f1445b16c342c39b6606d86b9dbeb17
+  Reconciled to main @ 8f46aa54250ff1a066af423924f3eb54a9c72fb7
+  (P-DIAG drift MR: !46 corrections + !47 recovery routers added as
+  diagrams 19/20; the arrears close-pass seam added to diagram 7).
   Router groups enumerated from genesis/api/app.py create_app at the
-  authoring SHA (18 include_router calls). Every box names a REAL
+  reconciliation SHA (20 include_router calls). Every box names a REAL
   module: node labels carry the genesis/... path; the checked-in
   spot-check script `c4-spot-check.py` asserts (a) every cited module
   path exists and (b) every router wired in app.py has a diagram here.
@@ -26,7 +29,7 @@ Cross-cutting application modules (`audit.py`, `outbox.py`,
 `pagination.py`, `batch_runner.py`) appear only where they carry the
 flow being mapped.
 
-## 0. Common request seam (shared by all 18 router groups)
+## 0. Common request seam (shared by all 20 router groups)
 
 ```mermaid
 flowchart LR
@@ -34,7 +37,7 @@ flowchart LR
     IDEM --> AUTH["genesis/application/auth.py<br/>AuthContext from JWT"]
     AUTH --> PERM["genesis/api/authz.py<br/>RequirePermission — deny by default,<br/>P4 matrix via genesis/domain/rbac.py"]
     PERM --> TS["genesis/infrastructure/tenancy.py<br/>tenant_session — SET LOCAL app.tenant_id"]
-    TS --> H["router handler (diagrams 1-18)"]
+    TS --> H["router handler (diagrams 1-20)"]
 ```
 
 ## 1. health — `genesis/api/health.py`
@@ -116,6 +119,7 @@ flowchart LR
     S7B --> D7B["genesis/domain/lending.py<br/>inst(), classify(), provisioning"]
     S7C --> D7B
     S7C --> D7C["genesis/domain/tenant_config.py<br/>penalty config shape"]
+    S7C --> S7D["genesis/application/recovery.py<br/>run_recovery_close_pass — P13.16 auto-close<br/>after the classify pass (lock-order.md §3 recovery rows)"]
 ```
 
 ## 8. transactions — `genesis/api/transactions.py`
@@ -220,14 +224,47 @@ flowchart LR
     S18 --> BR18["genesis/application/batch_runner.py"]
 ```
 
+## 19. corrections (fees / maker-checker adjustments / write-offs / recovery receipts) — `genesis/api/corrections.py`
+
+P13.15 (!46) + issue #21 (!51) + issue #24 (!52). Every route carries
+the DEDICATED corrections-module permissions (`corrections:view/
+create/approve`) — never generic `transactions:edit`.
+
+```mermaid
+flowchart LR
+    R19["genesis/api/corrections.py<br/>POST /corrections/fees,<br/>/corrections/repayment-adjustments + approval|reject,<br/>/corrections/write-offs + votes|void|posting|recoveries"] --> S19["genesis/application/corrections.py<br/>post_misc_fee; request/approve/reject_repayment_adjustment<br/>(two-phase maker-checker, snapshot-bind-reverify);<br/>request/vote/void/post_write_off (committee quorum,<br/>write-once snapshot); record_recovery_receipt<br/>(locks: lock-order.md E20-E24 + §3 single-node rows)"]
+    S19 --> D19A["genesis/domain/lending.py<br/>loan_transition (the ONE closed-to-active reopen branch;<br/>terminal written_off), NPL_CLASSES prudential gate"]
+    S19 --> D19B["genesis/domain/committee.py<br/>decide - write-off quorum"]
+    S19 --> D19C["genesis/domain/rbac.py<br/>ASSURANCE_ROLES - checker exclusion (SoD)"]
+    S19 --> S19B["genesis/application/ledger.py<br/>post_fee, post_reversal (storno),<br/>post_loan_write_off, post_loan_recovery"]
+    S19 --> S19C["genesis/application/guarantees.py<br/>release_guarantees_for_loan<br/>(full-recovery discharge only)"]
+    S19 --> S19D["genesis/application/tenant_settings.py<br/>fee amounts + enforce_authority_band from config"]
+    S19 --> S19E["genesis/application/transactions.py<br/>_require_member - the P13.13 status gatekeeper"]
+```
+
+## 20. recovery cases — `genesis/api/recovery.py`
+
+P13.16 (!47). Workflow state only — no money moves through this
+router; routes carry `loan_book:view/create/edit`.
+
+```mermaid
+flowchart LR
+    R20["genesis/api/recovery.py<br/>POST /recovery-cases, GET worklist,<br/>/recovery-cases/id assign|notes"] --> S20["genesis/application/recovery.py<br/>open_recovery_case (NPL check under the loan lock),<br/>assign_recovery_case, add_recovery_note (append-only),<br/>list_worklist (keyset by days-past-due),<br/>run_recovery_close_pass (arrears-job seam, diagram 7)<br/>(locks: lock-order.md §3 recovery single-node rows)"]
+    S20 --> D20A["genesis/domain/recovery.py<br/>transition - the single case-status gatekeeper"]
+    S20 --> D20B["genesis/domain/lending.py<br/>NPL_CLASSES - open gate + close-pass cure test"]
+    S20 --> D20C["genesis/domain/rbac.py<br/>ASSURANCE_ROLES - assignee exclusion"]
+    S20 --> S20B["genesis/application/rbac.py<br/>actor_access - assignee grant check"]
+    S20 --> BR20["genesis/application/batch_runner.py<br/>close pass batches"]
+```
+
 ## Verification
 
-- **Router completeness**: the 18 groups above are exactly the
+- **Router completeness**: the 20 groups above are exactly the
   `include_router` calls in `genesis/api/app.py` `create_app` at the
-  authoring SHA (health, auth, members, member_kyc, member_exits,
+  reconciliation SHA (health, auth, members, member_kyc, member_exits,
   loans, loan_book, transactions, dashboard, dividends, reports,
   tenant_settings, accounting_periods, me, access, users, audit_log,
-  branches).
+  branches, corrections, recovery).
 - **No invented boxes**: run `python3 docs/diagrams/c4-spot-check.py`
   from the repo root — it fails if any cited `genesis/...` module path
   does not exist, or if a router wired in `app.py` has no diagram
