@@ -483,7 +483,7 @@ def test_trial_balance_historical_as_of_equals_full_scan() -> None:
         async def both(
             as_of: datetime,
         ) -> tuple[dict[str, tuple[Decimal, Decimal]], dict[str, tuple[Decimal, Decimal]]]:
-            def fold(rows: list) -> dict[str, tuple[Decimal, Decimal]]:  # type: ignore[type-arg]
+            def fold(rows: list[Any]) -> dict[str, tuple[Decimal, Decimal]]:
                 return {str(r[0]): (Decimal(str(r[1])), Decimal(str(r[2]))) for r in rows}
 
             async with tenant_session(factory(), tid) as session:
