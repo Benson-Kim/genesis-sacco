@@ -145,6 +145,7 @@ from genesis.domain.ledger import Account, Channel
 from genesis.domain.lending import NPL_CLASSES, LoanClass, LoanStatus, loan_transition
 from genesis.domain.members import MemberStatus, MoneyOperation
 from genesis.domain.money import ZERO, to_cents
+from genesis.domain.rbac import ASSURANCE_ROLES
 from genesis.domain.tenant_config import SETTINGS_REGISTRY
 from genesis.errors import ConflictError, ForbiddenError, InvalidInputError, NotFoundError
 
