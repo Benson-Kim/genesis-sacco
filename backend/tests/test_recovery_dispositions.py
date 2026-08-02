@@ -372,9 +372,7 @@ def test_fm5_exactly_one_outcome_note_at_or_after_closure() -> None:
                 headers=_headers(token),
             )
             assert res.status_code == 409, res.text
-            res = await client.get(
-                f"/recovery-cases/{case['id']}/notes", headers=_headers(token)
-            )
+            res = await client.get(f"/recovery-cases/{case['id']}/notes", headers=_headers(token))
             assert res.status_code == 200
             flags = [item["is_outcome"] for item in res.json()["items"]]
             assert flags.count(True) == 1

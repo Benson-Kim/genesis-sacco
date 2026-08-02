@@ -80,10 +80,14 @@ def test_status_partitions_and_staff_targets_pinned() -> None:
         for target in RecoveryCaseStatus:
             with pytest.raises(InvalidRecoveryTransitionError):
                 transition(status, target)
-    assert set(RecoveryCaseStatus) - {
-        RecoveryCaseStatus.CLOSED_CURED,
-        RecoveryCaseStatus.CLOSED_WRITTEN_OFF,
-    } == STAFF_DISPOSITION_TARGETS
+    assert (
+        set(RecoveryCaseStatus)
+        - {
+            RecoveryCaseStatus.CLOSED_CURED,
+            RecoveryCaseStatus.CLOSED_WRITTEN_OFF,
+        }
+        == STAFF_DISPOSITION_TARGETS
+    )
 
 
 def test_npl_classes_pinned_to_classify() -> None:

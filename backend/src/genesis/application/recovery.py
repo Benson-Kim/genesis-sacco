@@ -539,9 +539,7 @@ async def set_case_disposition(
     except InvalidRecoveryTransitionError as exc:
         # Workflow states carry no figures — naming them stays within
         # least disclosure (rule 7).
-        raise ConflictError(
-            f"recovery case cannot move {current.value} -> {target.value}"
-        ) from exc
+        raise ConflictError(f"recovery case cannot move {current.value} -> {target.value}") from exc
     result = cast(
         CursorResult[Any],
         await session.execute(
