@@ -56,6 +56,9 @@ TENANT_TABLES = [
     "repayment_adjustments",
     "loan_write_offs",
     "loan_write_off_votes",
+    # P13.17(a): month-end portfolio figures (NPL balances) are the
+    # regulator-facing money history, so RLS is release-blocking.
+    "portfolio_month_snapshots",
     "outbox_events",
     "audit_log",
     "idempotency_keys",

@@ -36,6 +36,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from genesis.application import dividends as dividends_service
 from genesis.application import member_exits as exits_service
 from genesis.application.members import get_member
+from genesis.application.portfolio_reconstruction import (
+    MonthPortfolio,
+    npl_trend_month_ends,
+    reconstruct_month,
+)
+from genesis.application.portfolio_snapshots import SNAPSHOT_LOOKUP_SQL
 from genesis.domain.documents import Cell
 from genesis.domain.ledger import (
     DEBIT_NORMAL_CLASSES,
@@ -542,80 +548,10 @@ async def _build_disbursement_collections(
 # NPL trend (monthly series, prototype bars)
 # ---------------------------------------------------------------------------
 
-#: One month-end snapshot, reconstructed from the append-only record
-#: (gate 1.5: never from current mutable state):
-#:   * outstanding principal per loan = disbursed principal minus the
-#:     loans.receivable credit legs of its repayments up to the cutoff
-#:     (ledger-reconstructed, the deposit-interest ADB precedent);
-#:   * days past due = cutoff minus the earliest installment whose
-#:     cumulative schedule due exceeds the cash repaid by the cutoff;
-#:   * NPL = days past due > 90 (domain classify threshold:
-#:     substandard and worse).
-#: Loans closed on or before the cutoff are excluded (their terminal
-#: postings — repayment closure or P12 exit set-off — zeroed them);
-#: written_off is excluded pending a write-off flow (none exists yet).
-NPL_TREND_MONTH_SQL = """
-WITH paid AS (
-    SELECT r.loan_id, COALESCE(SUM(r.amount), 0) AS paid
-    FROM repayments r
-    JOIN transactions t ON t.id = r.transaction_id AND t.tenant_id = r.tenant_id
-    WHERE r.tenant_id = CAST(:tid AS uuid) AND t.occurred_at < :d_next
-    GROUP BY r.loan_id
-),
-principal_paid AS (
-    SELECT r.loan_id, COALESCE(SUM(le.amount), 0) AS principal_paid
-    FROM ledger_entries le
-    JOIN repayments r
-        ON r.transaction_id = le.transaction_id AND r.tenant_id = le.tenant_id
-    JOIN transactions t ON t.id = le.transaction_id AND t.tenant_id = le.tenant_id
-    WHERE le.tenant_id = CAST(:tid AS uuid)
-      AND le.account = :receivable_account AND le.side = 'credit'
-      AND t.occurred_at < :d_next
-    GROUP BY r.loan_id
-),
-sched AS (
-    SELECT s.loan_id, s.due_date,
-           SUM(s.total_due) OVER (
-               PARTITION BY s.loan_id ORDER BY s.installment_no
-           ) AS cum_due
-    FROM loan_schedules s
-    WHERE s.tenant_id = CAST(:tid AS uuid) AND s.due_date <= :d_date
-),
-first_unmet AS (
-    SELECT sc.loan_id, MIN(sc.due_date) AS due
-    FROM sched sc
-    LEFT JOIN paid p ON p.loan_id = sc.loan_id
-    WHERE sc.cum_due > COALESCE(p.paid, 0)
-    GROUP BY sc.loan_id
-)
-SELECT
-    COUNT(*) AS loans,
-    COALESCE(SUM(l.principal - COALESCE(pp.principal_paid, 0)), 0) AS gross,
-    COUNT(*) FILTER (
-        WHERE fu.due IS NOT NULL AND (:d_date - fu.due) > 90
-    ) AS npl_loans,
-    COALESCE(SUM(l.principal - COALESCE(pp.principal_paid, 0)) FILTER (
-        WHERE fu.due IS NOT NULL AND (:d_date - fu.due) > 90
-    ), 0) AS npl_balance
-FROM loans l
-LEFT JOIN principal_paid pp ON pp.loan_id = l.id
-LEFT JOIN first_unmet fu ON fu.loan_id = l.id
-WHERE l.tenant_id = CAST(:tid AS uuid)
-  AND l.status <> 'written_off'
-  AND l.disbursed_at < :d_next
-  AND (l.closed_at IS NULL OR l.closed_at >= :d_next)
-"""
-
-
-def npl_trend_month_ends(as_of: datetime, months: int) -> list[date]:
-    """Month-end cutoffs, oldest first; the current month cuts at as_of."""
-    ends: list[date] = [as_of.astimezone(UTC).date()]
-    cursor = ends[0].replace(day=1)
-    for _ in range(months - 1):
-        cursor = (cursor - timedelta(days=1)).replace(day=1)
-        ends.append((cursor + timedelta(days=31)).replace(day=1) - timedelta(days=1))
-    ends.reverse()
-    return ends
+#: The month reconstruction (NPL_TREND_MONTH_SQL) and the month-end
+#: walk moved to application/portfolio_reconstruction.py in P13.17a —
+#: the single source of truth shared with the DSA-1 snapshot writer
+#: (gate 1.1: the math is never dual-maintained).
 
 
 async def _build_npl_trend(
@@ -624,27 +560,59 @@ async def _build_npl_trend(
     filters: ExportFilters,
     as_of: datetime,
 ) -> ReportQuery:
+    """Snapshots + current month only (P13.17a / DSA-1).
+
+    Fully elapsed months are served from portfolio_month_snapshots —
+    written once at close_period or by the backfill job with the SAME
+    reconstruction statement this builder used to run per month, so
+    the rendered figures are unchanged to the cent (FM1 equality
+    property, tests/test_p1317_portfolio_snapshots.py). A month whose
+    snapshot does not exist yet (backfill not run, period never
+    closed) falls back to the reconstruction — identical output,
+    documented cost. Only the current, incomplete month is always
+    reconstructed (its cutoff is the as-of instant, never a stored
+    figure).
+    """
     months = get_settings().export_npl_trend_months
-    rows: list[tuple[Cell, ...]] = []
-    for month_end in npl_trend_month_ends(as_of, months):
-        cutoff = datetime(month_end.year, month_end.month, month_end.day, tzinfo=UTC)
-        d_next = cutoff + timedelta(days=1)
-        raw = (
+    month_ends = npl_trend_month_ends(as_of, months)
+    # Every entry except the last is a fully elapsed calendar month end
+    # (the walk puts the as-of day last); only those may be served from
+    # snapshots.
+    complete = [end for end in month_ends[:-1] if end < as_of.astimezone(UTC).date()]
+    snapshots: dict[date, MonthPortfolio] = {}
+    if complete:
+        raw_rows = (
             await session.execute(
-                text(NPL_TREND_MONTH_SQL),
-                {
-                    "tid": str(tenant_id),
-                    "d_next": min(d_next, as_of + timedelta(microseconds=1)),
-                    "d_date": month_end,
-                    "receivable_account": "loans.receivable",
-                },
+                text(SNAPSHOT_LOOKUP_SQL),
+                {"tid": str(tenant_id), "months": complete},
             )
-        ).one()
-        gross = Decimal(str(raw[1]))
-        npl_balance = Decimal(str(raw[3]))
+        ).all()
+        snapshots = {
+            row[0]: MonthPortfolio(
+                month_end=row[0],
+                loans=int(row[1]),
+                gross_outstanding=Decimal(str(row[2])),
+                npl_loans=int(row[3]),
+                npl_balance=Decimal(str(row[4])),
+            )
+            for row in raw_rows
+        }
+    rows: list[tuple[Cell, ...]] = []
+    for month_end in month_ends:
+        month = snapshots.get(month_end)
+        if month is None:
+            month = await reconstruct_month(session, tenant_id, month_end, as_of=as_of)
+        gross = month.gross_outstanding
+        npl_balance = month.npl_balance
         ratio = to_cents(npl_balance * Decimal("100") / gross) if gross > ZERO else Decimal("0.00")
         rows.append(
-            (f"{month_end.year:04d}-{month_end.month:02d}", gross, npl_balance, int(raw[2]), ratio)
+            (
+                f"{month_end.year:04d}-{month_end.month:02d}",
+                gross,
+                npl_balance,
+                month.npl_loans,
+                ratio,
+            )
         )
     return _memory_query(rows)
 

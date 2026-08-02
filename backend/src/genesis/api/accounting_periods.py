@@ -23,6 +23,7 @@ rejects anything else with a 422.
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -30,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from genesis.api.authz import RequirePermission
 from genesis.application import accounting_periods as periods_service
+from genesis.application import portfolio_snapshots as snapshots_service
 from genesis.application.auth import AuthContext
 from genesis.domain.rbac import Action, Module
 from genesis.infrastructure.db import get_sessionmaker
@@ -37,6 +39,11 @@ from genesis.infrastructure.tenancy import tenant_session
 from genesis.settings import get_settings
 
 router = APIRouter(prefix="/accounting-periods", tags=["accounting-periods"])
+
+#: One-off operations jobs (the POST /jobs/arrears convention): no
+#: /accounting-periods prefix so the paths sit beside the other job
+#: routes.
+jobs_router = APIRouter(tags=["accounting-periods"])
 
 _view = RequirePermission(Module.TRANSACTIONS, Action.VIEW)
 _approve = RequirePermission(Module.TRANSACTIONS, Action.APPROVE)
@@ -102,3 +109,47 @@ async def list_periods(
             session, ctx.tenant_id, cursor=cursor, limit=limit
         )
     return PeriodListResponse(items=[_out(r) for r in items], next_cursor=next_cursor)
+
+
+class SnapshotBackfillBody(BaseModel):
+    """Deliberately empty (P13.17a): the month worklist, cutoffs and
+    batching are ALL server-resolved (v1.1 rule 1 + the insider rule —
+    no caller-supplied dates or period identifiers anywhere);
+    extra="forbid" makes any smuggled field a 422."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SnapshotBackfillOut(BaseModel):
+    months_considered: int
+    written: int
+    batches: int
+
+
+@jobs_router.post("/jobs/portfolio-snapshots")
+async def run_portfolio_snapshot_backfill(
+    body: SnapshotBackfillBody, ctx: ApproveCtx
+) -> SnapshotBackfillOut:
+    """Backfill month-end portfolio snapshots (P13.17a / DSA-1).
+
+    Permission (P4 matrix, decided): transactions x APPROVE — the
+    close-period authority. Snapshots freeze the month-end figures the
+    NPL-trend export serves to auditors, exactly the control
+    close_period exercises, so the same approve holders (System Admin,
+    Branch Manager) own it — never the posting roles.
+
+    Batched through the shared batch runner (one month per short
+    transaction); a completed re-run is a lock-free no-op (anti-join
+    on the claim key, v1.1 rule 8) proven by side-effect counts.
+    """
+    factory = get_sessionmaker(get_settings().database_url)
+    result = await snapshots_service.run_snapshot_backfill_for_tenant(
+        partial(tenant_session, factory, ctx.tenant_id),
+        ctx.tenant_id,
+        ctx.user_id,
+    )
+    return SnapshotBackfillOut(
+        months_considered=result.months_considered,
+        written=result.written,
+        batches=result.batches,
+    )
