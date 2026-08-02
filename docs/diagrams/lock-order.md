@@ -422,17 +422,22 @@ from MR prose; re-derived for the P13.13/P13.9 as-built pass at
 
 ```sh
 cd backend/src
-grep -rniE "for update"            --include='*.py' . | wc -l   # 96 (was 85)
-grep -rniE "for share"             --include='*.py' . | wc -l   # 15 (was 12)
-grep -rniE "skip locked"           --include='*.py' . | wc -l   # 25 (was 18)
+grep -rniE "for update"            --include='*.py' . | wc -l   # 114 (was 96)
+grep -rniE "for share"             --include='*.py' . | wc -l   # 23 (was 15)
+grep -rniE "skip locked"           --include='*.py' . | wc -l   # 29 (was 25)
 grep -rniE "for no key update"     --include='*.py' . | wc -l   # 0
-grep -rniE "advisory"              --include='*.py' . | wc -l   # 32 (was 28)
+grep -rniE "advisory"              --include='*.py' . | wc -l   # 34 (was 32)
 grep -rniE "for update|for share|for no key update|skip locked|advisory" \
-                                   --include='*.py' . | wc -l   # 148 (was 130)
+                                   --include='*.py' . | wc -l   # 176 (was 148)
 ```
 
-The 148 matches include comments/docstrings restating the chains; the
-**56 executable SQL lock sites** (lines inside `text()` literals
+(Counts re-derived on the !47 combined state — the post-!46 merge of
+main into the P13.16 branch; the "was" figures are the P13.16
+pre-merge branch. The deltas are !44/P13.17e's and !46/P13.15's code
+joining the tree.)
+
+The 176 matches include comments/docstrings restating the chains; the
+**65 executable SQL lock sites** (lines inside `text()` literals
 matching `FOR UPDATE|FOR SHARE|SKIP LOCKED|pg_advisory`) are what §3
 catalogues — every one of them maps to an edge, a single-node locker,
 or the advisory tier above. Derivation of the delta since the !35
@@ -447,6 +452,17 @@ the !45 RF3 debt):
     also parameterised the paying scan's lock literal into a fragment
     without adding a site (the !32 precedent). **Zero new edges.**
   * **!37 added zero lock sites** (worker-level error isolation only).
+  * **!44 (P13.17e) added one site** — the retention purge's
+    `FOR UPDATE SKIP LOCKED` driving subquery
+    (`outbox_worker.py:purge_dispatched` L212), a §3 single-node
+    locker (see the P13.17e delta below). **Zero new edges.**
+  * **!46 (P13.15) added eight sites**, all in
+    `application/corrections.py` (verified per-line on the combined
+    state: L461/476/495/870/982/1102/1185/1201), catalogued as the
+    E20–E22 edges plus the §3 single-node rows (write-off request =
+    LOANS alone; votes/voids = WOFF anchor alone; misc fee = member
+    FOR SHARE then the advisory posting tier). **Three new
+    strictly-downward edges (E20–E22), landed first-class by !46.**
   * **P13.16 (!47) added four sites**, all single-node (§3, §7):
     open (loans FOR UPDATE), assign + note (recovery_cases FOR
     UPDATE), close pass (recovery_cases `FOR UPDATE OF c SKIP
@@ -465,13 +481,11 @@ catalogued as a §3 single-node locker with its §5 re-run path. Grep
 deltas from this change: +2 `for update` lines, +4 `skip locked`
 lines (the extras are docstrings/comments restating the chain); the
 set-based lease UPDATE and the SECURITY DEFINER discovery functions
-take no locks and add no sites. Note honestly: the totals printed
-above predate !36/!37 (merged after the `5922b924` re-verification)
-and current main greps higher (88/15/21/32 = 140 at `08541b8`); the
-!36 disposition scan is an uncatalogued root-tier single-node locker
-per !36's own MR statement. A full re-derivation pass over !36/!37 is
-owed by the next docs as-built update, not this backend MR — this MR's
-own delta is fully catalogued.
+take no locks and add no sites. (The re-derivation debt this
+paragraph originally recorded — totals predating !36/!37 — was
+settled by the !47 §8 refresh above: the !36 disposition scan and
+this delta's +1 purge site are now catalogued in the derivation
+ledger and included in the printed totals.)
 
 ## 9. Cross-check: MR prose vs code-derived DAG (P-DIAG.0 step 3)
 
