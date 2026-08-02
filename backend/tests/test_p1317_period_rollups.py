@@ -528,7 +528,7 @@ def test_trial_balance_historical_as_of_equals_full_scan() -> None:
             assert rolled == full, f"trial balance diverged from the full scan at {label}"
 
         # Hand pins (never captured from the implementation):
-        # (i)/(i')/(iii): only p1's deposit is <= as_of -> exactly p1's
+        # (i)/(iii): only p1's deposit is <= as_of -> exactly p1's
         # totals; (ii): the empty book.
         p1_totals = {
             "cash.mpesa": (Decimal("15000.00"), Decimal("0.00")),
@@ -537,16 +537,23 @@ def test_trial_balance_historical_as_of_equals_full_scan() -> None:
         by_label = dict(probes)
         for label in (
             "(i) inside rolled p2",
-            "(i') intra-day on p2's period-end day",
             "(iii) UTC midnight of p1_end + 1",
         ):
             rolled, _ = await both(by_label[label])
             assert rolled == p1_totals, f"hand oracle mismatch at {label}"
         rolled_empty, _ = await both(by_label["(ii) before every rolled month"])
         assert rolled_empty == {}, "a pre-history as_of must render an empty book"
-        # (i') additionally pins the strict >: p2's 18:00 period-end-day
-        # deposit is NOT included at noon of that day — with >= the
-        # rolled CTE would add p2's full totals including it.
+        # (i') pins the strict >: at noon of p2's period-end day the
+        # day-6 withdrawal IS <= as_of but the 18:00 period-end-day
+        # deposit is NOT — with >= the rolled CTE would add p2's full
+        # totals including it. Hand oracle: p1 deposit + the 2000.00
+        # withdrawal only.
+        rolled_mid, _ = await both(by_label["(i') intra-day on p2's period-end day"])
+        assert rolled_mid == {
+            "cash.mpesa": (Decimal("15000.00"), Decimal("0.00")),
+            "cash.bank": (Decimal("0.00"), Decimal("2000.00")),
+            "member.deposits": (Decimal("2000.00"), Decimal("15000.00")),
+        }
         # (iii'): from p2_end+1 midnight, p2 is fully covered.
         rolled_b, _ = await both(by_label["(iii') UTC midnight of p2_end + 1"])
         assert rolled_b == {
