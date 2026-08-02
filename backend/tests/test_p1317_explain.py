@@ -28,6 +28,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_helpers import factory
 from export_helpers import seed_actor
+from genesis.application.period_rollups import (
+    MEMBER_ANCHOR_SQL,
+    TRIAL_BALANCE_ROLLUP_SQL,
+)
 from genesis.application.portfolio_snapshots import SNAPSHOT_LOOKUP_SQL
 from genesis.infrastructure.tenancy import tenant_session
 
@@ -61,6 +65,18 @@ def test_p1317_queries_are_index_backed() -> None:
                 {"tid": str(tid), "months": months},
             )
             sections.append(("DSA-1 snapshot lookup", snapshot_lookup))
+            trial_rollup = await _explain(
+                session,
+                TRIAL_BALANCE_ROLLUP_SQL,
+                {"tid": str(tid), "as_of": now},
+            )
+            sections.append(("DSA-2 trial balance (rollups + live remainder)", trial_rollup))
+            anchor = await _explain(
+                session,
+                MEMBER_ANCHOR_SQL,
+                {"tid": str(tid), "mid": str(tid), "before": now.date()},
+            )
+            sections.append(("DSA-5 statement opening anchor", anchor))
 
         OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         OUT_PATH.write_text(
@@ -71,5 +87,9 @@ def test_p1317_queries_are_index_backed() -> None:
         # The lookup must be served by the UNIQUE (tenant_id,
         # month_end) index, never a (forced-off) seq scan.
         assert "uq_portfolio_snapshots_month" in snapshot_lookup
+        # The rolled CTE scans its UNIQUE index; the anchor probe walks
+        # idx_member_period_balances_anchor backwards.
+        assert "uq_account_period_balances" in trial_rollup
+        assert "idx_member_period_balances_anchor" in anchor
 
     asyncio.run(run())

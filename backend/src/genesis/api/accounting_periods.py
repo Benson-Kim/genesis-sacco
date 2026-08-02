@@ -153,3 +153,47 @@ async def run_portfolio_snapshot_backfill(
         written=result.written,
         batches=result.batches,
     )
+
+
+class RollupBackfillBody(BaseModel):
+    """Deliberately empty (P13.17b): the worklist is the server's own
+    closed-but-unrolled period set — no caller-supplied period
+    identifiers anywhere (v1.1 rule 1 + the insider rule);
+    extra="forbid" makes any smuggled field a 422."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RollupBackfillOut(BaseModel):
+    periods_rolled: int
+    accounts_written: int
+    members_written: int
+    batches: int
+
+
+@jobs_router.post("/jobs/period-rollups")
+async def run_period_rollup_backfill(
+    body: RollupBackfillBody, ctx: ApproveCtx
+) -> RollupBackfillOut:
+    """Backfill rollups for periods closed before 0028 (P13.17b / DSA-2/5).
+
+    Permission (P4 matrix, decided): transactions x APPROVE — the
+    close-period authority; rollups ARE the closed-period figures the
+    trial balance serves, so the posting roles must not own them.
+
+    One period per short transaction, claimed FOR UPDATE SKIP LOCKED
+    through the shared batch runner; a completed re-run scans zero
+    rows and writes nothing (lock-free no-op by side-effect counts).
+    """
+    factory = get_sessionmaker(get_settings().database_url)
+    result = await rollups_service.run_rollup_backfill_for_tenant(
+        partial(tenant_session, factory, ctx.tenant_id),
+        ctx.tenant_id,
+        ctx.user_id,
+    )
+    return RollupBackfillOut(
+        periods_rolled=result.periods_rolled,
+        accounts_written=result.accounts_written,
+        members_written=result.members_written,
+        batches=result.batches,
+    )

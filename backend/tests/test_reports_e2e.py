@@ -211,9 +211,13 @@ def test_trial_balance_balances_with_hand_computed_totals() -> None:
         # Per-account (sorted) and the grand total (DR == CR == 22000).
         assert rows[0] == ["Account", "Debits", "Credits"]
         assert rows[1] == ["cash.bank", "5000.00", "2000.00"]
-        assert rows[2] == ["cash.mpesa", "15000.00", "0"]
+        # Zeroes render as canonical cents since P13.17(b) quantized
+        # the builder's cells (values unchanged, formatting only —
+        # rendering is now identical whether an account was served by
+        # the rolled CTE or the live scan).
+        assert rows[2] == ["cash.mpesa", "15000.00", "0.00"]
         assert rows[3] == ["member.deposits", "2000.00", "15000.00"]
-        assert rows[4] == ["member.shares", "0", "5000.00"]
+        assert rows[4] == ["member.shares", "0.00", "5000.00"]
         assert rows[5] == ["TOTAL", "22000.00", "22000.00"]
         assert len(rows) == 6
 

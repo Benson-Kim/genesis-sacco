@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application.audit import record_audit
 from genesis.application.outbox import enqueue_event
+from genesis.application.period_rollups import write_period_rollups
 from genesis.application.portfolio_snapshots import write_month_snapshot
 from genesis.errors import ConflictError, InvalidInputError
 
@@ -194,6 +195,23 @@ async def close_period(
     # snapshot is never trusted, never self-healed. No row locks are
     # taken (lock-order.md: close_period stays advisory-only + claims).
     await write_month_snapshot(session, tenant_id, actor_id, period_end, source="close_period")
+
+    # P13.17(b): the period's per-account rollups and member balances
+    # are written in the SAME transaction — the 0012 trigger freezes
+    # the month the instant the close commits, so the rollups are
+    # immutable facts. The writer claims via ON CONFLICT, verifies the
+    # stored set equals the reconstruction (409 loudly on ANY
+    # divergence — FM2, never self-healed) and sets the write-once
+    # rollup_at marker that arms the DB-level late-insert fence.
+    await write_period_rollups(
+        session,
+        tenant_id,
+        actor_id,
+        period_id=period_id,
+        period_start=period_start,
+        period_end=period_end,
+        source="close_period",
+    )
 
     await record_audit(
         session,

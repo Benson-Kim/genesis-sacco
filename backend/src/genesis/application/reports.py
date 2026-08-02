@@ -36,6 +36,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from genesis.application import dividends as dividends_service
 from genesis.application import member_exits as exits_service
 from genesis.application.members import get_member
+from genesis.application.period_rollups import (
+    TRIAL_BALANCE_ROLLUP_SQL,
+    account_activity_sql,
+    member_balance_before,
+    member_movement_sql,
+)
 from genesis.application.portfolio_reconstruction import (
     MonthPortfolio,
     npl_trend_month_ends,
@@ -267,21 +273,13 @@ def member_statement_opening_sql(*, with_from: bool) -> str:
 
     Grouped by (type, is_reversal) so the signed direction is applied
     via the P11 domain single source of truth (member_direction) in
-    Python — the DR/CR convention is never duplicated in SQL.
+    Python — the DR/CR convention is never duplicated in SQL. Since
+    P13.17(b) this delegates to period_rollups.member_movement_sql
+    (byte-identical output for these configurations), the SAME
+    statement the DSA-5 rollup writer and the anchored opening run —
+    no dual-maintained math (gate 1.1).
     """
-    clauses = [
-        "tenant_id = CAST(:tid AS uuid)",
-        "member_id = CAST(:mid AS uuid)",
-        "occurred_at <= :as_of",
-    ]
-    if with_from:
-        clauses.append("occurred_at < :d_from")
-    return (
-        "SELECT type, (reversal_of_id IS NOT NULL) AS is_reversal, "  # noqa: S608
-        "COALESCE(SUM(amount), 0) "
-        f"FROM transactions WHERE {' AND '.join(clauses)} "
-        "GROUP BY type, (reversal_of_id IS NOT NULL)"
-    )
+    return member_movement_sql(with_from=with_from, with_start=False)
 
 
 async def _build_member_statement(
@@ -297,31 +295,34 @@ async def _build_member_statement(
 
     opening = ZERO
     if filters.date_from is not None:
-        rows = (
-            await session.execute(
-                text(member_statement_opening_sql(with_from=True)),
-                {
-                    "tid": str(tenant_id),
-                    "mid": str(member_id),
-                    "as_of": as_of,
-                    "d_from": filters.date_from,
-                },
-            )
-        ).all()
-        for type_raw, is_reversal, amount_raw in rows:
-            direction = member_direction(TxnType(str(type_raw)), is_reversal=bool(is_reversal))
-            amount = Decimal(str(amount_raw))
-            opening += amount if direction is Side.CREDIT else -amount
+        # P13.17(b) / DSA-5: anchored on the member's latest rolled
+        # period when one exists (delta scan only), else the P13
+        # full-history scan — same figures either way (FM2 equality
+        # gate, tests/test_p1317_period_rollups.py).
+        opening = await member_balance_before(
+            session,
+            tenant_id,
+            member_id,
+            before=filters.date_from,
+            as_of=as_of,
+        )
 
     params: dict[str, object] = {
         "tid": str(tenant_id),
         "mid": str(member_id),
         "as_of": as_of,
     }
+    # UTC period contract (the !40 R3 convention, extended to the
+    # statement window in P13.17b): bind explicit UTC midnights — a
+    # bare date is promoted to midnight of the SESSION TimeZone, which
+    # would shift the window (and the anchored opening's boundary)
+    # under any non-UTC session. Identical output under UTC sessions.
     if filters.date_from is not None:
-        params["d_from"] = filters.date_from
+        params["d_from"] = datetime.combine(filters.date_from, time.min, tzinfo=UTC)
     if filters.date_to is not None:
-        params["d_to_excl"] = filters.date_to + timedelta(days=1)
+        params["d_to_excl"] = datetime.combine(
+            filters.date_to + timedelta(days=1), time.min, tzinfo=UTC
+        )
 
     async def fetch(cursor: ReportCursor | None, limit: int) -> list[Any]:
         page_params = dict(params)
@@ -371,8 +372,12 @@ async def _build_member_statement(
 # Trial balance
 # ---------------------------------------------------------------------------
 
-#: Aggregate over the append-only ledger as of the export instant.
-#: Bounded by the chart-of-accounts cardinality. Served by
+#: Full-scan aggregate over the append-only ledger as of the export
+#: instant. Since P13.17(b) the builder reads TRIAL_BALANCE_ROLLUP_SQL
+#: (closed rollups + live remainder); this statement is RETAINED as the
+#: reconstruction ORACLE the FM2 equality gate compares against
+#: (tests/test_p1317_period_rollups.py) — it is the pre-existing math,
+#: unchanged. Bounded by the chart-of-accounts cardinality. Served by
 #: idx_ledger_account (tenant_id, account, created_at; 0001) with the
 #: transactions join on its primary key.
 TRIAL_BALANCE_SQL = """
@@ -393,15 +398,26 @@ async def _build_trial_balance(
     filters: ExportFilters,
     as_of: datetime,
 ) -> ReportQuery:
+    """Closed rollups + live remainder (P13.17b / DSA-2): equal to the
+    full scan to the cent (FM2 merge gate) — the live CTE covers every
+    posting not inside a rolled closed period, so tenants without
+    closed periods render exactly as before."""
     raw = (
-        await session.execute(text(TRIAL_BALANCE_SQL), {"tid": str(tenant_id), "as_of": as_of})
+        await session.execute(
+            text(TRIAL_BALANCE_ROLLUP_SQL), {"tid": str(tenant_id), "as_of": as_of}
+        )
     ).all()
     rows: list[tuple[Cell, ...]] = []
     total_debits = ZERO
     total_credits = ZERO
     for account, debits_raw, credits_raw in raw:
-        debits = Decimal(str(debits_raw))
-        credits = Decimal(str(credits_raw))
+        # Canonical cents (P13.17b): a zero coming from the rolled CTE
+        # is numeric '0.00' while the live CTE's integer COALESCE is
+        # '0' — quantizing makes the rendered artifact byte-identical
+        # whichever path served an account (values unchanged; the FM2
+        # equality tests compare the full rendered document).
+        debits = to_cents(Decimal(str(debits_raw)))
+        credits = to_cents(Decimal(str(credits_raw)))
         total_debits += debits
         total_credits += credits
         rows.append((str(account), debits, credits))
@@ -988,30 +1004,10 @@ async def _build_membership_register(
 # ---------------------------------------------------------------------------
 
 
-def account_activity_sql(*, with_from: bool, with_to: bool) -> str:
-    """Per-account, per-side ledger activity, optionally period-scoped.
-
-    The single aggregate behind the income statement and the SASRA
-    return: bounded by the chart-of-accounts cardinality, served by
-    idx_ledger_txn + the transactions primary key (the trial-balance
-    shape). Static fragments chosen in code; all values are bound
-    parameters.
-    """
-    clauses = [
-        "le.tenant_id = CAST(:tid AS uuid)",
-        "t.occurred_at <= :as_of",
-    ]
-    if with_from:
-        clauses.append("t.occurred_at >= :d_from")
-    if with_to:
-        clauses.append("t.occurred_at < :d_to_excl")
-    return (
-        "SELECT le.account, le.side, COALESCE(SUM(le.amount), 0) "  # noqa: S608
-        "FROM ledger_entries le "
-        "JOIN transactions t ON t.id = le.transaction_id AND t.tenant_id = le.tenant_id "
-        f"WHERE {' AND '.join(clauses)} "
-        "GROUP BY le.account, le.side ORDER BY le.account, le.side"
-    )
+#: account_activity_sql moved VERBATIM to
+#: application/period_rollups.py in P13.17(b) — the single aggregate
+#: behind the income statement, the SASRA return AND the close_period
+#: account rollups (gate 1.1) — and is imported above.
 
 
 async def _account_activity(
