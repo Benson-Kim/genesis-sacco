@@ -332,7 +332,7 @@ def test_property_random_history_rollups_equal_full_scan() -> None:
     member_movement_sql without an anchor)."""
 
     async def run() -> None:
-        rng = random.Random(20260802)
+        rng = random.Random(20260802)  # noqa: S311 - deterministic test data, not crypto
         tid, uid, _ = await seed_actor()
         mid = await _seed_member(tid)
         months = _last_months(3)

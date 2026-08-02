@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from genesis.api.authz import RequirePermission
 from genesis.application import accounting_periods as periods_service
+from genesis.application import period_rollups as rollups_service
 from genesis.application import portfolio_snapshots as snapshots_service
 from genesis.application.auth import AuthContext
 from genesis.domain.rbac import Action, Module
