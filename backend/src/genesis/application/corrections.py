@@ -105,13 +105,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application.audit import record_audit
+from genesis.application.guarantees import release_guarantees_for_loan
 from genesis.application.ledger import (
     PostingResult,
     post_fee,
+    post_loan_recovery,
     post_loan_write_off,
     post_reversal,
 )
 from genesis.application.outbox import enqueue_event
+from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
 from genesis.application.tenant_settings import committee_quorum, enforce_authority_band
 
 # Reuse-first (gate 1.1): the P13.13 single member-status gatekeeper —

@@ -28,9 +28,10 @@ caller-supplied amount into a 422. Corrections post with occurred_at
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from genesis.api.authz import RequirePermission

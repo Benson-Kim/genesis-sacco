@@ -833,7 +833,7 @@ def test_fm9_cross_tenant_probes_and_idempotent_replay() -> None:
 
         # Cross-actor replay MISSES (the !29 scoping lesson): the
         # second actor's identical key executes as a NEW request.
-        actor2, token2 = await _seed_extra_user(tid_a, "Accountant")
+        _actor2, token2 = await _seed_extra_user(tid_a, "Accountant")
         async with api_client() as client:
             other = await client.post(
                 f"/corrections/write-offs/{record.id}/recoveries",

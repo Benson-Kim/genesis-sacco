@@ -20,6 +20,7 @@ from genesis.domain.ledger import (
     build_disbursement_posting,
     build_fee_posting,
     build_loan_interest_accrual_posting,
+    build_loan_recovery_posting,
     build_repayment_posting,
     build_reversal_posting,
     build_share_topup_posting,
