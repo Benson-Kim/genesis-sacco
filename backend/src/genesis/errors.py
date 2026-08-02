@@ -32,6 +32,29 @@ class ConflictError(AppError):
     category = ErrorCategory.CONFLICT
 
 
+class InvalidInputError(AppError):
+    """Raised when request parameters fail semantic validation (gate 1.2).
+
+    Complements FastAPI's structural 422s for cases only the application
+    can judge, such as malformed pagination cursors.
+    """
+
+    status_code = 400
+    category = ErrorCategory.VALIDATION
+
+
+class UnprocessableError(AppError):
+    """Raised when a structurally valid body fails schema validation
+    against server-side state — e.g. a KYC profile payload of the wrong
+    member type (P13.12). Mirrors FastAPI's structural 422; the client
+    receives the sanitized category only, never the offending values
+    (gate 1.6).
+    """
+
+    status_code = 422
+    category = ErrorCategory.VALIDATION
+
+
 class ForbiddenError(AppError):
     status_code = 403
     category = ErrorCategory.FORBIDDEN

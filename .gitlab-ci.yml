@@ -20,14 +20,74 @@ workflow:
 default:
   interruptible: true
 
+# `latest` template variants: the stable templates rule on
+# $CI_COMMIT_BRANCH only, so their jobs never spawned on
+# merge_request_event pipelines (the !26/!28/!29 security-stage gap —
+# review R6). The latest variants add merge-request rules and skip the
+# duplicate branch pipeline when an MR is open.
 include:
-  - template: Jobs/SAST.gitlab-ci.yml
-  - template: Jobs/Secret-Detection.gitlab-ci.yml
-  - template: Jobs/Dependency-Scanning.gitlab-ci.yml
+  - template: Jobs/SAST.latest.gitlab-ci.yml
+  - template: Jobs/Secret-Detection.latest.gitlab-ci.yml
+  - template: Jobs/Dependency-Scanning.latest.gitlab-ci.yml
 
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   npm_config_cache: "$CI_PROJECT_DIR/.cache/npm"
+
+# -----------------------------------------------------------------------------
+# Docs — architecture diagrams (P-DIAG series, docs/diagrams/ only)
+# Minimal, isolated job (P-DIAG.0): renders every standalone .mmd file
+# AND every ```mermaid fenced block inside docs/diagrams/*.md with
+# mermaid-cli, so an unrenderable diagram is a red pipeline. Scoped by
+# `rules:changes` to docs/diagrams/** exclusively — it can never
+# collide with the backend jobs of parallel tracks (P13.9/P13.13).
+# -----------------------------------------------------------------------------
+docs:diagrams:
+  stage: lint
+  needs: []
+  image:
+    # Official mermaid-cli image (bundles headless Chromium); pinned.
+    name: minlag/mermaid-cli:11.4.2
+    entrypoint: [""]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - docs/diagrams/**/*
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes:
+        - docs/diagrams/**/*
+  script:
+    - mkdir -p /tmp/mmd /tmp/rendered
+    # Standalone diagram sources.
+    - |
+      for f in docs/diagrams/*.mmd; do
+        [ -e "$f" ] || continue
+        cp "$f" "/tmp/mmd/$(basename "$f")"
+      done
+    # ```mermaid fenced blocks inside the markdown diagram documents.
+    - |
+      for f in docs/diagrams/*.md; do
+        [ -e "$f" ] || continue
+        awk -v base="/tmp/mmd/$(basename "${f%.md}")" '
+          /^```mermaid[[:space:]]*$/ { in_block = 1; n++; out = base "-block" n ".mmd"; next }
+          /^```[[:space:]]*$/ && in_block { in_block = 0; next }
+          in_block { print > out }
+        ' "$f"
+      done
+    - |
+      found=0
+      for m in /tmp/mmd/*.mmd; do
+        [ -e "$m" ] || continue
+        found=1
+        echo "rendering $m"
+        /home/mermaidcli/node_modules/.bin/mmdc -p /puppeteer-config.json \
+          -i "$m" -o "/tmp/rendered/$(basename "${m%.mmd}").svg"
+      done
+      if [ "$found" -ne 1 ]; then
+        echo "docs/diagrams changed but no mermaid sources found" >&2
+        exit 1
+      fi
+    - ls -l /tmp/rendered
 
 # -----------------------------------------------------------------------------
 # Backend — Python 3.12 / FastAPI
@@ -72,12 +132,64 @@ backend:test:
     DATABASE_URL: "postgresql+psycopg://genesis@postgres:5432/genesis_test"
   script:
     - alembic upgrade head
+    # RLS must actually be enforced during tests: the postgres-image
+    # bootstrap user is a SUPERUSER, which always bypasses RLS. Create a
+    # non-superuser app role (no BYPASSRLS) per ADR-0002 and run the test
+    # suite through it. Migrations above still run as the privileged owner.
+    - |
+      python - <<'PYEOF'
+      import psycopg
+      conn = psycopg.connect("postgresql://genesis@postgres:5432/genesis_test")
+      conn.autocommit = True
+      cur = conn.cursor()
+      cur.execute(
+          "CREATE ROLE genesis_app LOGIN NOSUPERUSER NOBYPASSRLS "
+          "NOCREATEDB NOCREATEROLE"
+      )
+      cur.execute("GRANT USAGE ON SCHEMA public TO genesis_app")
+      cur.execute(
+          "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES "
+          "IN SCHEMA public TO genesis_app"
+      )
+      cur.execute(
+          "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES "
+          "IN SCHEMA public TO genesis_app"
+      )
+      # R7 (!44): migration 0024 revokes the PostgreSQL-default PUBLIC
+      # EXECUTE on the three SECURITY DEFINER registries, so the app
+      # role needs an explicit grant. 0024's own conditional grant
+      # cannot fire here because this role is created AFTER `alembic
+      # upgrade head` (role provisioning is environment-owned per
+      # ADR-0002) — grant alongside the table/sequence grants above.
+      cur.execute("GRANT EXECUTE ON FUNCTION active_tenant_ids() TO genesis_app")
+      cur.execute("GRANT EXECUTE ON FUNCTION outbox_due_tenant_ids() TO genesis_app")
+      cur.execute(
+          "GRANT EXECUTE ON FUNCTION outbox_purgeable_tenant_ids(timestamptz) "
+          "TO genesis_app"
+      )
+      PYEOF
+    - export DATABASE_URL="postgresql+psycopg://genesis_app@postgres:5432/genesis_test"
     - pytest --cov=src --cov-fail-under=85 --junitxml=report.xml
+  # Surface captured EXPLAIN plans in the job log so MR authors can copy
+  # them into the description (artifact download needs an api-scope token).
+  after_script:
+    - cat backend/perf/explain_p10.txt || true
+    - cat backend/perf/explain_p13.txt || true
+    - cat backend/perf/explain_p135.txt || true
+    - cat backend/perf/explain_p136.txt || true
+    - cat backend/perf/explain_p137.txt || true
+    - cat backend/perf/explain_p138.txt || true
+    - cat backend/perf/explain_p1311.txt || true
+    - cat backend/perf/explain_p1312.txt || true
+    - cat backend/perf/explain_p1316.txt || true
+    - cat backend/perf/explain_codex_review.txt || true
   coverage: '/TOTAL.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
   artifacts:
     when: always
     reports:
       junit: backend/report.xml
+    paths:
+      - backend/perf/
 
 backend:migrate-check:
   extends: .backend

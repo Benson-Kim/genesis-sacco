@@ -16,6 +16,26 @@ class Settings(BaseSettings):
     jwt_signing_key: str = ""
     otp_pepper: str = ""
     auth_rate_limit_per_minute: int = 60
+    # Export configuration (P13): resolved exclusively server-side —
+    # request bodies never carry formats, row limits, or storage
+    # locations (gate 1.6; P13 blocker a).
+    export_row_cap: int = 10_000
+    export_batch_size: int = 500
+    export_artifact_ttl_hours: int = 24
+    export_npl_trend_months: int = 6
+    # Dashboard configuration (P13.9): the monthly-series window and
+    # the guarantor-list size are server-resolved — the endpoint takes
+    # no caller input (v1.1 rule 1) and every scan stays bounded
+    # (gate 1.3). Hard caps live in application.dashboard.
+    dashboard_series_months: int = 6
+    dashboard_guarantor_cap: int = 20
+    # Idempotency replay retention (P13.17c / DSA-3): how long a
+    # claimed key replays its stored response. Server config ONLY
+    # (v1.1 rule 1) — no request carries it; the middleware sets
+    # expires_at from this value on every claim, and the value must
+    # match the 0029 column default's compatibility floor (24h) unless
+    # deliberately re-tuned per environment.
+    idempotency_retention_hours: int = 24
 
 
 @lru_cache
