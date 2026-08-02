@@ -50,6 +50,13 @@ P13.17(b):
       - composite FKs to accounting_periods(tenant_id, period_start):
         a rollup row for a period that was never closed is
         unrepresentable;
+      - composite FK (tenant_id, member_id) -> members (tenant_id, id)
+        (review !49 N2; the 0014 uq_transactions_tenant_id_id
+        precedent): RI checks bypass RLS, so a plain REFERENCES
+        members(id) made a row pairing tenant A's tenant_id with
+        tenant B's member_id representable at the DB level - the
+        composite target closes it; the backing UNIQUE on
+        members (tenant_id, id) is added here (none existed);
       - RLS enabled AND forced with the 0001 policy (ADR-0002);
         CHECKs pin debits/credits >= 0 and a non-empty account.
 
@@ -60,10 +67,11 @@ P13.17(b):
 Lock posture (0024 honesty precedent): ALTER TABLE accounting_periods
 ADD COLUMN (nullable, no default) takes ACCESS EXCLUSIVE on
 accounting_periods briefly — no rewrite; CREATE TRIGGER on
-accounting_periods takes SHARE ROW EXCLUSIVE. Both block concurrent
-period reads/postings for the duration — within this project's
-accepted maintenance-window migration model. New tables lock nothing
-in use.
+accounting_periods takes SHARE ROW EXCLUSIVE; ALTER TABLE members ADD
+CONSTRAINT UNIQUE takes ACCESS EXCLUSIVE on members while its index
+builds (N2). All block concurrent period reads/postings (respectively
+member reads) for the duration — within this project's accepted
+maintenance-window migration model. New tables lock nothing in use.
 
 Downgrade REFUSES LOUDLY while either rollup table holds rows
 (0017/0020 precedent — closed-period money totals are never silently
@@ -126,11 +134,19 @@ CREATE TABLE account_period_balances (
 -- ---------------------------------------------------------------------------
 -- 2. Per-member period balances (DSA-5)
 -- ---------------------------------------------------------------------------
+-- Backing UNIQUE for the tenant-composite member FK below (review
+-- !49 N2; the 0014 uq_transactions_tenant_id_id precedent). RI checks
+-- bypass RLS, so the FK target must carry the tenant column or a row
+-- pairing tenant A's tenant_id with tenant B's member_id is
+-- representable at the DB level.
+ALTER TABLE members ADD CONSTRAINT uq_members_tenant_id_id
+    UNIQUE (tenant_id, id);
+
 CREATE TABLE member_period_balances (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
     period_start date NOT NULL,
-    member_id uuid NOT NULL REFERENCES members(id) ON DELETE RESTRICT,
+    member_id uuid NOT NULL,
     balance numeric(18,2) NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT uq_member_period_balances
@@ -138,6 +154,13 @@ CREATE TABLE member_period_balances (
     CONSTRAINT fk_member_period_balances_period
         FOREIGN KEY (tenant_id, period_start)
         REFERENCES accounting_periods (tenant_id, period_start)
+        ON DELETE RESTRICT,
+    -- Tenant-composite member reference (N2): matches this
+    -- migration's own period-FK standard; a cross-tenant member row
+    -- is unrepresentable even through direct SQL (RI ignores RLS).
+    CONSTRAINT fk_member_period_balances_member
+        FOREIGN KEY (tenant_id, member_id)
+        REFERENCES members (tenant_id, id)
         ON DELETE RESTRICT
 );
 
@@ -236,6 +259,9 @@ DROP TRIGGER IF EXISTS account_period_balances_write_once
     ON account_period_balances;
 DROP FUNCTION IF EXISTS forbid_period_rollup_mutation();
 DROP TABLE IF EXISTS member_period_balances;
+-- N2 mirror: the backing UNIQUE for the composite member FK goes with
+-- the table that needed it (dropped after the FK above).
+ALTER TABLE members DROP CONSTRAINT IF EXISTS uq_members_tenant_id_id;
 DROP TABLE IF EXISTS account_period_balances;
 DROP TRIGGER IF EXISTS accounting_periods_rollup_marker_write_once
     ON accounting_periods;

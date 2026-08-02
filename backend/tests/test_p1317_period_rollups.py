@@ -799,6 +799,74 @@ def test_backfill_409s_on_fabricated_divergent_rollup_row() -> None:
     asyncio.run(run())
 
 
+def test_member_rollup_cross_tenant_member_unrepresentable() -> None:
+    """N2 probe (review !49): referential-integrity checks BYPASS RLS,
+    so with the original plain REFERENCES members(id) a direct-SQL row
+    pairing tenant A's tenant_id with tenant B's member_id was
+    representable. The 0028 composite FK (tenant_id, member_id) ->
+    members (tenant_id, id) (backed by uq_members_tenant_id_id, the
+    0014 precedent) makes it unrepresentable at the database level.
+    Falsifiable: relax the FK back to member_id -> members(id) and the
+    cross-tenant INSERT succeeds (member B exists by id), failing this
+    test. The same-tenant control INSERT proves the fence does not
+    over-block."""
+
+    async def run() -> None:
+        tid_a, _, _ = await seed_actor()
+        tid_b, _, _ = await seed_actor()
+        member_a = await _seed_member(tid_a)
+        member_b = await _seed_member(tid_b)
+        (p1_start, p1_end), _ = _last_months(2)
+        # An UNROLLED closed period in tenant A so the period FK is
+        # satisfied and the late-insert fence stays disarmed - this
+        # probe isolates the member FK.
+        await _insert_legacy_closed_period(tid_a, p1_start, p1_end)
+
+        insert_sql = text(
+            "INSERT INTO member_period_balances "
+            "(id, tenant_id, period_start, member_id, balance) "
+            "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :ps, "
+            "CAST(:mid AS uuid), '9.99')"
+        )
+        with pytest.raises(DBAPIError, match="fk_member_period_balances_member"):
+            async with tenant_session(factory(), tid_a) as session:
+                await session.execute(
+                    insert_sql,
+                    {
+                        "id": str(uuid.uuid4()),
+                        "tid": str(tid_a),
+                        "ps": p1_start,
+                        "mid": str(member_b),
+                    },
+                )
+        async with tenant_session(factory(), tid_a) as session:
+            count = (
+                await session.execute(text("SELECT count(*) FROM member_period_balances"))
+            ).scalar_one()
+        assert int(count) == 0, "a cross-tenant member rollup row became representable"
+
+        # Same-tenant control: the identical INSERT with tenant A's own
+        # member passes the composite FK (the period is still unrolled,
+        # so no fence fires).
+        async with tenant_session(factory(), tid_a) as session:
+            await session.execute(
+                insert_sql,
+                {
+                    "id": str(uuid.uuid4()),
+                    "tid": str(tid_a),
+                    "ps": p1_start,
+                    "mid": str(member_a),
+                },
+            )
+        async with tenant_session(factory(), tid_a) as session:
+            kept = (
+                await session.execute(text("SELECT member_id FROM member_period_balances"))
+            ).scalar_one()
+        assert str(kept) == str(member_a)
+
+    asyncio.run(run())
+
+
 def test_rollup_backfill_route_rbac_and_forbidden_body() -> None:
     async def run() -> None:
         for role, expected in (
