@@ -359,9 +359,7 @@ def test_future_month_snapshot_insert_refused_at_the_database() -> None:
                     )
         async with tenant_session(factory(), tid) as session:
             count = (
-                await session.execute(
-                    text("SELECT count(*) FROM portfolio_month_snapshots")
-                )
+                await session.execute(text("SELECT count(*) FROM portfolio_month_snapshots"))
             ).scalar_one()
         assert int(count) == 0, "a not-fully-elapsed month became representable"
 
@@ -377,9 +375,7 @@ def test_future_month_snapshot_insert_refused_at_the_database() -> None:
             )
         async with tenant_session(factory(), tid) as session:
             kept = (
-                await session.execute(
-                    text("SELECT month_end FROM portfolio_month_snapshots")
-                )
+                await session.execute(text("SELECT month_end FROM portfolio_month_snapshots"))
             ).scalar_one()
         assert kept == elapsed_month_end
 
