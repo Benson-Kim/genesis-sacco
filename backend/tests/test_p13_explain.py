@@ -27,8 +27,8 @@ from db_helpers import factory
 from export_helpers import seed_actor, seed_member
 from genesis.application import transactions as txn_service
 from genesis.application.exports import CLAIM_SQL, DOWNLOAD_SQL
+from genesis.application.portfolio_reconstruction import NPL_TREND_MONTH_SQL
 from genesis.application.reports import (
-    NPL_TREND_MONTH_SQL,
     TRIAL_BALANCE_SQL,
     disbursement_collections_page_sql,
     loan_book_page_sql,
