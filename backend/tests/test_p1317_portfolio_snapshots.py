@@ -314,8 +314,7 @@ def test_snapshots_are_write_once_at_the_database_level() -> None:
             async with tenant_session(factory(), tid) as session:
                 await session.execute(
                     text(
-                        "DELETE FROM portfolio_month_snapshots "
-                        "WHERE tenant_id = CAST(:tid AS uuid)"
+                        "DELETE FROM portfolio_month_snapshots WHERE tenant_id = CAST(:tid AS uuid)"
                     ),
                     {"tid": str(tid)},
                 )
@@ -348,9 +347,7 @@ def test_close_aborts_loudly_on_divergent_preexisting_snapshot() -> None:
 
         with pytest.raises(ConflictError, match="diverges"):
             async with tenant_session(factory(), tid) as session:
-                await periods_service.close_period(
-                    session, tid, uid, year=m3.year, month=m3.month
-                )
+                await periods_service.close_period(session, tid, uid, year=m3.year, month=m3.month)
 
         # Kill-switch: the failed close left no partial state.
         assert await _count(tid, "SELECT count(*) FROM accounting_periods") == 0

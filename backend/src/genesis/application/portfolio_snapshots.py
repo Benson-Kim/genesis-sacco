@@ -245,9 +245,7 @@ async def run_snapshot_backfill_for_tenant(
         if not remaining:
             return 0, None, 0
         month = remaining.pop(0)
-        written = await write_month_snapshot(
-            session, tenant_id, actor_id, month, source="backfill"
-        )
+        written = await write_month_snapshot(session, tenant_id, actor_id, month, source="backfill")
         return 1, None, int(written)
 
     _, batches, payloads = await run_in_batches(session_scope, _process_one, batch_size=1)
