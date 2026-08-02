@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_helpers import factory
 from export_helpers import seed_actor
+from genesis.application.idempotency_purge import PURGE_BATCH_SQL
 from genesis.application.period_rollups import (
     MEMBER_ANCHOR_SQL,
     TRIAL_BALANCE_ROLLUP_SQL,
@@ -77,6 +78,14 @@ def test_p1317_queries_are_index_backed() -> None:
                 {"tid": str(tid), "mid": str(tid), "before": now.date()},
             )
             sections.append(("DSA-5 statement opening anchor", anchor))
+            # The purge DELETE executes against this tenant's (empty)
+            # key set - zero rows removed; the plan is what matters.
+            purge = await _explain(
+                session,
+                PURGE_BATCH_SQL,
+                {"tid": str(tid), "limit": 100},
+            )
+            sections.append(("DSA-3 idempotency purge (batched DELETE)", purge))
 
         OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         OUT_PATH.write_text(
@@ -91,5 +100,8 @@ def test_p1317_queries_are_index_backed() -> None:
         # idx_member_period_balances_anchor backwards.
         assert "uq_account_period_balances" in trial_rollup
         assert "idx_member_period_balances_anchor" in anchor
+        # The purge's driving subquery walks its 0029 index, never a
+        # (forced-off) seq scan.
+        assert "idx_idempotency_keys_expiry" in purge
 
     asyncio.run(run())

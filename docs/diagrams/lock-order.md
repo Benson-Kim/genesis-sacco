@@ -114,7 +114,7 @@ flowchart TD
         PERM["permissions<br/>FOR UPDATE (single row)"]
         EXP["exports<br/>FOR UPDATE SKIP LOCKED (single-row claim)"]
         OBX["outbox_events<br/>FOR UPDATE SKIP LOCKED (claim + set-based lease);<br/>retention purge: batched DELETE via SKIP LOCKED subquery<br/>(dispatched rows only — P13.17e);<br/>dispatch holds NO domain locks"]
-        IDEM["idempotency_keys<br/>ON CONFLICT claim in its OWN txn — no locks held"]
+        IDEM["idempotency_keys<br/>ON CONFLICT claim/expired-takeover in its OWN txn<br/>(row lock on the conflicting key row only — P13.17c);<br/>retention purge: batched DELETE via SKIP LOCKED subquery"]
         UADM -->|E17| UTGT
         UTGT -->|E18| OTP
         UTGT -->|E19| RT
@@ -521,6 +521,23 @@ implicit `FOR NO KEY UPDATE`) and that marker UPDATE itself
 verify per N3b). **Zero new lock-graph edges**: close-path locks are
 self-owned (§4 qualifier), the backfill claim and the fence are
 single-node lockers, and the snapshot writer takes no locks.
+
+**P13.17(c) delta (!49, same combined state):** the idempotency-expiry
+work adds exactly **one new executable SQL lock site** in
+`backend/src` — the retention purge's `FOR UPDATE SKIP LOCKED` driving
+subquery (`application/idempotency_purge.py:PURGE_BATCH_SQL`),
+catalogued as a §3 single-node locker with its §5 re-run path —
+bringing the executable-site count to **67**. Combined-state grep
+totals: 123 / 26 / 36 / 2 / 37 = **193** (`for update` / `for share` /
+`skip locked` / `for no key update` / `advisory`; union of matching
+lines, was 119/26/33/2/37 = 189 at the (a)–(b) delta) — the three
+extra lines beyond the one new site are docstrings restating the
+purge posture. The claim statement's
+change (`ON CONFLICT DO NOTHING` → `DO UPDATE` takeover) adds no grep
+hit and no site: the row lock it takes on conflict is the same-table
+idempotency_keys row, in the middleware's own transaction, before any
+handler runs — the claim stays a single-node locker. **Zero new
+lock-graph edges.**
 
 ## 9. Cross-check: MR prose vs code-derived DAG (P-DIAG.0 step 3)
 
