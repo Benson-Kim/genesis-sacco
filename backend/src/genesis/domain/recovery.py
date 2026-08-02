@@ -74,6 +74,17 @@ TERMINAL_STATUSES: frozenset[RecoveryCaseStatus] = frozenset(
     }
 )
 
+#: The two live PAUSE postures (!53 review F2): a staff disposition
+#: INTO either must carry a contemporaneous reason, captured into the
+#: audit payload by the application service — workflow metadata only,
+#: never a money parameter.
+PAUSE_STATUSES: frozenset[RecoveryCaseStatus] = frozenset(
+    {
+        RecoveryCaseStatus.IRRECOVERABLE_PENDING_WRITE_OFF,
+        RecoveryCaseStatus.DISPUTED,
+    }
+)
+
 #: Targets a STAFF disposition may request (application policy, FM2):
 #: the two pauses, the resume, and the restructure close.
 #: ``closed_cured`` / ``closed_written_off`` are deliberately absent —

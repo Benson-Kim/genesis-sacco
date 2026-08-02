@@ -8,9 +8,11 @@ NO timestamp may ride in (opened_at/first_assigned_at/closed_at are
 server-side only, addendum A7), and there is NO cure/write-off close
 route (loan-fact closes happen automatically in the arrears job; the
 issue-#23 disposition route is restricted to the code-owned
-staff-settable targets — pause, resume, restructure-close) and NO
-note edit/delete route (append-only, addendum A2; the single
-post-closure outcome note is a NEW append-only row).
+staff-settable targets — pause, resume, restructure-close; !53 F1/F2:
+pauses require a reason and the restructure close requires — and
+atomically writes — THE outcome note) and NO note edit/delete route
+(append-only, addendum A2; the single post-closure outcome note is a
+NEW append-only row).
 
 Permissions (P4 matrix, documented interpretation): the worklist and
 case reads sit on loan_book:view (the loan-detail entitlement — the
@@ -82,16 +84,24 @@ class CaseNoteBody(BaseModel):
 
 
 class CaseDispositionBody(BaseModel):
-    """extra="forbid": the caller supplies only the optimistic version
-    and the target status. The enum rejects unknown statuses at the
-    boundary (422); job-only targets (closed_cured/closed_written_off)
-    are refused by the service (409, FM2); the single domain
-    gatekeeper owns the legality of the move (issue #23 N2)."""
+    """extra="forbid": the caller supplies the optimistic version, the
+    target status and the target-paired rationale fields (!53 F1/F2).
+    The enum rejects unknown statuses at the boundary (422); job-only
+    targets (closed_cured/closed_written_off) are refused by the
+    service (409, FM2); the single domain gatekeeper owns the legality
+    of the move (issue #23 N2). `reason` is REQUIRED by the service
+    for the two pause targets (audit-payload workflow metadata, !53
+    F2); `note` is REQUIRED for closed_restructured — THE outcome
+    note, written atomically in the same transaction (!53 F1). A
+    mismatched field-target pairing is a 422. Neither field is a money
+    parameter (v1.1 rule 1 not implicated)."""
 
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(ge=1)
     status: RecoveryCaseStatus
+    reason: str | None = Field(default=None, min_length=1, max_length=500)
+    note: str | None = Field(default=None, min_length=1, max_length=2000)
 
 
 class CaseOut(BaseModel):
@@ -239,10 +249,12 @@ async def assign_case(case_id: uuid.UUID, body: CaseAssignBody, ctx: EditCtx) ->
 
 @router.post("/{case_id}/disposition")
 async def set_disposition(case_id: uuid.UUID, body: CaseDispositionBody, ctx: EditCtx) -> CaseOut:
-    """Record a staff disposition (issue #23 N2): pause a case as
-    disputed or irrecoverable_pending_write_off, resume it to open, or
-    close it as restructured — through the single domain gatekeeper;
-    cure/write-off closes stay job-only (FM2)."""
+    """Record a staff disposition (issue #23 N2; !53 F1/F2): pause a
+    case as disputed or irrecoverable_pending_write_off (required
+    `reason` -> audit payload), resume it to open, or close it as
+    restructured (required `note` -> THE outcome note, written
+    atomically in this same transaction) — through the single domain
+    gatekeeper; cure/write-off closes stay job-only (FM2)."""
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         record = await recovery_service.set_case_disposition(
@@ -252,6 +264,8 @@ async def set_disposition(case_id: uuid.UUID, body: CaseDispositionBody, ctx: Ed
             case_id=case_id,
             version=body.version,
             target=body.status,
+            reason=body.reason,
+            outcome_note=body.note,
         )
     return _case_out(record)
 
