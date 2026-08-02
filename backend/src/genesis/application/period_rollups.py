@@ -156,11 +156,25 @@ LIMIT 1
 """
 
 #: Trial balance = rolled closed periods + live remainder (DSA-2). The
-#: rolled CTE trusts only periods whose completeness marker is set; the
-#: live CTE excludes exactly those periods' calendar days (the 0012
-#: trigger's UTC-date convention), so every posting is counted exactly
-#: once. Equality with the full scan (reports.TRIAL_BALANCE_SQL, kept
-#: as the oracle) is the FM2 merge gate.
+#: rolled CTE trusts only periods whose completeness marker is set AND
+#: that are FULLY COVERED by :as_of — a rolled period participates as
+#: a rollup only when (:as_of AT TIME ZONE 'UTC')::date > period_end
+#: (strictly greater: an intra-day :as_of on the period-end day means
+#: the day is only partially covered, so the whole period falls
+#: through to the live scan, which caps at :as_of exactly). The live
+#: CTE excludes exactly the SAME as_of-qualified periods' calendar
+#: days (the 0012 trigger's UTC-date convention) — the qualifier is
+#: applied SYMMETRICALLY in both CTEs, so every posting <= :as_of is
+#: counted exactly once for ANY historical :as_of, not just "now"
+#: (review !49 B1: an unqualified rolled CTE summed every rolled
+#: period's full totals unconditionally, overstating both sides of a
+#: historical trial balance while still balancing — the FM2 class).
+#: The boundary is exact against the writer's exclusive d_to_excl
+#: bound: rollups cover occurred_at < UTC midnight of period_end + 1,
+#: and the date qualifier admits a period exactly from that midnight.
+#: Equality with the full scan (reports.TRIAL_BALANCE_SQL, kept as
+#: the oracle) at historical, boundary and current :as_of instants is
+#: the FM2 merge gate.
 TRIAL_BALANCE_ROLLUP_SQL = """
 WITH rolled AS (
     SELECT b.account,
@@ -170,6 +184,7 @@ WITH rolled AS (
     JOIN accounting_periods p
         ON p.tenant_id = b.tenant_id AND p.period_start = b.period_start
        AND p.status = 'closed' AND p.rollup_at IS NOT NULL
+       AND (CAST(:as_of AS timestamptz) AT TIME ZONE 'UTC')::date > p.period_end
     WHERE b.tenant_id = CAST(:tid AS uuid)
     GROUP BY b.account
 ),
@@ -184,6 +199,7 @@ live AS (
           SELECT 1 FROM accounting_periods p
           WHERE p.tenant_id = le.tenant_id AND p.status = 'closed'
             AND p.rollup_at IS NOT NULL
+            AND (CAST(:as_of AS timestamptz) AT TIME ZONE 'UTC')::date > p.period_end
             AND (t.occurred_at AT TIME ZONE 'UTC')::date >= p.period_start
             AND (t.occurred_at AT TIME ZONE 'UTC')::date <= p.period_end
       )

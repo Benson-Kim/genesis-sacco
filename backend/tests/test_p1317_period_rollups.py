@@ -29,6 +29,7 @@ import uuid
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from functools import partial
+from typing import Any
 
 import pytest
 from sqlalchemy import text
@@ -395,6 +396,254 @@ def test_property_random_history_rollups_equal_full_scan() -> None:
                 ).all()
                 full = rollups_service.signed_member_movement(list(full_rows))
                 assert anchored == full, f"opening diverged at window start {window_from}"
+
+    asyncio.run(run())
+
+
+def test_trial_balance_historical_as_of_equals_full_scan() -> None:
+    """B1 remediation (FM2): a rolled period participates as a rollup
+    ONLY when fully covered by :as_of — (:as_of AT TIME ZONE
+    'UTC')::date > period_end, applied SYMMETRICALLY in the rolled CTE
+    join and the live CTE's NOT EXISTS; otherwise its postings fall
+    through to the live scan, which caps at :as_of exactly.
+
+    Oracle = reports.TRIAL_BALANCE_SQL (the pre-existing full scan) at
+    the SAME :as_of, plus hand-computed pins so no probe is captured
+    from the implementation under test. Falsifiable, per probe, with
+    the as_of qualifier removed (the pre-fix statement):
+
+      * (i)   as_of INSIDE rolled p2, before its mid-month activity —
+              the unqualified rolled CTE adds p1's AND p2's full
+              totals while the live CTE excludes their days entirely:
+              both sides overstate symmetrically and STILL BALANCE
+              (the FM2 'drifted rollup reporting a balanced book'
+              class); the oracle here is p1's totals only;
+      * (i')  intra-day as_of ON p2's period-end day, before that
+              day's 18:00 posting — ALSO fails if the strict > is
+              weakened to >= (a partially covered final day means the
+              whole period must fall through to the live scan);
+      * (ii)  as_of entirely BEFORE every rolled month — the oracle is
+              an EMPTY book; the unqualified rolled CTE still returns
+              full totals;
+      * (iii) as_of exactly at UTC midnight of period_end + 1 — the
+              period is fully covered from precisely that instant
+              (the writer's d_to_excl bound is exclusive), pinning the
+              <=/< boundary semantics: rolled path == full scan to
+              the cent.
+    """
+
+    async def run() -> None:
+        tid, uid, _ = await seed_actor()
+        mid = await _seed_member(tid)
+        (p1_start, p1_end), (p2_start, p2_end) = _last_months(2)
+        # Hand-computable postings: p1 deposit 15000.00 (mpesa); p2
+        # withdrawal 2000.00 on day 6 AND a PERIOD-END-DAY deposit
+        # 700.00 at 18:00 (the strict-> probe); current month share
+        # top-up 5000.00.
+        await _post_txn(
+            tid,
+            mid,
+            txn_type="deposit",
+            amount="15000.00",
+            occurred_at=datetime.combine(p1_start + timedelta(days=10), time(12), tzinfo=UTC),
+            debit_account="cash.mpesa",
+            credit_account="member.deposits",
+            channel="mpesa",
+        )
+        await _post_txn(
+            tid,
+            mid,
+            txn_type="withdrawal",
+            amount="2000.00",
+            occurred_at=datetime.combine(p2_start + timedelta(days=5), time(12), tzinfo=UTC),
+            debit_account="member.deposits",
+            credit_account="cash.bank",
+        )
+        await _post_txn(
+            tid,
+            mid,
+            txn_type="deposit",
+            amount="700.00",
+            occurred_at=datetime.combine(p2_end, time(18), tzinfo=UTC),
+            debit_account="cash.bank",
+            credit_account="member.deposits",
+        )
+        await _post_txn(
+            tid,
+            mid,
+            txn_type="share_topup",
+            amount="5000.00",
+            occurred_at=datetime.now(UTC),
+            debit_account="cash.bank",
+            credit_account="member.shares",
+        )
+        await _close(tid, uid, p1_end)
+        await _close(tid, uid, p2_end)
+
+        async def both(
+            as_of: datetime,
+        ) -> tuple[dict[str, tuple[Decimal, Decimal]], dict[str, tuple[Decimal, Decimal]]]:
+            def fold(rows: list) -> dict[str, tuple[Decimal, Decimal]]:  # type: ignore[type-arg]
+                return {str(r[0]): (Decimal(str(r[1])), Decimal(str(r[2]))) for r in rows}
+
+            async with tenant_session(factory(), tid) as session:
+                rolled = (
+                    await session.execute(
+                        text(rollups_service.TRIAL_BALANCE_ROLLUP_SQL),
+                        {"tid": str(tid), "as_of": as_of},
+                    )
+                ).all()
+                full = (
+                    await session.execute(
+                        text(TRIAL_BALANCE_SQL), {"tid": str(tid), "as_of": as_of}
+                    )
+                ).all()
+            return fold(list(rolled)), fold(list(full))
+
+        probes: list[tuple[str, datetime]] = [
+            (
+                "(i) inside rolled p2",
+                datetime.combine(p2_start + timedelta(days=2), time(12), tzinfo=UTC),
+            ),
+            (
+                "(i') intra-day on p2's period-end day",
+                datetime.combine(p2_end, time(12), tzinfo=UTC),
+            ),
+            (
+                "(ii) before every rolled month",
+                datetime.combine(p1_start - timedelta(days=1), time(12), tzinfo=UTC),
+            ),
+            (
+                "(iii) UTC midnight of p1_end + 1",
+                datetime.combine(p1_end + timedelta(days=1), time.min, tzinfo=UTC),
+            ),
+            (
+                "(iii') UTC midnight of p2_end + 1",
+                datetime.combine(p2_end + timedelta(days=1), time.min, tzinfo=UTC),
+            ),
+            ("current instant", datetime.now(UTC)),
+        ]
+        for label, as_of in probes:
+            rolled, full = await both(as_of)
+            assert rolled == full, f"trial balance diverged from the full scan at {label}"
+
+        # Hand pins (never captured from the implementation):
+        # (i)/(i')/(iii): only p1's deposit is <= as_of -> exactly p1's
+        # totals; (ii): the empty book.
+        p1_totals = {
+            "cash.mpesa": (Decimal("15000.00"), Decimal("0.00")),
+            "member.deposits": (Decimal("0.00"), Decimal("15000.00")),
+        }
+        by_label = dict(probes)
+        for label in (
+            "(i) inside rolled p2",
+            "(i') intra-day on p2's period-end day",
+            "(iii) UTC midnight of p1_end + 1",
+        ):
+            rolled, _ = await both(by_label[label])
+            assert rolled == p1_totals, f"hand oracle mismatch at {label}"
+        rolled_empty, _ = await both(by_label["(ii) before every rolled month"])
+        assert rolled_empty == {}, "a pre-history as_of must render an empty book"
+        # (i') additionally pins the strict >: p2's 18:00 period-end-day
+        # deposit is NOT included at noon of that day — with >= the
+        # rolled CTE would add p2's full totals including it.
+        # (iii'): from p2_end+1 midnight, p2 is fully covered.
+        rolled_b, _ = await both(by_label["(iii') UTC midnight of p2_end + 1"])
+        assert rolled_b == {
+            "cash.mpesa": (Decimal("15000.00"), Decimal("0.00")),
+            "cash.bank": (Decimal("700.00"), Decimal("2000.00")),
+            "member.deposits": (Decimal("2000.00"), Decimal("15700.00")),
+        }
+
+    asyncio.run(run())
+
+
+def test_member_anchor_fully_before_window_and_as_of_cap_safe() -> None:
+    """B1 audit of MEMBER_ANCHOR_SQL / member_balance_before (FM2).
+
+    Pins two properties the trial-balance defect class could also hit:
+
+      * anchor constraint — the chosen anchor is the LATEST rolled
+        period with period_end < :before, i.e. FULLY before the
+        window: a window opening MID-p2 anchors on p1 (never the p2
+        row, whose period covers the window start); a window opening
+        at the current month start anchors on p2. Falsifiable: drop
+        the `p.period_end < :before` predicate (or invert the ORDER
+        BY) in MEMBER_ANCHOR_SQL and the mid-p2 probe anchors on p2,
+        mis-counting the delta.
+      * as_of-cap safety — anchor content can never postdate the
+        server-resolved as_of: close_period refuses any month with
+        period_end >= today (pinned below with a live probe), so every
+        rolled period's content ends strictly before UTC midnight of
+        today, while the export as_of is resolved server-side to now()
+        at render — the cap can therefore never precede anchor
+        content. Pinned anyway: the anchored figure equals the full
+        scan at as_of = now() to the cent.
+
+    The mid-p2 probe's delta scan walks days INSIDE the later rolled
+    period p2. That is safe by construction: rollups never remove or
+    alter transactions rows (the ledger stays append-only; the rollup
+    tables are pure additions), so the live delta over those days
+    reads exactly what the full-history scan reads.
+    """
+
+    async def run() -> None:
+        tid, uid, _ = await seed_actor()
+        mid, (_, p1_end), (p2_start, p2_end) = await _seed_history(tid)
+        await _close(tid, uid, p1_end)
+        await _close(tid, uid, p2_end)
+
+        async with tenant_session(factory(), tid) as session:
+            mid_window = p2_start + timedelta(days=14)
+            anchor_mid = (
+                await session.execute(
+                    text(rollups_service.MEMBER_ANCHOR_SQL),
+                    {"tid": str(tid), "mid": str(mid), "before": mid_window},
+                )
+            ).first()
+            # Hand oracle (_seed_history): end of p1 = +15000.00.
+            assert anchor_mid is not None
+            assert (str(anchor_mid[0]), anchor_mid[1]) == ("15000.00", p1_end)
+
+            month_start = datetime.now(UTC).date().replace(day=1)
+            anchor_now = (
+                await session.execute(
+                    text(rollups_service.MEMBER_ANCHOR_SQL),
+                    {"tid": str(tid), "mid": str(mid), "before": month_start},
+                )
+            ).first()
+            # Hand oracle: end of p2 = 15000 - 2000 = +13000.00.
+            assert anchor_now is not None
+            assert (str(anchor_now[0]), anchor_now[1]) == ("13000.00", p2_end)
+
+            # Anchored opening across a window starting INSIDE the
+            # later rolled period p2 == full scan, to the cent. Hand
+            # oracle: 15000 - 2000 (the day-5 withdrawal precedes the
+            # day-14 window start) = 13000.00.
+            as_of = datetime.now(UTC)
+            anchored = await rollups_service.member_balance_before(
+                session, tid, mid, before=mid_window, as_of=as_of
+            )
+            assert anchored == Decimal("13000.00")
+            full_rows = (
+                await session.execute(
+                    text(rollups_service.member_movement_sql(with_from=True, with_start=False)),
+                    {
+                        "tid": str(tid),
+                        "mid": str(mid),
+                        "as_of": as_of,
+                        "d_from": datetime.combine(mid_window, time.min, tzinfo=UTC),
+                    },
+                )
+            ).all()
+            assert anchored == rollups_service.signed_member_movement(list(full_rows))
+
+        # The as_of-cap safety precondition, pinned live: a month that
+        # has not fully elapsed can never be closed (so no anchor row
+        # can ever cover content past the render instant).
+        today = datetime.now(UTC).date()
+        with pytest.raises(ConflictError, match="fully elapsed"):
+            await _close(tid, uid, today.replace(day=28))
 
     asyncio.run(run())
 
