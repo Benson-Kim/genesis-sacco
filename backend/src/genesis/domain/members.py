@@ -87,6 +87,9 @@ class MoneyOperation(enum.StrEnum):
     EXIT_REQUEST = "exit request"
     # P13.15: staff-charged misc fee (money IN — the member pays it).
     FEE = "fee posting"
+    # Issue #21: bad-debt recovery receipt against the member's
+    # surviving written-off claim (money IN).
+    RECOVERY = "recovery receipt"
 
 
 #: Code-owned capability map (P13.13 FM2 — the single gatekeeper):
@@ -110,6 +113,12 @@ MEMBER_OPERATIONS: dict[MoneyOperation, frozenset[MemberStatus]] = {
     # P13.15: a fee is money IN (the member settles it) — same statuses
     # as deposit/repayment; exited members are refused by construction.
     MoneyOperation.FEE: _MONEY_IN,
+    # Issue #21: a recovery receipt is money IN against the surviving
+    # written-off claim — active, arrears and dormant members may
+    # settle it; EXITED members are refused by construction (and the
+    # issue-#21 exit guard makes exiting with an unresolved claim
+    # impossible going forward, so this refusal is defence in depth).
+    MoneyOperation.RECOVERY: _MONEY_IN,
     MoneyOperation.SHARE_TOPUP: frozenset({MemberStatus.ACTIVE, MemberStatus.ARREARS}),
     MoneyOperation.WITHDRAWAL: _ACTIVE_ONLY,
     MoneyOperation.BORROW: _ACTIVE_ONLY,

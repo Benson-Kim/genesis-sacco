@@ -78,8 +78,20 @@ or test/artifact present on main).
 
 Migration-claim registry delta (rule 14, updated 2026-08-02): 0001–0029
 on main (0024 !44/P13.17e · 0025 !46/P13.15 · 0026 !47/P13.16 ·
-0027–0029 !49/P13.17a–d). No number is claimed in flight; the next
-migration-bearing MR claims **0030** up front in its description.
+0027–0029 !49/P13.17a–d). In-flight claims of the post-P13 backend
+hardening batch (issues #21 → #24 → #23, ONE MR each, declared merge
+order per rule 12 — each later MR chains on the earlier one's claim):
+**0030 is issue #21's** (loan_recoveries, `down_revision = '0029'`);
+issue #24's MR claims 0031–0032 next; issue #23's MR claims 0033 after
+that. The next free number after the batch is 0034.
+
+### Post-P13 hardening follow-up batch (issues #21/#24/#23) — status
+
+| Issue | Scope | Status |
+|---|---|---|
+| #21 | bad-debt recovery receipts for written-off loans (P13.15 A4) | 🔄 IN PROGRESS — claims 0030; merges FIRST in the batch; the merging maintainer flips this row with the evidence |
+| #24 | P13.15 N1 maker-checker for adjustments + N4 repayments append-only trigger | ❌ TODO — claims 0031–0032; merges AFTER #21's MR |
+| #23 | P13.16 N2 richer case dispositions + N3 post-closure outcome notes | ❌ TODO — claims 0033; merges AFTER #24's MR |
 
 ---
 
