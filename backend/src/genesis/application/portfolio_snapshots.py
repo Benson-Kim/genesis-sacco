@@ -1,6 +1,6 @@
 """Month-end portfolio snapshots: writer + backfill (P13.17a / DSA-1).
 
-Replaces the NPL-trend export's months × full-history rescans with
+Replaces the NPL-trend export's months x full-history rescans with
 incremental month-end snapshots (docs/DSA_HARDENING.md DSA-1) without
 changing any observable money semantics:
 

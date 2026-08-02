@@ -6,7 +6,7 @@ description). The SQL under test is imported from the production
 modules — the plans below are the statements the code actually runs.
 Tiny CI tables make seqscan the cheaper plan; the capture disables it
 for the session to prove each query is SERVABLE by an index (the
-P10–P13 precedent).
+P10-P13 precedent).
 
 Row-count evidence (P13.17 before/after): the NPL-trend export now
 executes ONE snapshot lookup (N index probes) plus ONE current-month

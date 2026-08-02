@@ -407,7 +407,7 @@ def test_npl_trend_export_serves_snapshots_and_matches_the_oracle() -> None:
         # first; the configured window is 6 months incl. current).
         by_month = {row[0]: row[1:] for row in after[1:]}
         for month, index in ((m0, 0), (m1, 1), (m2, 2), (m3, 3)):
-            loans, gross, npl_loans, npl_balance = _ORACLE[index]
+            _loans, gross, npl_loans, npl_balance = _ORACLE[index]
             label = f"{month.year:04d}-{month.month:02d}"
             # Ratio: npl_balance * 100 / gross, cent-rounded.
             expected_ratio = {0: "0.00", 1: "0.00", 2: "100.00", 3: "100.00"}[index]

@@ -17,7 +17,7 @@ One expand-only object backing P13.17(a):
   * portfolio_month_snapshots — the persisted month-end portfolio
     figures (gross outstanding, NPL balance, loan counts) that the
     NPL-trend export previously RECONSTRUCTED from the append-only
-    record for every configured month on every export (DSA-1: months ×
+    record for every configured month on every export (DSA-1: months x
     full-history rescans). A snapshot row is written exactly once when
     a month completes — at close_period under its exclusive per-tenant
     advisory barrier, or by the backfill job — using the SAME
