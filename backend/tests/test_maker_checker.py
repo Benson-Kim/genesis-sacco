@@ -611,8 +611,7 @@ def test_fm6_terminal_adjustment_states_never_move_via_sql() -> None:
         for probe in (
             "UPDATE repayment_adjustments SET status = 'pending_approval' "
             "WHERE id = CAST(:id AS uuid)",
-            "UPDATE repayment_adjustments SET status = 'rejected' "
-            "WHERE id = CAST(:id AS uuid)",
+            "UPDATE repayment_adjustments SET status = 'rejected' WHERE id = CAST(:id AS uuid)",
         ):
             with pytest.raises(DBAPIError, match="cannot move"):
                 async with tenant_session(factory(), tid) as session:

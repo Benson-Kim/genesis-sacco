@@ -222,7 +222,9 @@ END
 $$;
 """
 
-_DOWN = _DOWN_GUARD + """
+_DOWN = (
+    _DOWN_GUARD
+    + """
 DROP TRIGGER repayment_adjustments_write_once ON repayment_adjustments;
 DROP INDEX uq_repayment_adjustments_claim;
 DROP INDEX idx_repayment_adjustments_checker;
@@ -269,6 +271,7 @@ CREATE TRIGGER repayment_adjustments_write_once
     BEFORE UPDATE ON repayment_adjustments
     FOR EACH ROW EXECUTE FUNCTION forbid_repayment_adjustment_mutation();
 """
+)
 
 
 def upgrade() -> None:

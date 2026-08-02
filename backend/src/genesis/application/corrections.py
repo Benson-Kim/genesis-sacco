@@ -295,9 +295,7 @@ async def _require_distinct_non_assurance_checker(
     join), never from the JWT or a client-supplied flag.
     """
     if actor_id == maker_id:
-        raise ConflictError(
-            "the maker of an adjustment cannot check it (segregation of duties)"
-        )
+        raise ConflictError("the maker of an adjustment cannot check it (segregation of duties)")
     row = (
         await session.execute(
             text(
@@ -949,9 +947,7 @@ async def approve_repayment_adjustment(
     had_released_guarantees = False
     new_status: LoanStatus = ctx.loan_status
     if reopened:
-        had_released_guarantees = await _released_guarantees_exist(
-            session, tenant_id, ctx.loan_id
-        )
+        had_released_guarantees = await _released_guarantees_exist(session, tenant_id, ctx.loan_id)
         if had_released_guarantees:
             raise ConflictError(
                 f"loan {ctx.loan_id} cannot be reopened by this adjustment: its "

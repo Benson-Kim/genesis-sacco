@@ -69,10 +69,13 @@ END
 $$;
 """
 
-_DOWN = _DOWN_GUARD + """
+_DOWN = (
+    _DOWN_GUARD
+    + """
 DROP TRIGGER repayments_no_delete ON repayments;
 DROP TRIGGER repayments_no_update ON repayments;
 """
+)
 
 
 def upgrade() -> None:
