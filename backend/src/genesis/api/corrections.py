@@ -8,13 +8,16 @@ actor-scoped (the !29 lesson: a cross-actor replay misses).
 
 Permission gates (P4 matrix extension, decided and documented):
 
-  * adjustment / fee / write-off request — corrections x CREATE: the
-    MAKER actions (Accountant, System Admin per the seed).
-  * write-off vote / void / posting — corrections x APPROVE: the
-    CHECKER actions (Branch Manager, Credit Committee, System Admin).
-    User-level separation of duties is server-side on top: the
-    requester of a write-off can never vote on nor post it.
-  * write-off view — corrections x VIEW.
+  * adjustment request / fee / write-off request — corrections x
+    CREATE: the MAKER actions (Accountant, System Admin per the seed).
+  * adjustment approval / rejection, write-off vote / void / posting —
+    corrections x APPROVE: the CHECKER actions (Branch Manager, Credit
+    Committee, System Admin). User-level separation of duties is
+    server-side on top AND at the database (issue #24): the maker of
+    an adjustment can never check it (the 0031 SoD CHECK), assurance
+    roles can never be checker (!47 B2), and the requester of a
+    write-off can never vote on nor post it.
+  * adjustment / write-off view — corrections x VIEW.
 
 Money parameters NEVER travel in request bodies (v1.1 rule 1, FM5):
 fee amounts resolve server-side from P13.7 configuration (the request
@@ -65,6 +68,47 @@ class AdjustmentBody(BaseModel):
 
     repayment_id: uuid.UUID
     reason: str = Field(min_length=1, max_length=500)
+
+
+class AdjustmentApproveBody(BaseModel):
+    """Deliberately empty (issue #24): the checker approves the
+    PERSISTED snapshot — every figure comes from the pending
+    adjustment row (v1.1 rule 3); extra="forbid" -> 422 on any
+    caller-supplied field."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdjustmentRejectBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: int = Field(ge=1)
+
+
+class AdjustmentRecordOut(BaseModel):
+    """One adjustment workflow row (issue #24): the pending request a
+    checker reviews, or the terminal posted/rejected history."""
+
+    id: str
+    repayment_id: str
+    loan_id: str
+    original_transaction_id: str
+    reversal_transaction_id: str | None
+    maker_id: str
+    checker_id: str | None
+    reason: str
+    amount: str
+    penalties: str
+    interest: str
+    principal: str
+    would_reopen_loan: bool
+    status: str
+    loan_balance_at_request: str | None
+    loan_penalty_due_at_request: str | None
+    loan_status_at_request: str | None
+    decided_at: str | None
+    version: int
+    created_at: str
 
 
 class AdjustmentOut(BaseModel):
@@ -229,13 +273,77 @@ def _write_off_out(record: corrections_service.WriteOffRecord) -> WriteOffOut:
     )
 
 
+def _adjustment_out(record: corrections_service.AdjustmentRecord) -> AdjustmentRecordOut:
+    return AdjustmentRecordOut(
+        id=str(record.id),
+        repayment_id=str(record.repayment_id),
+        loan_id=str(record.loan_id),
+        original_transaction_id=str(record.original_transaction_id),
+        reversal_transaction_id=(
+            str(record.reversal_transaction_id) if record.reversal_transaction_id else None
+        ),
+        maker_id=str(record.maker_id),
+        checker_id=str(record.checker_id) if record.checker_id else None,
+        reason=record.reason,
+        amount=str(record.amount),
+        penalties=str(record.penalties),
+        interest=str(record.interest),
+        principal=str(record.principal),
+        would_reopen_loan=record.reopened_loan,
+        status=record.status.value,
+        loan_balance_at_request=(
+            str(record.loan_balance_at_request)
+            if record.loan_balance_at_request is not None
+            else None
+        ),
+        loan_penalty_due_at_request=(
+            str(record.loan_penalty_due_at_request)
+            if record.loan_penalty_due_at_request is not None
+            else None
+        ),
+        loan_status_at_request=record.loan_status_at_request,
+        decided_at=record.decided_at.isoformat() if record.decided_at else None,
+        version=record.version,
+        created_at=record.created_at.isoformat(),
+    )
+
+
 @router.post("/corrections/repayment-adjustments", status_code=201)
-async def adjust_repayment(body: AdjustmentBody, ctx: CorrectionsCreateCtx) -> AdjustmentOut:
-    """Reverse one repayment's complete allocation and restore loan state."""
+async def request_repayment_adjustment(
+    body: AdjustmentBody, ctx: CorrectionsCreateCtx
+) -> AdjustmentRecordOut:
+    """MAKER phase (issue #24): create a PENDING adjustment bound to
+    the persisted approval snapshot — nothing posts until a distinct
+    checker approves."""
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        result = await corrections_service.adjust_repayment(
+        record = await corrections_service.request_repayment_adjustment(
             session, ctx.tenant_id, ctx.user_id, body.repayment_id, reason=body.reason
+        )
+    return _adjustment_out(record)
+
+
+@router.get("/corrections/repayment-adjustments/{adjustment_id}")
+async def get_repayment_adjustment(
+    adjustment_id: uuid.UUID, ctx: CorrectionsViewCtx
+) -> AdjustmentRecordOut:
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        record = await corrections_service.get_adjustment(session, ctx.tenant_id, adjustment_id)
+    return _adjustment_out(record)
+
+
+@router.post("/corrections/repayment-adjustments/{adjustment_id}/approval", status_code=201)
+async def approve_repayment_adjustment(
+    adjustment_id: uuid.UUID, body: AdjustmentApproveBody, ctx: CorrectionsApproveCtx
+) -> AdjustmentOut:
+    """CHECKER phase (issue #24): re-verify the snapshot under the full
+    lock set (409 on drift, posting nothing), then reverse the
+    repayment's complete allocation and restore loan state."""
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        result = await corrections_service.approve_repayment_adjustment(
+            session, ctx.tenant_id, ctx.user_id, adjustment_id
         )
     return AdjustmentOut(
         adjustment_id=str(result.adjustment_id),
@@ -250,6 +358,20 @@ async def adjust_repayment(body: AdjustmentBody, ctx: CorrectionsCreateCtx) -> A
         loan_status=result.status.value,
         reopened=result.reopened,
     )
+
+
+@router.post("/corrections/repayment-adjustments/{adjustment_id}/reject")
+async def reject_repayment_adjustment(
+    adjustment_id: uuid.UUID, body: AdjustmentRejectBody, ctx: CorrectionsApproveCtx
+) -> AdjustmentRecordOut:
+    """Reject a pending adjustment (checker decision, optimistic-locked)
+    — frees the one-live-adjustment slot for a fresh request."""
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        record = await corrections_service.reject_repayment_adjustment(
+            session, ctx.tenant_id, ctx.user_id, adjustment_id, version=body.version
+        )
+    return _adjustment_out(record)
 
 
 @router.post("/corrections/fees", status_code=201)

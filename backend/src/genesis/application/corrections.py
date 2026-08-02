@@ -2,17 +2,23 @@
 
 The documented correction paths the P7 reversal blocks require:
 
-  1. Repayment adjustment — under the loan row lock, posts the
-     reversing ledger legs via P7 (A1 storno: the reversal carries
-     reversal_of_id and mirrors the COMPLETE original allocation —
-     penalties/interest/principal together; a partial-leg reversal is
-     unrepresentable), writes the negative-linked repayments
-     correction row, then RECOMPUTES loans.balance / penalty_due /
-     schedule paid_amounts from the surviving append-only history
-     (v1.1 rule 2). A closed loan re-opens ONLY via the explicit
-     CLOSED -> ACTIVE branch of the loan status map (FM6). One atomic
-     transaction; a second adjustment of the same repayment is blocked
-     by the atomic repayment_adjustments claim (FM2, v1.1 rule 5).
+  1. Repayment adjustment — TWO-PHASE maker-checker since issue #24
+     (N1): the MAKER requests a PENDING adjustment that captures the
+     approval snapshot under the full lock set; a DISTINCT CHECKER
+     approves — snapshot re-verified component-by-component, 409 on
+     drift posting nothing — and only then, under the loan row lock,
+     the reversing ledger legs post via P7 (A1 storno: the reversal
+     carries reversal_of_id and mirrors the COMPLETE original
+     allocation — penalties/interest/principal together; a partial-leg
+     reversal is unrepresentable), the negative-linked repayments
+     correction row is written, and loans.balance / penalty_due /
+     schedule paid_amounts are RECOMPUTED from the surviving
+     append-only history (v1.1 rule 2). A closed loan re-opens ONLY
+     via the explicit CLOSED -> ACTIVE branch of the loan status map
+     (FM6). Execution is one atomic transaction; a second LIVE
+     adjustment of the same repayment is blocked by the atomic
+     partial-unique claim (FM2, v1.1 rule 5 — a rejected request
+     frees the slot).
 
   2. Misc fee posting — the prototype "Fee" drawer type. Fee amounts
      come EXCLUSIVELY from P13.7 tenant configuration (v1.1 rule 1):
@@ -35,15 +41,22 @@ correction of a closed-period repayment posts into the open period
 REFERENCING the original, and the original row is never rewritten
 (append-only, 1.5).
 
-MAKER-CHECKER (A3): corrections are the fraud channel. Every route is
-gated by the DEDICATED corrections module permissions (never generic
-transactions:edit); the adjustment records its maker distinctly and
-immutably (repayment_adjustments.maker_id, write-once); corrections
-audit under their own entity strings (repayment_adjustments /
-loan_write_offs) so they are filterable in review; adjustments route
-through the P13.7 approval-band authority check for their amount
-(reuse, 1.1). Write-off approval IS the committee quorum — no parallel
-approval mechanism exists.
+MAKER-CHECKER (A3, hardened to the full N1 standard by issue #24):
+corrections are the fraud channel. Every route is gated by the
+DEDICATED corrections module permissions (never generic
+transactions:edit); corrections audit under their own entity strings
+(repayment_adjustments / loan_write_offs) so they are filterable in
+review; adjustments route through the P13.7 approval-band authority
+check for their amount (reuse, 1.1). Repayment adjustments are
+TWO-PHASE since issue #24: the MAKER creates a PENDING adjustment
+bound to a persisted approval snapshot (loan balance / penalty_due /
+status at request), and a DISTINCT CHECKER approves — re-verifying
+every snapshot component under the full lock set (409 on drift,
+posting nothing) — before the reversal posts. Maker <> checker is
+enforced server-side AND by the 0031 ck_repayment_adjustments_sod
+CHECK (collusion-resistant); assurance roles (the Auditor) can never
+be checker (the !47 B2 principle). Write-off approval IS the
+committee quorum — no parallel approval mechanism exists.
 
 WRITE-OFF IS NOT FORGIVENESS (A4): written_off zeroes the performing
 receivable via the WO- provisioning posting, but the legal claim on
@@ -76,14 +89,20 @@ without cash is a future explicit branch, recorded on issue #21 at
 close-out; until it exists, full recovery is the only unblock.
 
 Lock order (docs/diagrams/lock-order.md, updated in this MR):
-adjustment takes transactions (T0, FOR UPDATE — serialises against
-generic reversal and concurrent adjustment) -> members FOR SHARE (T1,
-holds off a concurrent terminal exit) -> loans FOR UPDATE (T4, the
-terminal node of the money chain — the P10/P13.8 pattern); write-off
-request/execution takes loan_write_offs (T0) -> loans FOR UPDATE (T4);
-votes/voids lock the write-off row alone (the DECL pattern); the fee
-posting takes members FOR SHARE (T1) only, then the advisory posting
-tier. The issue-#21 recovery receipt takes loan_write_offs (T0, FOR
+adjustment request takes transactions (T0, FOR UPDATE — serialises
+against generic reversal and concurrent adjustment workflows) ->
+members FOR SHARE (T1, holds off a concurrent terminal exit) -> loans
+FOR UPDATE (T4, the terminal node of the money chain — the P10/P13.8
+pattern); adjustment APPROVAL (issue #24) locks the pending
+repayment_adjustments row FOR UPDATE FIRST (the workflow anchor,
+above T0 — the WOFF/E22 anchor-first shape; nothing anywhere acquires
+an adjustment row while holding T0+ locks: the request INSERTs it as
+a plain write under the chain) and then retakes the SAME chain;
+adjustment rejection locks the adjustment row alone (the DECL/WOFF
+void pattern); write-off request/execution takes loan_write_offs (T0)
+-> loans FOR UPDATE (T4); votes/voids lock the write-off row alone
+(the DECL pattern); the fee posting takes members FOR SHARE (T1)
+only, then the advisory posting tier. The issue-#21 recovery receipt takes loan_write_offs (T0, FOR
 UPDATE — serialises concurrent receipts and pins the claim math) ->
 members FOR SHARE (T1, holds off a concurrent terminal exit — the E20
 argument) -> loans FOR UPDATE (T4, anchors the full-recovery guarantee
@@ -228,8 +247,150 @@ async def post_misc_fee(
 
 
 # ---------------------------------------------------------------------------
-# Repayment adjustment (P13.15 part 1)
+# Repayment adjustment (P13.15 part 1; two-phase maker-checker, issue #24 N1)
 # ---------------------------------------------------------------------------
+
+
+class AdjustmentStatus(StrEnum):
+    """The 0031 adjustment workflow machine (issue #24 N1)."""
+
+    PENDING_APPROVAL = "pending_approval"
+    POSTED = "posted"
+    REJECTED = "rejected"
+
+
+_ADJUSTMENT_ALLOWED: dict[AdjustmentStatus, frozenset[AdjustmentStatus]] = {
+    AdjustmentStatus.PENDING_APPROVAL: frozenset(
+        {AdjustmentStatus.POSTED, AdjustmentStatus.REJECTED}
+    ),
+    AdjustmentStatus.POSTED: frozenset(),
+    AdjustmentStatus.REJECTED: frozenset(),
+}
+
+
+def adjustment_transition(current: AdjustmentStatus, target: AdjustmentStatus) -> None:
+    """THE single gatekeeper for adjustment status moves (gate 1.4).
+
+    The only writers are approve/reject below; the regenerated 0031
+    write-once trigger enforces the same machine at the database, so a
+    terminal row can never move again even via direct SQL. Illegal
+    moves raise.
+    """
+    if target not in _ADJUSTMENT_ALLOWED[current]:
+        raise ConflictError(f"adjustment cannot move from '{current.value}' to '{target.value}'")
+
+
+async def _require_distinct_non_assurance_checker(
+    session: AsyncSession, tenant_id: uuid.UUID, actor_id: uuid.UUID, maker_id: uuid.UUID
+) -> None:
+    """Segregation of duties for the CHECKER actions (issue #24 N1).
+
+    The checker must be a DIFFERENT user than the maker — the 0031
+    ck_repayment_adjustments_sod CHECK is the collusion-resistant DB
+    backstop behind this guard — and must not hold an assurance
+    function (the !47 B2 principle: the Auditor reviews the corrections
+    trail and therefore can never act inside it). The role name is
+    resolved SERVER-SIDE from the actor's role_id (users -> roles
+    join), never from the JWT or a client-supplied flag.
+    """
+    if actor_id == maker_id:
+        raise ConflictError(
+            "the maker of an adjustment cannot check it (segregation of duties)"
+        )
+    row = (
+        await session.execute(
+            text(
+                "SELECT r.name FROM users u "
+                "JOIN roles r ON r.id = u.role_id AND r.tenant_id = CAST(:tid AS uuid) "
+                "WHERE u.id = CAST(:uid AS uuid) AND u.tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"uid": str(actor_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        # Fail closed (the enforce_authority_band posture): an actor
+        # the users table cannot vouch for checks nothing.
+        raise ForbiddenError(f"actor {actor_id} has no resolvable role for the checker action")
+    if str(row[0]) in ASSURANCE_ROLES:
+        raise ConflictError(
+            "assurance roles are excluded from checking adjustments (audit independence)"
+        )
+
+
+@dataclass(frozen=True)
+class AdjustmentRecord:
+    id: uuid.UUID
+    repayment_id: uuid.UUID
+    loan_id: uuid.UUID
+    original_transaction_id: uuid.UUID
+    reversal_transaction_id: uuid.UUID | None
+    maker_id: uuid.UUID
+    checker_id: uuid.UUID | None
+    reason: str
+    amount: Decimal
+    penalties: Decimal
+    interest: Decimal
+    principal: Decimal
+    reopened_loan: bool
+    status: AdjustmentStatus
+    loan_balance_at_request: Decimal | None
+    loan_penalty_due_at_request: Decimal | None
+    loan_status_at_request: str | None
+    decided_at: datetime | None
+    version: int
+    created_at: datetime
+
+
+_ADJUSTMENT_COLS = (
+    "id, repayment_id, loan_id, original_transaction_id, "
+    "reversal_transaction_id, maker_id, checker_id, reason, amount, "
+    "penalties, interest, principal, reopened_loan, status, "
+    "loan_balance_at_request, loan_penalty_due_at_request, "
+    "loan_status_at_request, decided_at, version, created_at"
+)
+
+
+def _row_to_adjustment(row: Any) -> AdjustmentRecord:
+    return AdjustmentRecord(
+        id=uuid.UUID(str(row[0])),
+        repayment_id=uuid.UUID(str(row[1])),
+        loan_id=uuid.UUID(str(row[2])),
+        original_transaction_id=uuid.UUID(str(row[3])),
+        reversal_transaction_id=uuid.UUID(str(row[4])) if row[4] is not None else None,
+        maker_id=uuid.UUID(str(row[5])),
+        checker_id=uuid.UUID(str(row[6])) if row[6] is not None else None,
+        reason=str(row[7]),
+        amount=Decimal(str(row[8])),
+        penalties=Decimal(str(row[9])),
+        interest=Decimal(str(row[10])),
+        principal=Decimal(str(row[11])),
+        reopened_loan=bool(row[12]),
+        status=AdjustmentStatus(str(row[13])),
+        loan_balance_at_request=Decimal(str(row[14])) if row[14] is not None else None,
+        loan_penalty_due_at_request=Decimal(str(row[15])) if row[15] is not None else None,
+        loan_status_at_request=str(row[16]) if row[16] is not None else None,
+        decided_at=row[17],
+        version=int(row[18]),
+        created_at=row[19],
+    )
+
+
+async def get_adjustment(
+    session: AsyncSession, tenant_id: uuid.UUID, adjustment_id: uuid.UUID
+) -> AdjustmentRecord:
+    """One adjustment by id; explicit tenant predicate on top of RLS."""
+    row = (
+        await session.execute(
+            text(
+                f"SELECT {_ADJUSTMENT_COLS} FROM repayment_adjustments "  # noqa: S608
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"id": str(adjustment_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"repayment adjustment {adjustment_id} not found")
+    return _row_to_adjustment(row)
 
 
 @dataclass(frozen=True)
@@ -312,7 +473,8 @@ async def _rebuild_schedule_paid_amounts(
                 "WHERE r.loan_id = CAST(:lid AS uuid) "
                 "AND r.tenant_id = CAST(:tid AS uuid) AND r.amount > 0 "
                 "AND NOT EXISTS (SELECT 1 FROM repayment_adjustments a "
-                " WHERE a.repayment_id = r.id AND a.tenant_id = r.tenant_id) "
+                " WHERE a.repayment_id = r.id AND a.tenant_id = r.tenant_id "
+                " AND a.status = 'posted') "
                 "GROUP BY r.id, t.occurred_at ORDER BY t.occurred_at, r.id"
             ),
             {
@@ -378,20 +540,20 @@ async def _reconstructed_balance(
         (CR) — every caller writes a repayments row in the same
         transaction (post_repayment / post_allocated_repayment), so
         both are IN the join.
-      * the adjustment reversal (DR mirror) — adjust_repayment writes
-        the negative-linked repayments correction row for it, IN the
-        join. Generic post_reversal refuses repayment-linked
-        transactions and has no API route; the only other receivable
-        carrier it could mirror is a disbursement, and no code path
-        calls it with one.
+      * the adjustment reversal (DR mirror) — approve_repayment_
+        adjustment writes the negative-linked repayments correction
+        row for it, IN the join. Generic post_reversal refuses
+        repayment-linked transactions and has no API route; the only
+        other receivable carrier it could mirror is a disbursement,
+        and no code path calls it with one.
       * build_exit_settlement_posting (CR) — only reachable through
         the P12 exit settlement, which terminal-EXITs the member in
-        the same transaction; adjust_repayment refuses EXITED members
-        before this check can run.
+        the same transaction; the adjustment chain refuses EXITED
+        members before this check can run.
       * build_write_off_posting (CR) — only reachable through
         post_write_off, which moves the loan to WRITTEN_OFF in the
-        same transaction; adjust_repayment refuses written-off loans
-        before this check can run.
+        same transaction; the adjustment chain refuses written-off
+        loans before this check can run.
 
     Every other builder (fees, deposits, dividends, transfers, and
     BOTH interest postings — loan accrual uses interest.receivable,
@@ -419,46 +581,61 @@ async def _reconstructed_balance(
     return to_cents(principal - Decimal(str(net)))
 
 
-async def adjust_repayment(
-    session: AsyncSession,
-    tenant_id: uuid.UUID,
-    actor_id: uuid.UUID,
-    repayment_id: uuid.UUID,
-    *,
-    reason: str,
-) -> AdjustmentResult:
-    """Reverse one repayment's COMPLETE allocation and restore loan
-    state, atomically (FM1-FM3, FM6-FM8; gates 1.4, 1.5).
+@dataclass(frozen=True)
+class _AdjustmentLockContext:
+    """Everything both phases read under the FULL adjustment lock set
+    (shared VERBATIM by the maker's request and the checker's approval
+    — the P12 request/posting snapshot-bind-reverify precedent)."""
+
+    repayment_id: uuid.UUID
+    loan_id: uuid.UUID
+    original_txn_id: uuid.UUID
+    member_id: uuid.UUID
+    amount: Decimal
+    principal_disbursed: Decimal
+    balance: Decimal
+    penalty_due: Decimal
+    loan_status: LoanStatus
+
+
+async def _released_guarantees_exist(
+    session: AsyncSession, tenant_id: uuid.UUID, loan_id: uuid.UUID
+) -> bool:
+    """FM10 read (review B2): released guarantees linked to this loan.
+
+    Plain read under the caller's loan FOR UPDATE (no guarantee-row
+    lock — no new lock-graph edge); release itself only ever happens
+    under the same loan lock (P10 closure) or the P13.14 guarantee
+    workflow, so the read cannot race a concurrent release.
+    """
+    row = (
+        await session.execute(
+            text(
+                "SELECT 1 FROM guarantees "
+                "WHERE loan_id = CAST(:lid AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) "
+                "AND status = 'released' LIMIT 1"
+            ),
+            {"lid": str(loan_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    return row is not None
+
+
+async def _lock_adjustment_chain(
+    session: AsyncSession, tenant_id: uuid.UUID, repayment_id: uuid.UUID
+) -> _AdjustmentLockContext:
+    """Take the FULL adjustment lock set and read the loan position.
 
     Lock order: transactions FOR UPDATE (T0) -> members FOR SHARE (T1)
     -> loans FOR UPDATE (T4) — see the module docstring and
-    lock-order.md. The member FOR SHARE holds off a concurrent
-    terminal exit (which takes the member row FOR UPDATE) so an
-    adjustment can never re-open a loan underneath a posting
+    lock-order.md (E20/E21). The member FOR SHARE holds off a
+    concurrent terminal exit (which takes the member row FOR UPDATE)
+    so an adjustment can never re-open a loan underneath a posting
     settlement (A5: an EXITED member's loan is refused — the P12
-    terminal-state rule).
-
-    REOPEN SECURITY GATE (FM10, review B2 — banking principle: a
-    discharged surety cannot be unilaterally re-bound). P10 releases
-    the loan's guarantees at closure, legally discharging the
-    guarantors; an adjustment that reopens the loan would therefore
-    resurrect an UNSECURED exposure. Default posture is REFUSE: when
-    the CLOSED -> ACTIVE branch would trigger and any guarantee linked
-    to this loan is 'released', the adjustment is a 409 (least
-    disclosure: the error names the guarantee disposition, never
-    amounts or guarantors). The operator's remedy is the P13.14
-    substitution / re-pledge flow — re-secure the exposure FIRST, then
-    adjust. The read runs under the loan FOR UPDATE (no guarantee-row
-    lock is taken — no new lock-graph edge); release itself only ever
-    happens under the same loan lock (P10 closure) or the P13.14
-    guarantee workflow, so the plain read cannot race a concurrent
-    release. If the closed loan had no released guarantees the reopen
-    proceeds, and the audit row carries an explicit
-    had_released_guarantees: false so an auditor can prove the check
-    ran. The guarantor reinstatement/substitution policy decision this
-    defers is recorded on issue #21.
+    terminal-state rule). Shared verbatim by request (the maker's
+    snapshot capture) and approval (the checker's re-verification).
     """
-    ts = datetime.now(UTC)
     repayment = (
         await session.execute(
             text(
@@ -533,106 +710,271 @@ async def adjust_repayment(
     status = LoanStatus(str(loan_row[4]))
     if status is LoanStatus.WRITTEN_OFF:
         # A5/A4: the receivable is derecognised and the claim lives in
-        # the write-once snapshot; recovery is the future explicit
+        # the write-once snapshot; recovery is the explicit issue-#21
         # branch, never an adjustment.
         raise ConflictError(f"loan {loan_id} is written off; adjustments are refused")
+    return _AdjustmentLockContext(
+        repayment_id=repayment_id,
+        loan_id=loan_id,
+        original_txn_id=original_txn_id,
+        member_id=member_id,
+        amount=amount,
+        principal_disbursed=principal_disbursed,
+        balance=balance,
+        penalty_due=penalty_due,
+        loan_status=status,
+    )
 
-    # FM10 (review B2): an adjustment that would REOPEN a closed loan
-    # must not resurrect an unsecured exposure. P10 released the
-    # guarantees at closure (guarantees.status -> 'released'), legally
-    # discharging the guarantors — so if any released guarantee is
-    # linked to this loan, REFUSE before any side effect. Plain read
-    # under the loan FOR UPDATE (no guarantee lock — no new lock-graph
-    # edge; every release path holds this same loan lock). Least
-    # disclosure: the category, never amounts or guarantor identities.
-    had_released_guarantees = False
-    if status is LoanStatus.CLOSED:
-        released_row = (
-            await session.execute(
-                text(
-                    "SELECT 1 FROM guarantees "
-                    "WHERE loan_id = CAST(:lid AS uuid) "
-                    "AND tenant_id = CAST(:tid AS uuid) "
-                    "AND status = 'released' LIMIT 1"
-                ),
-                {"lid": str(loan_id), "tid": str(tenant_id)},
-            )
-        ).first()
-        had_released_guarantees = released_row is not None
-        if had_released_guarantees:
-            raise ConflictError(
-                f"loan {loan_id} cannot be reopened by this adjustment: its "
-                "guarantees were released at closure and the guarantors are "
-                "discharged; substitute or re-pledge security (P13.14) "
-                "before adjusting"
-            )
+
+async def request_repayment_adjustment(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    repayment_id: uuid.UUID,
+    *,
+    reason: str,
+) -> AdjustmentRecord:
+    """Phase 1 — the MAKER requests an adjustment (issue #24 N1).
+
+    Creates a PENDING adjustment capturing the persisted approval
+    SNAPSHOT (loan balance / penalty_due / status at request — v1.1
+    rule 3) under the FULL lock set; NOTHING posts here. The reversal,
+    the negative correction row and the state restore happen only in
+    approve_repayment_adjustment, executed by a DISTINCT checker.
+
+    FM10 (review B2 — banking principle: a discharged surety cannot be
+    unilaterally re-bound): when the CLOSED -> ACTIVE reopen branch
+    would trigger and any guarantee linked to this loan is 'released',
+    the request is refused (least disclosure: the category, never
+    amounts or guarantors); the operator's remedy is the P13.14
+    substitution / re-pledge flow. The same check re-runs at approval,
+    which is the binding gate — this one fails fast.
+
+    FM2: the one-LIVE-adjustment-per-repayment claim is atomic (v1.1
+    rule 5) on the 0031 PARTIAL unique (status <> 'rejected'): a
+    pending or posted adjustment blocks a second request; a rejected
+    one frees the slot for a fresh request.
+    """
+    ctx = await _lock_adjustment_chain(session, tenant_id, repayment_id)
+
+    if ctx.loan_status is LoanStatus.CLOSED and await _released_guarantees_exist(
+        session, tenant_id, ctx.loan_id
+    ):
+        raise ConflictError(
+            f"loan {ctx.loan_id} cannot be reopened by this adjustment: its "
+            "guarantees were released at closure and the guarantors are "
+            "discharged; substitute or re-pledge security (P13.14) "
+            "before adjusting"
+        )
 
     # The COMPLETE original allocation, reconstructed from the
     # append-only legs (A1: all components together, never a subset).
     penalties, interest, principal = await _allocation_from_legs(
-        session, tenant_id, original_txn_id
+        session, tenant_id, ctx.original_txn_id
     )
-    if to_cents(penalties + interest + principal) != amount:
+    if to_cents(penalties + interest + principal) != ctx.amount:
         raise ConflictError(
-            f"transaction {original_txn_id} legs do not reconstruct the repayment amount"
+            f"transaction {ctx.original_txn_id} legs do not reconstruct the repayment amount"
         )
 
-    # A3: adjustments above the configured band route through the SAME
-    # authority check as approvals (reuse, 1.1) — under the loan lock.
-    await enforce_authority_band(session, tenant_id, actor_id, amount)
+    # A3: the MAKER's band — adjustments above the configured band are
+    # refused at request time (reuse of the P13.7 check, 1.1); the
+    # CHECKER is band-checked again at approval (they ratify).
+    await enforce_authority_band(session, tenant_id, actor_id, ctx.amount)
 
     # Reopened? Decided HERE, under the loan lock and BEFORE the claim
-    # INSERT: reopened_loan is write-once (the 0025 trigger permits no
-    # post-insert change of it — only the reversal_transaction_id fill
-    # from NULL), so the decision must ride the INSERT itself. FM6: the
-    # ONE documented branch of the status map.
-    reopened = False
-    new_status: LoanStatus = status
-    if status is LoanStatus.CLOSED:
-        new_status = loan_transition(LoanStatus.CLOSED, LoanStatus.ACTIVE)
-        reopened = True
+    # INSERT: reopened_loan is write-once (pinned by the 0031 trigger),
+    # and approval re-verifies loan_status_at_request, so the decision
+    # cannot silently drift (FM6: the ONE documented reopen branch —
+    # validated against the status map here, executed at approval).
+    reopened = ctx.loan_status is LoanStatus.CLOSED
+    if reopened:
+        loan_transition(LoanStatus.CLOSED, LoanStatus.ACTIVE)
 
-    # FM2: the atomic one-adjustment-per-repayment claim (v1.1 rule 5).
+    # FM2: the atomic one-live-adjustment-per-repayment claim (v1.1
+    # rule 5) carrying the persisted approval snapshot (v1.1 rule 3).
     adjustment_id = uuid.uuid4()
     claimed = (
         await session.execute(
             text(
                 "INSERT INTO repayment_adjustments "
                 "(id, tenant_id, repayment_id, loan_id, original_transaction_id, "
-                " maker_id, reason, amount, penalties, interest, principal, reopened_loan) "
+                " maker_id, reason, amount, penalties, interest, principal, "
+                " reopened_loan, status, loan_balance_at_request, "
+                " loan_penalty_due_at_request, loan_status_at_request) "
                 "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:rid AS uuid), "
                 " CAST(:lid AS uuid), CAST(:txn AS uuid), CAST(:maker AS uuid), "
-                " :reason, :amount, :pen, :int, :prn, :reopened) "
-                "ON CONFLICT (tenant_id, repayment_id) DO NOTHING RETURNING id"
+                " :reason, :amount, :pen, :int, :prn, :reopened, :status, "
+                " :snap_balance, :snap_penalty, :snap_status) "
+                "ON CONFLICT (tenant_id, repayment_id) WHERE status <> 'rejected' "
+                "DO NOTHING RETURNING id"
             ),
             {
                 "id": str(adjustment_id),
                 "tid": str(tenant_id),
                 "rid": str(repayment_id),
-                "lid": str(loan_id),
-                "txn": str(original_txn_id),
+                "lid": str(ctx.loan_id),
+                "txn": str(ctx.original_txn_id),
                 "maker": str(actor_id),
                 "reason": reason,
-                "amount": str(amount),
+                "amount": str(ctx.amount),
                 "pen": str(penalties),
                 "int": str(interest),
                 "prn": str(principal),
                 "reopened": reopened,
+                "status": AdjustmentStatus.PENDING_APPROVAL.value,
+                "snap_balance": str(ctx.balance),
+                "snap_penalty": str(ctx.penalty_due),
+                "snap_status": ctx.loan_status.value,
             },
         )
     ).first()
     if claimed is None:
-        raise ConflictError(f"repayment {repayment_id} has already been adjusted")
+        raise ConflictError(
+            f"repayment {repayment_id} has already been adjusted or has a pending adjustment"
+        )
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="correction.adjustment_requested",
+        entity="repayment_adjustments",
+        entity_id=str(adjustment_id),
+        after={
+            "repayment_id": str(repayment_id),
+            "loan_id": str(ctx.loan_id),
+            "member_id": str(ctx.member_id),
+            "original_txn_id": str(ctx.original_txn_id),
+            "amount": str(ctx.amount),
+            "penalties": str(penalties),
+            "interest": str(interest),
+            "principal": str(principal),
+            "status": AdjustmentStatus.PENDING_APPROVAL.value,
+            "loan_balance_at_request": str(ctx.balance),
+            "loan_penalty_due_at_request": str(ctx.penalty_due),
+            "loan_status_at_request": ctx.loan_status.value,
+            "would_reopen_loan": reopened,
+            "reason": reason,
+        },
+    )
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="correction.adjustment_requested",
+        payload={
+            "adjustment_id": str(adjustment_id),
+            "repayment_id": str(repayment_id),
+            "loan_id": str(ctx.loan_id),
+            "member_id": str(ctx.member_id),
+            "amount": str(ctx.amount),
+        },
+    )
+    return await get_adjustment(session, tenant_id, adjustment_id)
+
+
+async def approve_repayment_adjustment(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    adjustment_id: uuid.UUID,
+) -> AdjustmentResult:
+    """Phase 2 — a DISTINCT CHECKER approves and executes, atomically
+    (issue #24 N1; FM1-FM3, FM6-FM8; gates 1.4, 1.5).
+
+    Snapshot-bind-reverify (v1.1 rule 3, the P12/!30 pattern —
+    sequence-snapshot-bind-reverify.md): lock the pending adjustment
+    row FOR UPDATE (the workflow anchor — the WOFF pattern) -> status
+    gatekeeper + segregation-of-duties checks (maker <> checker,
+    server-side AND the 0031 DB CHECK behind it; assurance roles
+    excluded, the !47 B2 principle) -> retake the FULL lock set
+    (transactions -> member FOR SHARE -> loan FOR UPDATE, shared
+    verbatim with the request) -> re-verify EVERY snapshot component
+    (balance, penalty_due, loan status) -> 409 on drift, posting
+    NOTHING -> only then the storno posting, the negative correction
+    row, the one-shot status/checker/decided_at/reversal fill, and the
+    state restore — ONE transaction (kill-switch tested).
+    """
+    ts = datetime.now(UTC)
+    row = (
+        await session.execute(
+            text(
+                f"SELECT {_ADJUSTMENT_COLS} FROM repayment_adjustments "  # noqa: S608
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
+            ),
+            {"id": str(adjustment_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"repayment adjustment {adjustment_id} not found")
+    record = _row_to_adjustment(row)
+    adjustment_transition(record.status, AdjustmentStatus.POSTED)
+    await _require_distinct_non_assurance_checker(session, tenant_id, actor_id, record.maker_id)
+
+    ctx = await _lock_adjustment_chain(session, tenant_id, record.repayment_id)
+
+    # Component-by-component re-verification against the persisted
+    # snapshot (never "the current state"): any drift since the request
+    # — a repayment, a penalty accrual, a closure — is a 409 and
+    # NOTHING posts; reject the stale request and raise a fresh one.
+    drifted = [
+        name
+        for name, matches in (
+            ("balance", ctx.balance == record.loan_balance_at_request),
+            ("penalty_due", ctx.penalty_due == record.loan_penalty_due_at_request),
+            ("status", ctx.loan_status.value == record.loan_status_at_request),
+        )
+        if not matches
+    ]
+    if drifted:
+        raise ConflictError(
+            f"adjustment {adjustment_id} snapshot has drifted since request "
+            f"({', '.join(drifted)}); reject it and request afresh"
+        )
+    penalties, interest, principal = await _allocation_from_legs(
+        session, tenant_id, ctx.original_txn_id
+    )
+    if (penalties, interest, principal) != (
+        record.penalties,
+        record.interest,
+        record.principal,
+    ):  # pragma: no cover - the legs are append-only
+        raise ConflictError(
+            f"adjustment {adjustment_id} legs no longer reconstruct the pinned allocation"
+        )
+
+    # FM10 re-check under the loan lock — approval is the BINDING gate
+    # (a P13.14 release could have moved between the phases).
+    reopened = record.reopened_loan
+    had_released_guarantees = False
+    new_status: LoanStatus = ctx.loan_status
+    if reopened:
+        had_released_guarantees = await _released_guarantees_exist(
+            session, tenant_id, ctx.loan_id
+        )
+        if had_released_guarantees:
+            raise ConflictError(
+                f"loan {ctx.loan_id} cannot be reopened by this adjustment: its "
+                "guarantees were released at closure and the guarantors are "
+                "discharged; substitute or re-pledge security (P13.14) "
+                "before adjusting"
+            )
+        new_status = loan_transition(LoanStatus.CLOSED, LoanStatus.ACTIVE)
+
+    # A3: the CHECKER ratifies the money movement — the same P13.7
+    # band check the maker passed at request time (reuse, 1.1).
+    await enforce_authority_band(session, tenant_id, actor_id, ctx.amount)
 
     # A1/A2: the storno posting — mirror-image legs linked via
     # reversal_of_id, occurred_at = NOW (server-resolved in _post; the
     # open-period gate applies). The original row is never rewritten.
     reversal: PostingResult = await post_reversal(
-        session, tenant_id, original_txn_id, actor_id, allow_repayment_correction=True
+        session, tenant_id, ctx.original_txn_id, actor_id, allow_repayment_correction=True
     )
 
     # The negative-linked repayments correction row (the storno pair in
     # the servicing history; conservation: original + correction = 0).
+    # A NEW row, never an edit — the 0032 append-only triggers stand
+    # behind this discipline (issue #24 N4).
     await session.execute(
         text(
             "INSERT INTO repayments (id, tenant_id, loan_id, transaction_id, amount) "
@@ -642,41 +984,50 @@ async def adjust_repayment(
         {
             "id": str(uuid.uuid4()),
             "tid": str(tenant_id),
-            "lid": str(loan_id),
+            "lid": str(ctx.loan_id),
             "txn": str(reversal.txn_id),
-            "amount": str(to_cents(-amount)),
+            "amount": str(to_cents(-ctx.amount)),
         },
     )
 
-    # Fill the reversal linkage on the claim row — the ONLY post-insert
-    # UPDATE the 0025 write-once trigger permits (reversal_transaction_id
-    # from NULL); every other column, reopened_loan included, was final
-    # at INSERT time. Audited money history stays intact.
-    linked = cast(
+    # The decision write — the ONLY post-insert mutation the 0031
+    # write-once trigger permits: the pending -> posted transition plus
+    # the one-shot NULL -> value fills (checker_id, decided_at,
+    # reversal_transaction_id). Every pinned column stays untouched;
+    # the ck_repayment_adjustments_sod CHECK re-verifies maker <>
+    # checker at the database. Audited money history stays intact.
+    decided = cast(
         CursorResult[Any],
         await session.execute(
             text(
                 "UPDATE repayment_adjustments "
-                "SET reversal_transaction_id = CAST(:rev AS uuid) "
+                "SET status = :st, checker_id = CAST(:chk AS uuid), decided_at = :ts, "
+                "reversal_transaction_id = CAST(:rev AS uuid), "
+                "version = version + 1, updated_at = :ts "
                 "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
             ),
             {
+                "st": AdjustmentStatus.POSTED.value,
+                "chk": str(actor_id),
+                "ts": ts,
                 "rev": str(reversal.txn_id),
                 "id": str(adjustment_id),
                 "tid": str(tenant_id),
             },
         ),
     )
-    if linked.rowcount != 1:  # pragma: no cover - unreachable under the claim
+    if decided.rowcount != 1:  # pragma: no cover - unreachable under the row lock
         raise ConflictError(f"adjustment {adjustment_id} vanished mid-transaction")
 
     # State restore RECOMPUTES from the surviving history (A1, FM1):
     # the exact inverse of the forward update for the loan-row figures,
     # and a full replay for the schedule (its forward application was
-    # capped per row, so add-back alone cannot restore it).
-    balance_after = to_cents(balance + principal)
-    penalty_after = to_cents(penalty_due + penalties)
-    await _rebuild_schedule_paid_amounts(session, tenant_id, loan_id)
+    # capped per row, so add-back alone cannot restore it). The rebuild
+    # runs AFTER the status write above so the now-POSTED adjustment
+    # voids its repayment in the replay.
+    balance_after = to_cents(ctx.balance + record.principal)
+    penalty_after = to_cents(ctx.penalty_due + record.penalties)
+    await _rebuild_schedule_paid_amounts(session, tenant_id, ctx.loan_id)
 
     await session.execute(
         text(
@@ -692,7 +1043,7 @@ async def adjust_repayment(
             "st": new_status.value,
             "reopened": reopened,
             "ts": ts,
-            "id": str(loan_id),
+            "id": str(ctx.loan_id),
             "tid": str(tenant_id),
         },
     )
@@ -700,7 +1051,9 @@ async def adjust_repayment(
     # FM8 conservation self-check, in-transaction: the restored balance
     # must reconstruct from the append-only ledger to the cent. A
     # mismatch aborts the WHOLE adjustment (no partial state).
-    reconstructed = await _reconstructed_balance(session, tenant_id, loan_id, principal_disbursed)
+    reconstructed = await _reconstructed_balance(
+        session, tenant_id, ctx.loan_id, ctx.principal_disbursed
+    )
     if reconstructed != balance_after:
         raise ConflictError(
             f"adjustment aborted: restored balance {balance_after} does not "
@@ -711,15 +1064,17 @@ async def adjust_repayment(
         "balance": str(balance_after),
         "penalty_due": str(penalty_after),
         "status": new_status.value,
-        "repayment_id": str(repayment_id),
-        "original_txn_id": str(original_txn_id),
+        "adjustment_status": AdjustmentStatus.POSTED.value,
+        "checker_id": str(actor_id),
+        "repayment_id": str(record.repayment_id),
+        "original_txn_id": str(ctx.original_txn_id),
         "reversal_txn_ref": reversal.txn_ref,
-        "amount": str(amount),
-        "penalties": str(penalties),
-        "interest": str(interest),
-        "principal": str(principal),
+        "amount": str(ctx.amount),
+        "penalties": str(record.penalties),
+        "interest": str(record.interest),
+        "principal": str(record.principal),
         "reopened": reopened,
-        "reason": reason,
+        "reason": record.reason,
     }
     if reopened:
         # FM10 evidence: the auditor can prove the released-guarantee
@@ -734,9 +1089,10 @@ async def adjust_repayment(
         entity="repayment_adjustments",
         entity_id=str(adjustment_id),
         before={
-            "balance": str(balance),
-            "penalty_due": str(penalty_due),
-            "status": status.value,
+            "balance": str(ctx.balance),
+            "penalty_due": str(ctx.penalty_due),
+            "status": ctx.loan_status.value,
+            "adjustment_status": AdjustmentStatus.PENDING_APPROVAL.value,
         },
         after=audit_after,
     )
@@ -746,11 +1102,11 @@ async def adjust_repayment(
         event_type="correction.repayment_adjusted",
         payload={
             "adjustment_id": str(adjustment_id),
-            "loan_id": str(loan_id),
-            "member_id": str(member_id),
-            "repayment_id": str(repayment_id),
+            "loan_id": str(ctx.loan_id),
+            "member_id": str(ctx.member_id),
+            "repayment_id": str(record.repayment_id),
             "reversal_txn_ref": reversal.txn_ref,
-            "amount": str(amount),
+            "amount": str(ctx.amount),
             "reopened": reopened,
         },
     )
@@ -758,15 +1114,97 @@ async def adjust_repayment(
         adjustment_id=adjustment_id,
         reversal_txn_id=reversal.txn_id,
         reversal_txn_ref=reversal.txn_ref,
-        amount=amount,
-        penalties=penalties,
-        interest=interest,
-        principal=principal,
+        amount=ctx.amount,
+        penalties=record.penalties,
+        interest=record.interest,
+        principal=record.principal,
         balance_after=balance_after,
         penalty_due_after=penalty_after,
         status=new_status,
         reopened=reopened,
     )
+
+
+async def reject_repayment_adjustment(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    adjustment_id: uuid.UUID,
+    *,
+    version: int,
+) -> AdjustmentRecord:
+    """Reject (void) a pending adjustment — optimistic-locked (issue
+    #24; the WOFF void shape).
+
+    Locks the adjustment row ALONE (a single-node locker — the
+    DECL/WOFF vote/void pattern; no money lock is taken because
+    nothing posts). The rejection is a CHECKER decision: the maker
+    cannot decide their own request (the SoD posture, server-side +
+    the 0031 DB CHECK — a maker withdrawing a mistaken request asks a
+    checker to reject it), and assurance roles are excluded (the !47
+    B2 principle). Rejecting frees the one-live-adjustment slot (the
+    0031 partial unique excludes rejected rows), so a corrected
+    request can be raised afresh; the rejected row itself is terminal,
+    write-once workflow history.
+    """
+    ts = datetime.now(UTC)
+    row = (
+        await session.execute(
+            text(
+                "SELECT status, maker_id, version FROM repayment_adjustments "
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
+            ),
+            {"id": str(adjustment_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"repayment adjustment {adjustment_id} not found")
+    current = AdjustmentStatus(str(row[0]))
+    maker_id = uuid.UUID(str(row[1]))
+    adjustment_transition(current, AdjustmentStatus.REJECTED)
+    await _require_distinct_non_assurance_checker(session, tenant_id, actor_id, maker_id)
+    result = cast(
+        CursorResult[Any],
+        await session.execute(
+            text(
+                "UPDATE repayment_adjustments "
+                "SET status = :st, checker_id = CAST(:chk AS uuid), decided_at = :ts, "
+                "version = version + 1, updated_at = :ts "
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "AND version = :ver"
+            ),
+            {
+                "st": AdjustmentStatus.REJECTED.value,
+                "chk": str(actor_id),
+                "ts": ts,
+                "id": str(adjustment_id),
+                "tid": str(tenant_id),
+                "ver": version,
+            },
+        ),
+    )
+    if result.rowcount != 1:
+        raise ConflictError(f"stale version {version} for adjustment {adjustment_id}")
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="correction.adjustment_rejected",
+        entity="repayment_adjustments",
+        entity_id=str(adjustment_id),
+        before={"adjustment_status": current.value},
+        after={
+            "adjustment_status": AdjustmentStatus.REJECTED.value,
+            "checker_id": str(actor_id),
+        },
+    )
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="correction.adjustment_rejected",
+        payload={"adjustment_id": str(adjustment_id)},
+    )
+    return await get_adjustment(session, tenant_id, adjustment_id)
 
 
 # ---------------------------------------------------------------------------
