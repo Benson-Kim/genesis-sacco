@@ -6,6 +6,9 @@
   MR. PLANNED (Pn) elements are flipped to as-built by the executing
   prompt's MR (the PHASE B2 common rules; P14/P16/P19/P20 each carry
   that instruction explicitly).
+  Reconciled to main @ 8f46aa54250ff1a066af423924f3eb54a9c72fb7
+  (P-DIAG drift MR: migration head 0022 -> 0032; the P13.17c
+  idempotency purge worker added as the fourth worker loop).
   Traceability: every as-built box cites its module below and in the
   companion table (§2); the checked-in spot-check script
   `c4-spot-check.py` verifies every cited module path exists at the
@@ -14,9 +17,9 @@
 
 # C4 L1 — System context (P-DIAG.1)
 
-What exists on `main` at the authoring SHA: **one deployed FastAPI
-backend**, PostgreSQL 16 with **forced RLS**, Redis, and three worker
-loops sharing the backend codebase. Every client and every external
+What exists on `main` at the reconciliation SHA: **one deployed
+FastAPI backend**, PostgreSQL 16 with **forced RLS**, Redis, and four
+worker loops sharing the backend codebase. Every client and every external
 provider is still `PLANNED (Pn)` — today the only principals are staff
 users calling the JSON API directly (there is no member principal
 until P14.5).
@@ -33,9 +36,10 @@ flowchart TB
         OBW["Outbox dispatch worker<br/>genesis/infrastructure/outbox_worker.py run_worker"]
         EXW["Export render worker<br/>genesis/infrastructure/export_worker.py run_worker"]
         DMW["Dormancy cycle worker — P13.13<br/>genesis/infrastructure/dormancy_worker.py run_worker"]
+        IDW["Idempotency purge worker — P13.17c<br/>genesis/infrastructure/idempotency_worker.py run_worker"]
     end
 
-    PG[("PostgreSQL 16 — FORCED RLS on every tenant table<br/>ADR-0002; genesis/infrastructure/tenancy.py<br/>alembic head 0022")]
+    PG[("PostgreSQL 16 — FORCED RLS on every tenant table<br/>ADR-0002; genesis/infrastructure/tenancy.py<br/>alembic head 0032")]
     RD[("Redis<br/>readiness probe + auth rate limiting<br/>genesis/infrastructure/redis_client.py<br/>genesis/infrastructure/rate_limit.py")]
 
     WEB["Web admin — Next.js<br/>PLANNED (P14)"]
@@ -51,6 +55,7 @@ flowchart TB
     OBW -->|"FOR UPDATE SKIP LOCKED claim; no domain locks held at dispatch<br/>(lock-order.md §3, outbox row)"| PG
     EXW -->|"REPEATABLE READ snapshot per export job"| PG
     DMW -->|"per-tenant dormancy batches"| PG
+    IDW -->|"batched purge of expired idempotency keys<br/>(lock-order.md §3, idempotency row)"| PG
     OBW -.->|"dispatch via idempotent adapters"| PROV
 
     WEB -.-> API
@@ -70,11 +75,12 @@ flowchart TB
 | Box | As-built? | Source on main @ `08541b8` |
 |---|---|---|
 | Staff users | as-built | the only authenticated principal: `genesis/api/authz.py` (`RequirePermission`), roles/matrix `genesis/domain/rbac.py`; JWT + OTP step-up `genesis/api/auth.py`, `genesis/application/auth.py` |
-| Backend API | as-built | `genesis/api/app.py` `create_app` — the single FastAPI app; 18 routers enumerated in [`c4-component.md`](c4-component.md) |
+| Backend API | as-built | `genesis/api/app.py` `create_app` — the single FastAPI app; 20 routers enumerated in [`c4-component.md`](c4-component.md) |
 | Outbox dispatch worker | as-built | `genesis/infrastructure/outbox_worker.py` (`run_worker` L182, `dispatch_due` L48) |
 | Export render worker | as-built | `genesis/infrastructure/export_worker.py` (`run_worker` L53, `run_export_cycle` L31) |
 | Dormancy cycle worker | as-built (P13.13 !32; resilience hardened by !37) | `genesis/infrastructure/dormancy_worker.py` (`run_worker` L106, `run_dormancy_cycle` L65) |
-| PostgreSQL 16, forced RLS | as-built | RLS enabled AND forced per ADR-0002 (`docs/adr/`), session scoping `genesis/infrastructure/tenancy.py` (`tenant_session` L12); migration head `0022` (`backend/migrations/versions/0022_dividend_dormant_policy.py`) |
+| Idempotency purge worker | as-built (P13.17c !49) | `genesis/infrastructure/idempotency_worker.py` (`run_worker`) → `genesis/application/idempotency_purge.py` (`purge_expired_idempotency_keys`); expiry semantics never depend on it running (the `expires_at > now()` fence in `genesis/api/idempotency.py`) |
+| PostgreSQL 16, forced RLS | as-built | RLS enabled AND forced per ADR-0002 (`docs/adr/`), session scoping `genesis/infrastructure/tenancy.py` (`tenant_session` L12); migration head `0032` (`backend/migrations/versions/0032_repayments_append_only.py`) |
 | Redis | as-built | `genesis/infrastructure/redis_client.py` (readyz), `genesis/infrastructure/rate_limit.py` (auth rate limiting) |
 | Web admin | PLANNED (P14) | not on main (an open scaffold MR !13 exists but is unmerged — as-built means merged) |
 | Admin mobile / Member mobile | PLANNED (P16/P17/P18) | not on main (draft !11 unmerged) |
