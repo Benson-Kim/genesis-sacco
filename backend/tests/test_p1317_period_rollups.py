@@ -799,6 +799,155 @@ def test_backfill_409s_on_fabricated_divergent_rollup_row() -> None:
     asyncio.run(run())
 
 
+def test_write_period_rollups_marker_precedes_verify() -> None:
+    """N3b pin (review !49 + supervisor finding): write_period_rollups
+    statement order is inserts (both tables) -> rollup_at marker
+    UPDATE -> verify BOTH stored sets. The marker UPDATE is the
+    serialisation point — its FOR NO KEY UPDATE on the period row
+    waits out every in-flight fenced INSERT's FOR SHARE (0028
+    trigger) — so a verify that ran BEFORE it could miss a fabricated
+    row that commits while the marker waits: fabricator INSERTs
+    (trigger FOR SHARE, held to commit) -> verify passes under READ
+    COMMITTED (uncommitted row invisible) -> marker UPDATE blocks on
+    the FOR SHARE -> fabricator commits -> marker proceeds -> the
+    fabricated row is frozen inside a "complete" period that verify
+    never saw. With verify AFTER the marker, the fabricated row is
+    committed and visible, and ConflictError rolls back everything
+    including the marker. Falsifiable: restore the pre-N3b order
+    (verify before marker) and the order assertions below fail.
+
+    This is the statement-order pin (the two-session race itself is
+    not deterministically schedulable from the test harness — the
+    trigger's conflicting lock mode is pinned deterministically by
+    test_late_insert_fence_lock_conflicts_with_marker_update)."""
+
+    class _RecordingSession:
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+            self.statements: list[str] = []
+
+        async def execute(self, statement: Any, params: Any = None) -> Any:
+            self.statements.append(str(statement))
+            return await self._inner.execute(statement, params)
+
+    async def run() -> None:
+        tid, uid, _ = await seed_actor()
+        _, (p1_start, p1_end), _ = await _seed_history(tid)
+        await _insert_legacy_closed_period(tid, p1_start, p1_end)
+        async with tenant_session(factory(), tid) as session:
+            period_id = (
+                await session.execute(
+                    text(
+                        "SELECT id FROM accounting_periods "
+                        "WHERE tenant_id = CAST(:tid AS uuid) AND period_start = :ps"
+                    ),
+                    {"tid": str(tid), "ps": p1_start},
+                )
+            ).scalar_one()
+        async with tenant_session(factory(), tid) as session:
+            recorder = _RecordingSession(session)
+            counts = await rollups_service.write_period_rollups(
+                recorder,  # type: ignore[arg-type]
+                tid,
+                uid,
+                period_id=uuid.UUID(str(period_id)),
+                period_start=p1_start,
+                period_end=p1_end,
+                source="backfill",
+            )
+        # Hand oracle (_seed_history): p1 holds the 15000.00 deposit ->
+        # two account rows, one member balance.
+        assert (counts.accounts, counts.members) == (2, 1)
+
+        recorded = recorder.statements
+
+        def first_index(fragment: str) -> int:
+            return next(i for i, s in enumerate(recorded) if fragment in s)
+
+        account_inserts = [
+            i for i, s in enumerate(recorded) if s.startswith("INSERT INTO account_period_balances")
+        ]
+        member_inserts = [
+            i for i, s in enumerate(recorded) if s.startswith("INSERT INTO member_period_balances")
+        ]
+        marker = first_index("SET rollup_at = now()")
+        verify_accounts = first_index(
+            "SELECT account, debits, credits FROM account_period_balances"
+        )
+        verify_members = first_index("SELECT member_id, balance FROM member_period_balances")
+        assert account_inserts and member_inserts, "expected rollup INSERTs were not executed"
+        assert max(account_inserts) < marker, "account INSERTs must precede the marker UPDATE"
+        assert max(member_inserts) < marker, "member INSERTs must precede the marker UPDATE"
+        assert marker < verify_accounts, "verify (accounts) must FOLLOW the marker UPDATE"
+        assert marker < verify_members, "verify (members) must FOLLOW the marker UPDATE"
+
+    asyncio.run(run())
+
+
+def test_late_insert_fence_lock_conflicts_with_marker_update() -> None:
+    """N3 pin (review !49, corrected lock mode), deterministic via
+    NOWAIT — no timing dependence:
+
+      * session A INSERTs a rollup row for an unrolled closed period
+        and holds it uncommitted: the 0028 fence's period probe holds
+        SELECT .. FOR SHARE on the period row until A ends;
+      * session B then probes the period row with FOR KEY SHARE
+        NOWAIT — it SUCCEEDS, proving the review's prescribed
+        FOR KEY SHARE would NOT have conflicted with a concurrent
+        fence holder (nor, symmetrically, would a KEY-SHARE fence
+        have blocked the marker's FOR NO KEY UPDATE: the MVCC window
+        would have stayed open);
+      * session C probes with FOR NO KEY UPDATE NOWAIT — the EXACT
+        lock the rollup_at marker UPDATE acquires — and fails with
+        'could not obtain lock': the fence really serialises against
+        the marker.
+
+    Falsifiable: revert the fence probe to a plain SELECT (or to
+    FOR KEY SHARE) and session C acquires the lock, failing this
+    test. Session A is rolled back; no fabricated row survives."""
+
+    class _Abort(Exception):
+        pass
+
+    async def run() -> None:
+        tid, uid, _ = await seed_actor()
+        _, (p1_start, p1_end), _ = await _seed_history(tid)
+        await _insert_legacy_closed_period(tid, p1_start, p1_end)
+
+        period_probe = (
+            "SELECT 1 FROM accounting_periods "
+            "WHERE tenant_id = CAST(:tid AS uuid) AND period_start = :ps "
+        )
+        with pytest.raises(_Abort):
+            async with tenant_session(factory(), tid) as session_a:
+                await session_a.execute(
+                    text(
+                        "INSERT INTO account_period_balances "
+                        "(id, tenant_id, period_start, account, debits, credits) "
+                        "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :ps, "
+                        "'cash.bank', '1.00', '0.00')"
+                    ),
+                    {"id": str(uuid.uuid4()), "tid": str(tid), "ps": p1_start},
+                )
+                async with tenant_session(factory(), tid) as session_b:
+                    await session_b.execute(
+                        text(period_probe + "FOR KEY SHARE NOWAIT"),
+                        {"tid": str(tid), "ps": p1_start},
+                    )
+                with pytest.raises(DBAPIError, match="could not obtain lock"):
+                    async with tenant_session(factory(), tid) as session_c:
+                        await session_c.execute(
+                            text(period_probe + "FOR NO KEY UPDATE NOWAIT"),
+                            {"tid": str(tid), "ps": p1_start},
+                        )
+                raise _Abort  # roll session A back: the row must not land
+
+        rows = await _count(tid, "SELECT count(*) FROM account_period_balances")
+        assert rows == 0, "the fabricated probe row must not survive the rollback"
+
+    asyncio.run(run())
+
+
 def test_member_rollup_cross_tenant_member_unrepresentable() -> None:
     """N2 probe (review !49): referential-integrity checks BYPASS RLS,
     so with the original plain REFERENCES members(id) a direct-SQL row

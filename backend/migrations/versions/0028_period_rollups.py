@@ -44,9 +44,14 @@ P13.17(b):
       - LATE-INSERT fences: once a period's rollup_at is set, INSERT
         into either rollup table for that period is refused — a
         fabricated extra account/member row after completion is
-        unrepresentable; before completion, a fabricated row is
-        excluded from every read (marker not set) and collides with
-        the backfill's claim, which verifies and 409s loudly;
+        unrepresentable; the fence's period probe is a LOCKING read
+        (SELECT .. FOR SHARE, review !49 N3 — FOR SHARE conflicts with
+        the marker UPDATE's FOR NO KEY UPDATE where the review's
+        FOR KEY SHARE would not), so an in-flight INSERT and the
+        marker UPDATE serialise instead of racing through an MVCC
+        window; before completion, a fabricated row is excluded from
+        every read (marker not set) and collides with the writer's
+        post-marker verify, which 409s loudly;
       - composite FKs to accounting_periods(tenant_id, period_start):
         a rollup row for a period that was never closed is
         unrepresentable;
@@ -192,13 +197,31 @@ CREATE TRIGGER member_period_balances_write_once
 
 CREATE FUNCTION forbid_late_period_rollup_insert() RETURNS trigger
 LANGUAGE plpgsql AS $fn$
+DECLARE
+    marker timestamptz;
 BEGIN
-    IF EXISTS (
-        SELECT 1 FROM accounting_periods p
-        WHERE p.tenant_id = NEW.tenant_id
-          AND p.period_start = NEW.period_start
-          AND p.rollup_at IS NOT NULL
-    ) THEN
+    -- LOCKING probe (review !49 N3, with a corrected lock mode): a
+    -- plain SELECT would not serialise against the concurrent
+    -- transaction SETTING rollup_at, leaving an MVCC window in which
+    -- a fabricated row commits and is frozen inside a "complete"
+    -- period. Conflict-matrix reasoning for the mode chosen:
+    --   * setting rollup_at is a NON-KEY UPDATE, which acquires
+    --     FOR NO KEY UPDATE on the period row;
+    --   * FOR KEY SHARE (the review's prescription) does NOT conflict
+    --     with FOR NO KEY UPDATE - the window would stay open;
+    --   * FOR SHARE DOES conflict with FOR NO KEY UPDATE - a rollup
+    --     INSERT blocks against an in-flight marker UPDATE and vice
+    --     versa, and the post-wait re-read sees the committed marker.
+    -- close_period and the backfill never self-block: they reach this
+    -- trigger inside the SAME transaction that already owns the
+    -- period row (close inserted it; the backfill holds it FOR
+    -- UPDATE), and a transaction never waits on its own locks.
+    SELECT p.rollup_at INTO marker
+    FROM accounting_periods p
+    WHERE p.tenant_id = NEW.tenant_id
+      AND p.period_start = NEW.period_start
+    FOR SHARE OF p;
+    IF marker IS NOT NULL THEN
         RAISE EXCEPTION
             '% rows for period % are complete (rollup_at set): late inserts '
             'are refused (P13.17 FM2)', TG_TABLE_NAME, NEW.period_start;

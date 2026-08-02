@@ -312,13 +312,27 @@ async def write_period_rollups(
     """Write one closed period's rollups + completeness marker (FM2).
 
     Runs inside the caller's transaction (close_period, or one backfill
-    batch holding the period row FOR UPDATE). Claims every row via
-    ON CONFLICT DO NOTHING (v1.1 rule 5), then verifies the STORED set
-    equals the freshly computed set exactly — any divergence
-    (pre-existing fabricated row, extra row, wrong figure) raises
-    ConflictError (409, loud) and rolls the whole write back; nothing
-    is ever self-healed. Finally sets accounting_periods.rollup_at
-    (write-once, 0028) which arms the DB-level late-insert fence.
+    batch holding the period row FOR UPDATE). Statement order is a
+    correctness invariant (review !49 N3b), pinned by
+    tests/test_p1317_period_rollups.py:
+
+      1. INSERT the rollup rows for BOTH tables (ON CONFLICT DO
+         NOTHING claims, v1.1 rule 5);
+      2. set accounting_periods.rollup_at — THE SERIALISATION POINT:
+         the marker UPDATE takes FOR NO KEY UPDATE on the period row,
+         which conflicts with the FOR SHARE the 0028 late-insert
+         fence takes for every in-flight direct-SQL INSERT, so the
+         marker waits out every such fabricator before it can set;
+      3. only THEN verify the STORED sets equal the freshly computed
+         sets. Verify MUST follow the marker: with verify first (the
+         pre-N3b order), a fabricator whose INSERT held FOR SHARE
+         could commit invisibly AFTER the verify read but BEFORE the
+         marker UPDATE unblocked — frozen inside a "complete" period
+         that verify never saw. After the marker, every such row is
+         committed and visible to the verify read; any divergence
+         (fabricated row, extra row, wrong figure) raises
+         ConflictError (409, loud) and rolls back EVERYTHING,
+         including the marker. Nothing is ever self-healed.
     """
     d_from = _utc_midnight(period_start)
     d_to_excl = _utc_midnight(period_end + timedelta(days=1))
@@ -355,21 +369,6 @@ async def write_period_rollups(
                 "cr": str(credits),
             },
         )
-    stored_accounts = {
-        str(row[0]): (Decimal(str(row[1])), Decimal(str(row[2])))
-        for row in (
-            await session.execute(
-                text(_EXISTING_ACCOUNT_ROWS_SQL),
-                {"tid": str(tenant_id), "ps": period_start},
-            )
-        ).all()
-    }
-    if stored_accounts != accounts:
-        raise ConflictError(
-            f"account rollups for period {period_start.isoformat()} diverge "
-            "from the ledger reconstruction; investigate before proceeding"
-        )
-
     member_rows = (
         await session.execute(
             text(_PERIOD_MEMBERS_SQL),
@@ -403,21 +402,10 @@ async def write_period_rollups(
                 "bal": str(balance),
             },
         )
-    stored_members = {
-        uuid.UUID(str(row[0])): Decimal(str(row[1]))
-        for row in (
-            await session.execute(
-                text(_EXISTING_MEMBER_ROWS_SQL),
-                {"tid": str(tenant_id), "ps": period_start},
-            )
-        ).all()
-    }
-    if stored_members != members:
-        raise ConflictError(
-            f"member balances for period {period_start.isoformat()} diverge "
-            "from the ledger reconstruction; investigate before proceeding"
-        )
-
+    # The serialisation point (N3b): the marker's FOR NO KEY UPDATE
+    # waits out every in-flight fenced INSERT's FOR SHARE before it
+    # sets; the verifies BELOW therefore observe every row that could
+    # ever be frozen inside this period.
     marked = cast(
         CursorResult[Any],
         await session.execute(
@@ -433,6 +421,35 @@ async def write_period_rollups(
         # Unreachable under the close claim / the backfill's period row
         # lock; defence in depth (a completed period is never re-rolled).
         raise ConflictError(f"period {period_start.isoformat()} is already rolled up")
+
+    stored_accounts = {
+        str(row[0]): (Decimal(str(row[1])), Decimal(str(row[2])))
+        for row in (
+            await session.execute(
+                text(_EXISTING_ACCOUNT_ROWS_SQL),
+                {"tid": str(tenant_id), "ps": period_start},
+            )
+        ).all()
+    }
+    if stored_accounts != accounts:
+        raise ConflictError(
+            f"account rollups for period {period_start.isoformat()} diverge "
+            "from the ledger reconstruction; investigate before proceeding"
+        )
+    stored_members = {
+        uuid.UUID(str(row[0])): Decimal(str(row[1]))
+        for row in (
+            await session.execute(
+                text(_EXISTING_MEMBER_ROWS_SQL),
+                {"tid": str(tenant_id), "ps": period_start},
+            )
+        ).all()
+    }
+    if stored_members != members:
+        raise ConflictError(
+            f"member balances for period {period_start.isoformat()} diverge "
+            "from the ledger reconstruction; investigate before proceeding"
+        )
     # One audit row per period; exact figures live in the write-once
     # rollup tables themselves (v1.1 rule 7).
     await record_audit(
