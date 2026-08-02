@@ -173,10 +173,7 @@ def test_p1311_dividend_queries_are_index_backed() -> None:
         # tie-break arbitrarily (the issue #20 class, RF4 disposition).
         # At scale the partial index wins (pre-filtered, smaller).
         # Falsifiable: drop them and the no-seq-scan gate fails.
-        assert (
-            "idx_members_dividend_scan" in scan_plan
-            or "uq_members_tenant_id_id" in scan_plan
-        )
+        assert "idx_members_dividend_scan" in scan_plan or "uq_members_tenant_id_id" in scan_plan
         assert "uq_dividend_distributions_claim" in scan_plan
         assert "Seq Scan" not in scan_plan
         # Issue #19 P3: the disposition scan is served by the 0022
