@@ -482,10 +482,7 @@ def test_fm2_concurrent_direct_sql_inserts_serialise_on_the_claim_anchor() -> No
         async with tenant_session(factory(), tid) as session:
             definition = (
                 await session.execute(
-                    text(
-                        "SELECT pg_get_functiondef("
-                        "'check_recovery_within_claim()'::regprocedure)"
-                    )
+                    text("SELECT pg_get_functiondef('check_recovery_within_claim()'::regprocedure)")
                 )
             ).scalar_one()
         assert "FOR UPDATE OF w" in str(definition)
