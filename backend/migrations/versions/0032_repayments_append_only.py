@@ -50,7 +50,10 @@ CREATE TRIGGER repayments_no_delete
     FOR EACH ROW EXECUTE FUNCTION forbid_row_mutation();
 """
 
-_DOWN = """
+#: The loud-refusal guard, exposed separately so the falsifiability
+#: test can execute it against a database holding correction history
+#: (the 0017 _DOWN_GUARD precedent).
+_DOWN_GUARD = """
 -- LOUD REFUSAL (0017/0020/0025 precedent): a negative row IS recorded
 -- correction history — the forensic evidence the triggers protect.
 -- Dropping the append-only discipline over it is refused.
@@ -64,7 +67,9 @@ BEGIN
     END IF;
 END
 $$;
+"""
 
+_DOWN = _DOWN_GUARD + """
 DROP TRIGGER repayments_no_delete ON repayments;
 DROP TRIGGER repayments_no_update ON repayments;
 """

@@ -199,7 +199,10 @@ CREATE TRIGGER repayment_adjustments_write_once
     FOR EACH ROW EXECUTE FUNCTION forbid_repayment_adjustment_mutation();
 """
 
-_DOWN = """
+#: The loud-refusal guard, exposed separately so the falsifiability
+#: test can execute it against a database holding workflow history
+#: (the 0017 _DOWN_GUARD precedent).
+_DOWN_GUARD = """
 -- LOUD REFUSAL (0017/0020 precedent): pending/rejected requests are
 -- audit-relevant workflow history, and the checker attribution of a
 -- posted adjustment is the N1 control itself — neither is ever
@@ -217,7 +220,9 @@ BEGIN
     END IF;
 END
 $$;
+"""
 
+_DOWN = _DOWN_GUARD + """
 DROP TRIGGER repayment_adjustments_write_once ON repayment_adjustments;
 DROP INDEX uq_repayment_adjustments_claim;
 DROP INDEX idx_repayment_adjustments_checker;
