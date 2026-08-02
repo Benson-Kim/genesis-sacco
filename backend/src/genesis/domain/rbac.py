@@ -52,6 +52,19 @@ ROLE_NAMES: tuple[str, ...] = (
     AUDITOR,
 )
 
+#: Assurance functions (the !47 B2 segregation-of-duties principle,
+#: three lines of defense): roles whose FUNCTION is reviewing the
+#: trail are excluded from acting inside the processes they audit —
+#: collections assignability (P13.16) and the issue-#24 maker-checker
+#: CHECKER actions — even where their RBAC grants would otherwise
+#: allow it (the Auditor views everything BY DESIGN, so the permission
+#: matrix alone can never express this exclusion). Identified by role
+#: NAME: names are the codebase's canonical role identity (the seeded
+#: matrix is keyed by ROLE_NAMES and the roles table carries no
+#: role-type flag column); consumers resolve the name SERVER-SIDE from
+#: the actor's role_id, never from a client-supplied flag.
+ASSURANCE_ROLES: frozenset[str] = frozenset({AUDITOR})
+
 _ADMIN_MODULES = frozenset({Module.SETTINGS, Module.ACCESS_CONTROL})
 
 RoleMatrix = dict[Module, dict[Action, bool]]

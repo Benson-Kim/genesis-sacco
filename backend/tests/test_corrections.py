@@ -256,13 +256,33 @@ async def _repayment_id_for_txn(tid: uuid.UUID, txn_id: uuid.UUID) -> uuid.UUID:
     return uuid.UUID(str(rid))
 
 
+async def _request(
+    tid: uuid.UUID, actor: uuid.UUID, repayment_id: uuid.UUID, reason: str = "teller keying error"
+) -> corrections_service.AdjustmentRecord:
+    async with tenant_session(factory(), tid) as session:
+        return await corrections_service.request_repayment_adjustment(
+            session, tid, actor, repayment_id, reason=reason
+        )
+
+
+async def _approve(
+    tid: uuid.UUID, checker: uuid.UUID, adjustment_id: uuid.UUID
+) -> corrections_service.AdjustmentResult:
+    async with tenant_session(factory(), tid) as session:
+        return await corrections_service.approve_repayment_adjustment(
+            session, tid, checker, adjustment_id
+        )
+
+
 async def _adjust(
     tid: uuid.UUID, actor: uuid.UUID, repayment_id: uuid.UUID, reason: str = "teller keying error"
 ) -> corrections_service.AdjustmentResult:
-    async with tenant_session(factory(), tid) as session:
-        return await corrections_service.adjust_repayment(
-            session, tid, actor, repayment_id, reason=reason
-        )
+    """Two-phase since issue #24 (N1): the MAKER requests, then a
+    DISTINCT freshly-seeded System Admin CHECKER approves — composing
+    both phases preserves the P13.15 single-call test shape."""
+    pending = await _request(tid, actor, repayment_id, reason=reason)
+    checker, _ = await _seed_extra_user(tid, "System Admin")
+    return await _approve(tid, checker, pending.id)
 
 
 async def _loan_state(tid: uuid.UUID, loan_id: uuid.UUID) -> tuple[Decimal, Decimal, str]:
@@ -564,15 +584,25 @@ def test_fm3_interleaving_repay_then_adjust() -> None:
 
 
 def test_fm3_live_race_adjustment_and_repayment_serialise_on_the_loan_row() -> None:
-    """The live race: adjust(repayment 1) concurrent with a new 500.00
-    repayment. Both must succeed (serialised by the loan FOR UPDATE,
-    never deadlocked) and the final state must reconcile to the cent
-    whichever order won: penalty_due == 150 - repayment 2's penalty
-    allocation, balance == 24,000 - repayment 2's principal allocation
-    (both read from the append-only legs), and the independent ledger
-    reconstruction equals loans.balance. Falsifiable: drop the loan
-    FOR UPDATE from either path and the lost-update leaves the ledger
-    reconstruction unequal to the stored balance."""
+    """The live race (two-phase since issue #24): a PENDING adjustment
+    of repayment 1 exists; its APPROVAL races a new 500.00 repayment.
+    The loan FOR UPDATE serialises them (never a deadlock) and the
+    snapshot-bind-reverify decides the loser deterministically:
+
+      * approval wins -> repayment 2 applies to the RESTORED state
+        (balance 24,000, penalty 150, inst1 open): pen2 = min(500,150)
+        = 150.00, so penalty == 150 - pen2 and balance == 24,000 -
+        prn2 (allocations read from the append-only legs);
+      * repayment 2 wins -> the approval finds balance drifted
+        (21,890 - prn2 != snapshot 21,890) and 409s POSTING NOTHING:
+        the adjustment stays pending, penalty stays 0.00 (nothing was
+        due, so pen2 = 0), balance == 21,890 - prn2.
+
+    BOTH branches must reconcile the stored balance to the independent
+    ledger reconstruction. Falsifiable: drop the loan FOR UPDATE from
+    either path and the lost update leaves the reconstruction unequal
+    to the stored balance; drop the snapshot re-verification and the
+    losing branch posts anyway."""
 
     async def run() -> None:
         tid, actor, _ = await _seed_actor()
@@ -581,14 +611,15 @@ def test_fm3_live_race_adjustment_and_repayment_serialise_on_the_loan_row() -> N
         await _seed_penalty(tid, loan_id, "150.00")
         first = await _repay(tid, actor, loan_id, "2500.00")
         first_rid = await _repayment_id_for_txn(tid, first.txn_id)
+        pending = await _request(tid, actor, first_rid)
+        checker, _ = await _seed_extra_user(tid, "System Admin")
 
-        results = await asyncio.gather(
-            _adjust(tid, actor, first_rid),
+        approve_outcome, repay_outcome = await asyncio.gather(
+            _approve(tid, checker, pending.id),
             _repay(tid, actor, loan_id, "500.00"),
             return_exceptions=True,
         )
-        for outcome in results:
-            assert not isinstance(outcome, BaseException), outcome
+        assert not isinstance(repay_outcome, BaseException), repay_outcome
 
         balance, penalty, status = await _loan_state(tid, loan_id)
         assert status == "active"
@@ -610,8 +641,22 @@ def test_fm3_live_race_adjustment_and_repayment_serialise_on_the_loan_row() -> N
                     {"l": str(loan_id), "first": str(first.txn_id)},
                 )
             ).one()
-            assert penalty == Decimal("150.00") - Decimal(str(pen2))
-            assert balance == Decimal("24000.00") - Decimal(str(prn2))
+            record = await corrections_service.get_adjustment(session, tid, pending.id)
+            if isinstance(approve_outcome, BaseException):
+                # Repayment 2 won: the approval drifted and posted
+                # NOTHING — the adjustment is still pending.
+                assert isinstance(approve_outcome, ConflictError), approve_outcome
+                assert "drifted" in str(approve_outcome)
+                assert record.status is corrections_service.AdjustmentStatus.PENDING_APPROVAL
+                assert penalty == Decimal("0.00")  # nothing was due; pen2 = 0
+                assert Decimal(str(pen2)) == Decimal("0.00")
+                assert balance == Decimal("21890.00") - Decimal(str(prn2))
+            else:
+                # The approval won: repayment 2 applied to the restored
+                # state (penalty 150 due again, inst1 open).
+                assert record.status is corrections_service.AdjustmentStatus.POSTED
+                assert penalty == Decimal("150.00") - Decimal(str(pen2))
+                assert balance == Decimal("24000.00") - Decimal(str(prn2))
             assert await _reconstructed_balance(session, tid, loan_id) == balance
 
     asyncio.run(run())
@@ -751,10 +796,16 @@ def test_fm10_reopen_of_a_guaranteed_loan_is_refused_after_release() -> None:
 
 
 class _KillSwitchError(RuntimeError):
-    """Simulated crash after the adjustment ran, before commit."""
+    """Simulated crash after the approval executed, before commit."""
 
 
 def test_fm7_kill_switch_mid_adjustment_leaves_zero_partial_state() -> None:
+    """Kill-switch on the money-moving phase (the issue-#24 APPROVAL):
+    abort inside the checker's transaction and prove zero partial
+    state — no posting, no correction row, no decision write (the
+    adjustment stays pending with no checker), no audit, no
+    balance/penalty/schedule drift."""
+
     async def run() -> None:
         tid, actor, _ = await _seed_actor()
         loan_id, _ = await _disburse(tid)
@@ -762,26 +813,34 @@ def test_fm7_kill_switch_mid_adjustment_leaves_zero_partial_state() -> None:
         await _seed_penalty(tid, loan_id, "150.00")
         repayment = await _repay(tid, actor, loan_id, "2500.00")
         repayment_id = await _repayment_id_for_txn(tid, repayment.txn_id)
+
+        # Phase 1 commits the PENDING request (workflow state only).
+        pending = await _request(tid, actor, repayment_id)
+        checker, _ = await _seed_extra_user(tid, "System Admin")
         before_counts = await _counts(tid)
         before_paid = await _schedule_paid(tid, loan_id)
 
         with pytest.raises(_KillSwitchError):
             async with tenant_session(factory(), tid) as session:
-                await corrections_service.adjust_repayment(
-                    session, tid, actor, repayment_id, reason="crash test"
+                await corrections_service.approve_repayment_adjustment(
+                    session, tid, checker, pending.id
                 )
                 raise _KillSwitchError()  # crash inside the transaction
 
-        # ZERO partial state: no posting, no correction row, no claim,
-        # no audit, no balance/penalty/schedule drift.
+        # ZERO partial state.
         assert await _counts(tid) == before_counts
         balance, penalty, status = await _loan_state(tid, loan_id)
         assert (balance, penalty, status) == (Decimal("21890.00"), Decimal("0.00"), "active")
         assert await _schedule_paid(tid, loan_id) == before_paid
+        async with tenant_session(factory(), tid) as session:
+            record = await corrections_service.get_adjustment(session, tid, pending.id)
+        assert record.status is corrections_service.AdjustmentStatus.PENDING_APPROVAL
+        assert record.checker_id is None
+        assert record.reversal_transaction_id is None
 
-        # The same call commits cleanly afterwards — the abort above
-        # was the only reason nothing landed.
-        result = await _adjust(tid, actor, repayment_id)
+        # The same approval commits cleanly afterwards — the abort
+        # above was the only reason nothing landed.
+        result = await _approve(tid, checker, pending.id)
         assert result.balance_after == Decimal("24000.00")
 
     asyncio.run(run())
@@ -833,16 +892,19 @@ def test_fm8_ledger_balances_and_append_only_triggers_fire_at_sql_level() -> Non
         with pytest.raises(DBAPIError, match="write-once"):
             async with tenant_session(factory(), tid) as session:
                 await session.execute(text("UPDATE repayment_adjustments SET amount = amount + 1"))
-        # A6: the claim UNIQUE holds against a direct duplicate INSERT.
+        # A6: the claim UNIQUE holds against a direct duplicate INSERT
+        # (status 'posted' keeps the probe inside the 0031 partial
+        # unique AND exempt from the pending-snapshot CHECK, so the
+        # unique claim is what fires).
         with pytest.raises(IntegrityError):
             async with tenant_session(factory(), tid) as session:
                 await session.execute(
                     text(
                         "INSERT INTO repayment_adjustments "
                         "(tenant_id, repayment_id, loan_id, original_transaction_id, "
-                        " maker_id, reason, amount, penalties, interest, principal) "
+                        " maker_id, reason, amount, penalties, interest, principal, status) "
                         "SELECT tenant_id, repayment_id, loan_id, original_transaction_id, "
-                        " maker_id, 'dup', amount, penalties, interest, principal "
+                        " maker_id, 'dup', amount, penalties, interest, principal, 'posted' "
                         "FROM repayment_adjustments WHERE repayment_id = CAST(:r AS uuid)"
                     ),
                     {"r": str(repayment_id)},
@@ -949,8 +1011,12 @@ def test_a2_correction_of_a_closed_period_repayment_posts_into_the_open_period()
 def test_a2_closed_period_409_gate_applies_to_corrections_too() -> None:
     """A closed period covering TODAY (seeded directly — close_period
     itself refuses to close a live month) makes the correction a 409
-    with ZERO side effects. Falsifiable: bypass assert_open_period in
-    the posting path and this posts."""
+    with ZERO MONEY side effects. Two-phase since issue #24: the
+    request lands (a workflow row + audit, no money), and the APPROVAL
+    hits the period gate inside _post, posting NOTHING — no
+    transaction, no legs, no correction row, no decision (the
+    adjustment stays pending). Falsifiable: bypass assert_open_period
+    in the posting path and this posts."""
 
     async def run() -> None:
         tid, actor, _ = await _seed_actor()
@@ -972,10 +1038,15 @@ def test_a2_closed_period_409_gate_applies_to_corrections_too() -> None:
                     "pe": today,
                 },
             )
+        pending = await _request(tid, actor, repayment_id)
+        checker, _ = await _seed_extra_user(tid, "System Admin")
         before = await _counts(tid)
         with pytest.raises(ConflictError, match="closed accounting period"):
-            await _adjust(tid, actor, repayment_id)
+            await _approve(tid, checker, pending.id)
         assert await _counts(tid) == before
+        async with tenant_session(factory(), tid) as session:
+            record = await corrections_service.get_adjustment(session, tid, pending.id)
+        assert record.status is corrections_service.AdjustmentStatus.PENDING_APPROVAL
         balance, _, _ = await _loan_state(tid, loan_id)
         assert balance == Decimal("23000.00")  # 24000 - 1000, untouched
 
