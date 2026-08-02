@@ -24,6 +24,13 @@ const eslintConfig = [
     ],
   },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
+  {
+    rules: {
+      // FM3 (P14): console output is a PII/token leak channel in a banking
+      // client — sanitized error envelopes render in the UI instead.
+      "no-console": "error",
+    },
+  },
 ];
 
 export default eslintConfig;
