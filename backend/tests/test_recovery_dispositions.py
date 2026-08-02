@@ -618,9 +618,7 @@ def test_fm11_pause_without_reason_is_422_and_reason_lands_in_audit() -> None:
 
         # With the reason: 200, and the rationale is on the audit
         # record — not in the outbox payload.
-        res = await _dispose(
-            token, case["id"], 1, "disputed", reason="member contests the arrears"
-        )
+        res = await _dispose(token, case["id"], 1, "disputed", reason="member contests the arrears")
         assert res.status_code == 200, res.text
         async with tenant_session(factory(), tid) as session:
             audit_reason = (
