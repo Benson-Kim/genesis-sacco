@@ -324,6 +324,68 @@ def test_snapshots_are_write_once_at_the_database_level() -> None:
     asyncio.run(run())
 
 
+def test_future_month_snapshot_insert_refused_at_the_database() -> None:
+    """N1 probe (review !49): a fabricated FUTURE-month snapshot passes
+    every CHECK; the write-once trigger would then freeze it
+    undeletable and the month's REAL close would 409 forever on
+    verify-on-conflict — an irreversible denial-of-integrity vector.
+    The 0027 BEFORE INSERT fence refuses month_end >=
+    date_trunc('month', now())::date at the database level, for every
+    trigger-subject role including direct SQL through the app role (a
+    CHECK cannot carry the rule: now() is not immutable). Falsifiable:
+    drop the portfolio_month_snapshots_no_future trigger and both
+    refused INSERTs succeed, failing this test. The last fully elapsed
+    month must REMAIN representable — the fence closes the future,
+    never the writer's own path."""
+
+    async def run() -> None:
+        tid, _, _ = await seed_actor()
+        today = datetime.now(UTC).date()
+        current_month_end = month_end_of(today)
+        future_month_end = month_end_of(current_month_end + timedelta(days=1))
+        insert_sql = text(
+            "INSERT INTO portfolio_month_snapshots "
+            "(id, tenant_id, month_end, loans, gross_outstanding, "
+            " npl_loans, npl_balance, source) "
+            "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :month_end, "
+            "1, '100.00', 0, '0.00', 'backfill')"
+        )
+        for month in (current_month_end, future_month_end):
+            with pytest.raises(DBAPIError, match="fully elapsed"):
+                async with tenant_session(factory(), tid) as session:
+                    await session.execute(
+                        insert_sql,
+                        {"id": str(uuid.uuid4()), "tid": str(tid), "month_end": month},
+                    )
+        async with tenant_session(factory(), tid) as session:
+            count = (
+                await session.execute(
+                    text("SELECT count(*) FROM portfolio_month_snapshots")
+                )
+            ).scalar_one()
+        assert int(count) == 0, "a not-fully-elapsed month became representable"
+
+        # Over-blocking guard: the last FULLY ELAPSED month is still
+        # representable through the same direct-SQL path the fence
+        # polices (values CHECK-valid; no real portfolio seeded, so no
+        # writer collision).
+        elapsed_month_end = _month_ends_back(1)[0]
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(
+                insert_sql,
+                {"id": str(uuid.uuid4()), "tid": str(tid), "month_end": elapsed_month_end},
+            )
+        async with tenant_session(factory(), tid) as session:
+            kept = (
+                await session.execute(
+                    text("SELECT month_end FROM portfolio_month_snapshots")
+                )
+            ).scalar_one()
+        assert kept == elapsed_month_end
+
+    asyncio.run(run())
+
+
 def test_close_aborts_loudly_on_divergent_preexisting_snapshot() -> None:
     """FM1: a snapshot that does not match the reconstruction 409s and
     aborts the close with ZERO partial state — never self-heals."""

@@ -41,7 +41,12 @@ One expand-only object backing P13.17(a):
     pin every bound — counts and balances non-negative, the NPL subset
     never exceeding the portfolio total, and month_end pinned to a
     real calendar month end so a fabricated mid-month "snapshot" is
-    unrepresentable. UNIQUE (tenant_id, month_end) makes concurrent
+    unrepresentable; a BEFORE INSERT fence (review !49 N1) refuses any
+    month that has not fully elapsed - a fabricated FUTURE month would
+    otherwise be frozen undeletable by the write-once trigger and
+    permanently 409 that month's real close (a CHECK cannot carry the
+    rule: now() is not immutable). UNIQUE (tenant_id, month_end) makes
+    concurrent
     writers collapse to exactly one row (claimed atomically, v1.1
     rule 5) and serves the export's snapshot lookup (gate 1.3: the
     index ships with the query it serves,
@@ -110,6 +115,35 @@ CREATE TRIGGER portfolio_month_snapshots_write_once
     BEFORE UPDATE OR DELETE ON portfolio_month_snapshots
     FOR EACH ROW EXECUTE FUNCTION forbid_portfolio_snapshot_mutation();
 
+-- FUTURE-MONTH FENCE (review !49 N1): only FULLY ELAPSED months are
+-- representable. Without this, a fabricated future-month row passes
+-- every CHECK, the write-once trigger then freezes it undeletable,
+-- and the month's REAL close 409s forever on verify-on-conflict - an
+-- irreversible denial-of-integrity vector needing a reviewed
+-- migration to clear. A CHECK constraint cannot express this fence
+-- (now() is not immutable), so it is a BEFORE INSERT trigger, binding
+-- for every trigger-subject role including direct SQL through the
+-- app role. month_end >= date_trunc('month', now())::date refuses the
+-- current month's end and everything later; the last fully elapsed
+-- month stays representable (the writer's own fully-elapsed rule,
+-- now enforced at the database).
+CREATE FUNCTION forbid_future_portfolio_snapshot() RETURNS trigger
+LANGUAGE plpgsql AS $fn$
+BEGIN
+    IF NEW.month_end >= date_trunc('month', now())::date THEN
+        RAISE EXCEPTION
+            'portfolio_month_snapshots: month % has not fully elapsed; only '
+            'fully elapsed months are representable (P13.17 N1)',
+            NEW.month_end;
+    END IF;
+    RETURN NEW;
+END
+$fn$;
+
+CREATE TRIGGER portfolio_month_snapshots_no_future
+    BEFORE INSERT ON portfolio_month_snapshots
+    FOR EACH ROW EXECUTE FUNCTION forbid_future_portfolio_snapshot();
+
 ALTER TABLE portfolio_month_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE portfolio_month_snapshots FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON portfolio_month_snapshots
@@ -133,6 +167,9 @@ BEGIN
 END
 $guard$;
 
+DROP TRIGGER IF EXISTS portfolio_month_snapshots_no_future
+    ON portfolio_month_snapshots;
+DROP FUNCTION IF EXISTS forbid_future_portfolio_snapshot();
 DROP TRIGGER IF EXISTS portfolio_month_snapshots_write_once
     ON portfolio_month_snapshots;
 DROP FUNCTION IF EXISTS forbid_portfolio_snapshot_mutation();
