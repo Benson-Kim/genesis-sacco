@@ -12,8 +12,8 @@ Prompt format: ROLE / DEPENDS / PROMPT (give verbatim to the executor) / EXIT.
 
 ## STATUS REGISTER (authoritative — update in the same MR as the work)
 
-Evidence-based as of main @ 2026-08-01 (alembic head 0023; !44/0024 in
-flight). Legend: ✅ DONE (merged to main, EXIT met) · 🔄 IN PROGRESS
+Evidence-based as of main @ 2026-08-02 (alembic head 0029; no
+migration claim in flight). Legend: ✅ DONE (merged to main, EXIT met) · 🔄 IN PROGRESS
 (open MR cited) · ❌ TODO (no evidence on main). A prompt may not be
 marked ✅ without citing its evidence (migration number, merged MR,
 or test/artifact present on main).
@@ -46,8 +46,8 @@ or test/artifact present on main).
 | P13.13 | ✅ DONE | 0021 dormancy (+0022 dividend-dormant policy fix); test_dormancy |
 | P13.14 | ✅ DONE | test_guarantee_release |
 | P13.15 | ✅ DONE | 0025 (!46, merged 2026-08-02); test_corrections |
-| P13.16 | 🔄 IN PROGRESS | !47 — claims 0026, down_revision '0025'; merges AFTER the P13.15 track (rule 12); the merging maintainer flips this row to ✅ DONE upon merge |
-| P13.17 | 🔄 IN PROGRESS | (e) DSA-6 ✅ via !44 (0024, merged); (a)–(d) in flight on !49 — claims 0027–0029 chained from 0026, on the post-!47 combined state; the merging maintainer flips this row to ✅ DONE upon merge |
+| P13.16 | ✅ DONE | 0026 recovery cases (!47, merged 2026-08-02); test_recovery_cases / test_recovery_domain; combined-state pipelines 2725256564 / 2725262530 |
+| P13.17 | ✅ DONE | (e) DSA-6 via !44 (0024, merged); (a)–(d) via !49 (0027–0029, merged 2026-08-02); FM1–FM4 suites green, combined-state pipeline 2725427849 (757 passed) |
 | P-DIAG.0 | ✅ DONE | docs/diagrams/lock-order.md |
 | P-DIAG.1 | ✅ DONE | c4-context/container/component + c4-spot-check.py |
 | P-DIAG.2 | ✅ DONE | erd.md + erd-spot-check.py |
@@ -73,13 +73,13 @@ or test/artifact present on main).
 |---|---|---|
 | RF1 | R7: SECURITY DEFINER functions PUBLIC-executable (cross-tenant activity oracle) | !44 itself (0024 REVOKE/GRANT + proacl sweep test) — in flight |
 | RF2 | Dead-letter operator requeue/resolve path (dead rows now accumulate forever by design) | P20 — added to its scope: delivery-status lifecycle must include an audited, RBAC-gated requeue/resolve admin path for status='dead' rows |
-| RF3 | lock-order.md §8 re-derivation pass over !36/!37 grep totals (owed per its own note) | next docs-touching MR (rule 11 debt) — does not fit a feature prompt; docs-only micro-MR acceptable |
-| RF4 | CI flake eradication: issue #20 EXPLAIN planner flakes + test_run_export latency threshold (pipeline 2724154615) | !44 dispositions the export threshold; the EXPLAIN-flake class needs a micro-MR BEFORE P21 hardens perf gates (P21 FM1 forbids quietly raised thresholds) — 🔄 the micro-MR is !48 (tests-only: observed-alternates citations + the enable_sort=off shape pin; no threshold touched; the merging maintainer flips this to ✅ with the green-pipeline evidence) |
+| RF3 | lock-order.md §8 re-derivation pass over !36/!37 grep totals (owed per its own note) | ✅ settled by !47 (merged 2026-08-02): §8 totals re-derived (!36 +2, !37 +0, P13.16 +4; combined-state 50 → 65) and recorded in lock-order.md §8 |
+| RF4 | CI flake eradication: issue #20 EXPLAIN planner flakes + test_run_export latency threshold (pipeline 2724154615) | !44 dispositions the export threshold; the EXPLAIN-flake class needed a micro-MR BEFORE P21 hardens perf gates (P21 FM1 forbids quietly raised thresholds) — ✅ !48 merged 2026-08-02 (tests-only: observed-alternates citations + the enable_sort=off shape pin; no threshold touched; pipeline 2725256675 green, 712 passed; issue #20 closed) |
 
-Migration-claim registry delta (rule 14): 0001–0023 on main; **0024 is
-!44's (P13.17e)**; next free number is 0025 — P13.15 claims it; P13.16
-claims the next after P13.15's, and declares it merges AFTER P13.15
-(both touch ENTITY_MODULES, a named collision surface).
+Migration-claim registry delta (rule 14, updated 2026-08-02): 0001–0029
+on main (0024 !44/P13.17e · 0025 !46/P13.15 · 0026 !47/P13.16 ·
+0027–0029 !49/P13.17a–d). No number is claimed in flight; the next
+migration-bearing MR claims **0030** up front in its description.
 
 ---
 
@@ -1478,7 +1478,14 @@ unchanged; proven on !26–!30; apply to every prompt from here forward):
     the only place Python deps resolve, so CI is the arbiter of
     lint/test/migrate results. Format with the exact ruff version the
     CI image resolves (0.16 line at authoring) — an older local ruff
-    formats differently and reds `backend:lint`. After any tool-assisted
-    edit, re-read the touched region and grep-audit for silently
-    dropped or duplicated hunks before committing (the !26 F7 incident
-    class).
+    formats differently and reds `backend:lint`. File-integrity audit
+    (upgraded 2026-08-02 from the !26 F7 dropped-hunk and !47 B1
+    corrupted-tail incidents): after ANY tool-assisted edit, re-read
+    the ENTIRE touched file — never only the edited region (B1 lived
+    in the un-inspected tail) — and grep-audit for silently dropped,
+    duplicated, or mangled hunks: every section heading greps to
+    exactly one occurrence and the file's final line is the intended
+    one. After each commit, RE-FETCH every touched file from the
+    remote and walk the diff hunk-by-hunk against the commit's own
+    intended change list (the diff-of-diffs audit); any unintended
+    hunk is fixed in its own immediate commit before further work.
