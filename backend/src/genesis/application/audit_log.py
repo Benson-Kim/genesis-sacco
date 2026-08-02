@@ -77,6 +77,11 @@ ENTITY_MODULES: dict[str, Module] = {
     # never generic transactions:*.
     "repayment_adjustments": Module.CORRECTIONS,
     "loan_write_offs": Module.CORRECTIONS,
+    # Issue #21: recovery receipts carry the exact recovered/
+    # outstanding claim figures — corrections money, disclosed and
+    # filterable per the dedicated corrections entitlement like the
+    # write-off rows they draw down.
+    "loan_recoveries": Module.CORRECTIONS,
     "loan_products": Module.SETTINGS,
     # P13.7: the tenant settings row is maintained under settings:*
     # routes; mapped here so its before/after payloads are released per

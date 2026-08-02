@@ -48,14 +48,32 @@ approval mechanism exists.
 WRITE-OFF IS NOT FORGIVENESS (A4): written_off zeroes the performing
 receivable via the WO- provisioning posting, but the legal claim on
 the member survives in the write-once snapshot (balance, penalty_due,
-total_written_off). Post-write-off recovery (bad-debt-recovery income
-posting) is a FUTURE explicit branch tracked as a follow-up issue
-referencing P13.16/P19; a repayment against a written_off loan is
-refused loudly today (loans.record_repayment status guard), never
-silently allocated. Guarantees behind a written-off loan are left
-UNTOUCHED (released only on genuine closure): the guarantors' pledges
-back the surviving claim; their disposition belongs to the recovery
-follow-up, and the decision is audited on the write-off row.
+total_written_off). Issue #21 lands the explicit recovery branch
+(part 4 below): cash received against a POSTED write-off posts DR
+cash / CR income.bad_debt_recoveries (RC- ref), recorded as an
+APPEND-ONLY loan_recoveries row bound to the surviving snapshot claim
+— partial recoveries tracked against total_written_off, over-recovery
+refused, the loan NEVER resurrected (written_off stays terminal). A
+repayment against a written_off loan remains refused loudly
+(loans.record_repayment status guard), never silently allocated — the
+recovery receipt is the ONLY money-in path against the claim.
+
+GUARANTEE DISPOSITION (issue #21 item 3 — the documented policy):
+guarantees behind a written-off loan back the SURVIVING claim and stay
+untouched; they are released ONLY by the receipt that recovers the
+claim IN FULL (full recovery discharges the sureties exactly like
+genuine closure — the P10 release hook, reused in-transaction).
+Calling a guarantee (collecting FROM the guarantor) stays a future,
+separately designed path; a receipt records who paid only through its
+audit trail.
+
+EXIT INTERPLAY (issue #21 item 4 — the documented decision): a member
+with an unresolved POSTED write-off claim (receipts < total) is
+BLOCKED from exit (member_exits._compute_under_locks, under the member
+row lock) — write-off is not forgiveness, so the claim behaves like an
+active obligation. A committee-approved WAIVER that releases the claim
+without cash is a future explicit branch, recorded on issue #21 at
+close-out; until it exists, full recovery is the only unblock.
 
 Lock order (docs/diagrams/lock-order.md, updated in this MR):
 adjustment takes transactions (T0, FOR UPDATE — serialises against
@@ -65,7 +83,12 @@ terminal node of the money chain — the P10/P13.8 pattern); write-off
 request/execution takes loan_write_offs (T0) -> loans FOR UPDATE (T4);
 votes/voids lock the write-off row alone (the DECL pattern); the fee
 posting takes members FOR SHARE (T1) only, then the advisory posting
-tier. All edges point down the established tiers.
+tier. The issue-#21 recovery receipt takes loan_write_offs (T0, FOR
+UPDATE — serialises concurrent receipts and pins the claim math) ->
+members FOR SHARE (T1, holds off a concurrent terminal exit — the E20
+argument) -> loans FOR UPDATE (T4, anchors the full-recovery guarantee
+release, the E7 order) -> the advisory posting tier. All edges point
+down the established tiers.
 """
 
 from __future__ import annotations
@@ -82,13 +105,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application.audit import record_audit
+from genesis.application.guarantees import release_guarantees_for_loan
 from genesis.application.ledger import (
     PostingResult,
     post_fee,
+    post_loan_recovery,
     post_loan_write_off,
     post_reversal,
 )
 from genesis.application.outbox import enqueue_event
+from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
 from genesis.application.tenant_settings import committee_quorum, enforce_authority_band
 
 # Reuse-first (gate 1.1): the P13.13 single member-status gatekeeper —
@@ -101,7 +127,7 @@ from genesis.domain.lending import NPL_CLASSES, LoanClass, LoanStatus, loan_tran
 from genesis.domain.members import MemberStatus, MoneyOperation
 from genesis.domain.money import ZERO, to_cents
 from genesis.domain.tenant_config import SETTINGS_REGISTRY
-from genesis.errors import ConflictError, ForbiddenError, NotFoundError
+from genesis.errors import ConflictError, ForbiddenError, InvalidInputError, NotFoundError
 
 # ---------------------------------------------------------------------------
 # Misc fees (P13.15 part 2)
@@ -1302,4 +1328,378 @@ async def post_write_off(
         txn_ref=posting.txn_ref if posting else None,
         total_written_off=record.total_written_off,
         status=WriteOffStatus.POSTED,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bad-debt recovery receipts (issue #21 — the P13.15 A4 explicit branch)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RecoveryReceiptResult:
+    recovery_id: uuid.UUID
+    write_off_id: uuid.UUID
+    loan_id: uuid.UUID
+    member_id: uuid.UUID
+    txn_id: uuid.UUID
+    txn_ref: str
+    amount: Decimal
+    recovered_total: Decimal
+    outstanding_claim: Decimal
+    claim_fully_recovered: bool
+    guarantees_released: int
+    recovery_case_id: uuid.UUID | None
+
+
+@dataclass(frozen=True)
+class RecoveryReceiptRecord:
+    id: uuid.UUID
+    amount: Decimal
+    txn_id: uuid.UUID
+    recovery_case_id: uuid.UUID | None
+    recorded_by: uuid.UUID
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class RecoveryReceiptPage:
+    items: list[RecoveryReceiptRecord]
+    recovered_total: Decimal
+    outstanding_claim: Decimal
+    next_cursor: str | None
+
+
+async def _recovered_total(
+    session: AsyncSession, tenant_id: uuid.UUID, write_off_id: uuid.UUID
+) -> Decimal:
+    """Cumulative receipts against one claim, reconstructed by summing
+    the APPEND-ONLY loan_recoveries rows (v1.1 rule 2) — no mutable
+    recovered-total column exists anywhere. Served by
+    idx_loan_recoveries_write_off; explicit tenant predicate on top of
+    forced RLS (rule 4)."""
+    value = (
+        await session.execute(
+            text(
+                "SELECT COALESCE(SUM(amount), 0) FROM loan_recoveries "
+                "WHERE write_off_id = CAST(:wid AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"wid": str(write_off_id), "tid": str(tenant_id)},
+        )
+    ).scalar_one()
+    return to_cents(Decimal(str(value)))
+
+
+async def record_recovery_receipt(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    write_off_id: uuid.UUID,
+    *,
+    amount: Decimal,
+    channel: Channel,
+) -> RecoveryReceiptResult:
+    """Record cash received against a POSTED write-off's surviving
+    claim, atomically (issue #21; gates 1.4, 1.5).
+
+    Lock order (docs/diagrams/lock-order.md, updated in this MR):
+    loan_write_offs FOR UPDATE (T0 — the serialisation point for
+    concurrent receipts, so the outstanding-claim math can never race)
+    -> members FOR SHARE (T1, the P13.13 single gatekeeper: holds off
+    a concurrent terminal exit, the E20 argument) -> loans FOR UPDATE
+    (T4, anchoring the full-recovery guarantee release in E7 order) ->
+    the advisory posting tier inside _post.
+
+    The claim figures are SERVER-RESOLVED: total_written_off from the
+    write-once 0025 snapshot, the recovered total reconstructed from
+    the append-only receipt rows (v1.1 rule 2). The caller supplies
+    only the cash actually received; a receipt exceeding the
+    outstanding claim is a 409 with zero side effects (the 0030
+    constraint trigger is the direct-SQL backstop). The loan is NEVER
+    resurrected: written_off stays terminal, balance stays zero — the
+    RC- posting recognises recovery INCOME, it does not restore a
+    receivable.
+
+    GUARANTEE DISPOSITION (the documented issue-#21 policy): the
+    receipt that recovers the claim IN FULL releases the loan's
+    surviving guarantees in the same transaction (full recovery
+    discharges the sureties exactly like genuine closure — the P10
+    hook, reuse 1.1); partial receipts leave them untouched.
+
+    P13.16 LINKAGE (issue #21 item 2): the receipt records the loan's
+    closed_written_off recovery case explicitly (row column + audit
+    payload) when one exists — collections against the surviving claim
+    are worked under that case; a write-off without a case links NULL.
+
+    Least disclosure (rule 7): refusals name the category only; the
+    exact figures (amount, recovered total, outstanding) live in the
+    audit row of the successful receipt.
+    """
+    amount = to_cents(amount)
+    if amount <= ZERO:
+        raise InvalidInputError("recovery receipt amount must be positive")
+
+    # T0: the write-once snapshot row — the claim anchor. FOR UPDATE
+    # serialises concurrent receipts (FM2) and pins status (FM1).
+    record_row = (
+        await session.execute(
+            text(
+                f"SELECT {_WRITE_OFF_COLS} FROM loan_write_offs "  # noqa: S608
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
+            ),
+            {"id": str(write_off_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if record_row is None:
+        raise NotFoundError(f"loan write-off {write_off_id} not found")
+    record = _row_to_write_off(record_row)
+    if record.status is not WriteOffStatus.POSTED:
+        # FM1: only a POSTED write-off has a derecognised claim to
+        # recover against (the 0030 trigger is the DB backstop).
+        raise ConflictError(
+            f"write-off {write_off_id} is '{record.status.value}': "
+            "recovery receipts apply to posted write-offs"
+        )
+
+    # T1: member FOR SHARE via the P13.13 single gatekeeper (reuse,
+    # 1.1) — money-in statuses; EXITED refused; blocks a concurrent
+    # terminal exit until this receipt commits (the E20 argument, which
+    # the issue-#21 exit guard relies on).
+    await _require_member(session, tenant_id, record.member_id, operation=MoneyOperation.RECOVERY)
+
+    # T4: the loan row — written_off is re-verified under its own lock,
+    # and the full-recovery guarantee release below writes guarantee
+    # rows while holding it (the P10/E7 order).
+    loan_row = (
+        await session.execute(
+            text(
+                "SELECT status FROM loans WHERE id = CAST(:id AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
+            ),
+            {"id": str(record.loan_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if loan_row is None:  # pragma: no cover - FK-consistent
+        raise NotFoundError(f"loan {record.loan_id} not found")
+    if LoanStatus(str(loan_row[0])) is not LoanStatus.WRITTEN_OFF:
+        raise ConflictError(
+            f"loan {record.loan_id} is not written off; recovery receipts "
+            "apply to written-off loans only"
+        )
+
+    # FM2: the outstanding claim, reconstructed from the append-only
+    # receipts under the write-off row lock (v1.1 rule 2).
+    recovered_before = await _recovered_total(session, tenant_id, write_off_id)
+    outstanding_before = to_cents(record.total_written_off - recovered_before)
+    if amount > outstanding_before:
+        # Least disclosure: category only; the figures live in audit
+        # rows staff are entitled to (rule 7).
+        raise ConflictError(
+            "recovery receipt exceeds the outstanding written-off claim; "
+            "record the outstanding amount or the future waiver branch"
+        )
+
+    # Issue #21 item 2: the P13.16 linkage, resolved server-side (plain
+    # MVCC read — closed cases are immutable, no lock needed).
+    case_row = (
+        await session.execute(
+            text(
+                "SELECT id FROM recovery_cases "
+                "WHERE loan_id = CAST(:lid AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) "
+                "AND status = 'closed_written_off' "
+                "ORDER BY closed_at DESC, id DESC LIMIT 1"
+            ),
+            {"lid": str(record.loan_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    recovery_case_id = uuid.UUID(str(case_row[0])) if case_row is not None else None
+
+    # The RC- posting (DR cash / CR income.bad_debt_recoveries);
+    # occurred_at server-resolved NOW inside _post (A2 open-period
+    # gate); advisory tier last (E15/E16).
+    posting: PostingResult = await post_loan_recovery(
+        session,
+        tenant_id,
+        record.member_id,
+        record.loan_id,
+        amount,
+        channel,
+        actor_id,
+        write_off_id=write_off_id,
+    )
+
+    # The APPEND-ONLY receipt row (0030 triggers block UPDATE/DELETE;
+    # the constraint trigger re-checks the claim cap at the DB).
+    recovery_id = uuid.uuid4()
+    await session.execute(
+        text(
+            "INSERT INTO loan_recoveries "
+            "(id, tenant_id, write_off_id, loan_id, member_id, recovery_case_id, "
+            " transaction_id, amount, recorded_by) "
+            "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:wid AS uuid), "
+            " CAST(:lid AS uuid), CAST(:mid AS uuid), CAST(:cid AS uuid), "
+            " CAST(:txn AS uuid), :amount, CAST(:actor AS uuid))"
+        ),
+        {
+            "id": str(recovery_id),
+            "tid": str(tenant_id),
+            "wid": str(write_off_id),
+            "lid": str(record.loan_id),
+            "mid": str(record.member_id),
+            "cid": str(recovery_case_id) if recovery_case_id else None,
+            "txn": str(posting.txn_id),
+            "amount": str(amount),
+            "actor": str(actor_id),
+        },
+    )
+
+    recovered_total = to_cents(recovered_before + amount)
+    outstanding_after = to_cents(record.total_written_off - recovered_total)
+    fully_recovered = outstanding_after == ZERO
+
+    # The documented guarantee-disposition policy: full recovery
+    # discharges the sureties (the P10 closure hook, reused under the
+    # loan lock — E7 order); partial receipts leave them untouched.
+    guarantees_released = 0
+    if fully_recovered:
+        guarantees_released = await release_guarantees_for_loan(
+            session, tenant_id, actor_id, record.loan_id
+        )
+        await record_audit(
+            session,
+            tenant_id,
+            actor_id,
+            action="write_off.claim_recovered",
+            entity="loan_write_offs",
+            entity_id=str(write_off_id),
+            after={
+                "loan_id": str(record.loan_id),
+                "total_written_off": str(record.total_written_off),
+                "recovered_total": str(recovered_total),
+                "guarantees_released": guarantees_released,
+            },
+        )
+
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="write_off.recovery_recorded",
+        entity="loan_recoveries",
+        entity_id=str(recovery_id),
+        before={
+            "recovered_total": str(recovered_before),
+            "outstanding_claim": str(outstanding_before),
+        },
+        after={
+            "write_off_id": str(write_off_id),
+            "loan_id": str(record.loan_id),
+            "member_id": str(record.member_id),
+            "recovery_case_id": str(recovery_case_id) if recovery_case_id else None,
+            "txn_ref": posting.txn_ref,
+            "amount": str(amount),
+            "recovered_total": str(recovered_total),
+            "outstanding_claim": str(outstanding_after),
+            "claim_fully_recovered": fully_recovered,
+            "channel": channel.value,
+        },
+    )
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="write_off.recovery_recorded",
+        payload={
+            "recovery_id": str(recovery_id),
+            "write_off_id": str(write_off_id),
+            "loan_id": str(record.loan_id),
+            "member_id": str(record.member_id),
+            "txn_ref": posting.txn_ref,
+            "amount": str(amount),
+            "recovered_total": str(recovered_total),
+            "outstanding_claim": str(outstanding_after),
+            "claim_fully_recovered": fully_recovered,
+        },
+    )
+    return RecoveryReceiptResult(
+        recovery_id=recovery_id,
+        write_off_id=write_off_id,
+        loan_id=record.loan_id,
+        member_id=record.member_id,
+        txn_id=posting.txn_id,
+        txn_ref=posting.txn_ref,
+        amount=amount,
+        recovered_total=recovered_total,
+        outstanding_claim=outstanding_after,
+        claim_fully_recovered=fully_recovered,
+        guarantees_released=guarantees_released,
+        recovery_case_id=recovery_case_id,
+    )
+
+
+async def list_recovery_receipts(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    write_off_id: uuid.UUID,
+    *,
+    cursor: str | None,
+    limit: int,
+) -> RecoveryReceiptPage:
+    """Receipts against one claim, oldest first (keyset, gate 1.3).
+
+    404s on a foreign/unknown write-off before any receipt row is
+    touched (the issue-#17 probe pattern); served by
+    idx_loan_recoveries_write_off. The page totals are reconstructed
+    from the append-only rows (v1.1 rule 2) so the reader always sees
+    the recovered/outstanding position the service enforces.
+    """
+    record = await get_write_off(session, tenant_id, write_off_id)
+    params: dict[str, object] = {
+        "wid": str(write_off_id),
+        "tid": str(tenant_id),
+        "limit": limit + 1,
+    }
+    cursor_clause = ""
+    if cursor is not None:
+        c_ts, c_id = parse_created_id_cursor(cursor, entity="recovery receipt")
+        params["c_ts"] = c_ts
+        params["c_id"] = c_id
+        cursor_clause = "AND (created_at, id) > (CAST(:c_ts AS timestamptz), CAST(:c_id AS uuid)) "
+    rows = (
+        await session.execute(
+            text(
+                # Static fragments chosen in code; every value is a
+                # bound parameter (v1.1 rule 6); explicit tenant
+                # predicate on top of forced RLS (rule 4).
+                "SELECT id, amount, transaction_id, recovery_case_id, "  # noqa: S608
+                "recorded_by, created_at FROM loan_recoveries "
+                "WHERE write_off_id = CAST(:wid AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid) "
+                f"{cursor_clause}"
+                "ORDER BY created_at, id LIMIT :limit"
+            ),
+            params,
+        )
+    ).all()
+    items = [
+        RecoveryReceiptRecord(
+            id=uuid.UUID(str(r[0])),
+            amount=Decimal(str(r[1])),
+            txn_id=uuid.UUID(str(r[2])),
+            recovery_case_id=uuid.UUID(str(r[3])) if r[3] is not None else None,
+            recorded_by=uuid.UUID(str(r[4])),
+            created_at=r[5],
+        )
+        for r in rows[:limit]
+    ]
+    next_cursor = None
+    if len(rows) > limit and items:
+        next_cursor = build_created_id_cursor(items[-1].created_at, items[-1].id)
+    recovered_total = await _recovered_total(session, tenant_id, write_off_id)
+    return RecoveryReceiptPage(
+        items=items,
+        recovered_total=recovered_total,
+        outstanding_claim=to_cents(record.total_written_off - recovered_total),
+        next_cursor=next_cursor,
     )

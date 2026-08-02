@@ -46,7 +46,11 @@ flowchart TD
     %% P13.16 update (!47): RECOV single-node locker added to the
     %% disjoint subgraph; §8 totals refreshed (settles the !45 RF3
     %% re-derivation debt over !36/!37). Zero new edges.
-    %% Edge ids E1..E19 are annotated with code sites in lock-order.md §3.
+    %% Issue #21 update: E23 (loan_write_offs FOR UPDATE -> members
+    %% FOR SHARE) added for the bad-debt recovery receipt, which then
+    %% rides the existing E21/E7/E15 hops. One new edge, strictly
+    %% downward, anchor-first (the E20/E22 shape) - see section 4.
+    %% Edge ids E1..E23 are annotated with code sites in lock-order.md §3.
 
     subgraph T0["Tier 0 — workflow anchors"]
         EXIT["member_exits<br/>FOR UPDATE"]
@@ -99,6 +103,7 @@ flowchart TD
     TXN -->|E20| MSELF
     MSELF -->|E21| LOANS
     WOFF -->|E22| LOANS
+    WOFF -->|E23| MSELF
     DSELF -->|E15| ADVP
     SSELF -->|E15| ADVP
     LOANS -->|E15| ADVP
@@ -141,7 +146,7 @@ citation.
 | E4 | loan_applications → loans | FU → FU | `application/guarantees.py:_lock_release_anchor` (app L445, then loan L456). P7 disbursement locks the app and *creates* the loan (no second lock) — same direction, `application/ledger.py:disburse_loan` | P13.14 (!29) |
 | E5 | loan_applications → deposit_accounts (borrower) | FU → FU | `application/ledger.py:disburse_loan` step 2b (deposit-multiplier check, L903) | P7/issue #15 |
 | E6 | loan_applications → guarantees | FU → FU | `application/guarantees.py:release_guarantee` / `substitute_guarantee` (`_lock_release_anchor` then `_read_guarantee(for_update=True)` L415/L445). Row-write form: `loan_applications.py:_release_application_pledges` (rejection sweep, under the app lock) | P13.14 (!29) — see Finding F1 in §9 |
-| E7 | loans → guarantees | FU → FU / row write | `application/guarantees.py:_lock_release_anchor` (loan-anchored release/substitution); `application/loans.py:_close_loan` → `release_guarantees_for_loan` (row UPDATE); `application/member_exits.py:post_settlement` received-guarantee sweep | P10 |
+| E7 | loans → guarantees | FU → FU / row write | `application/guarantees.py:_lock_release_anchor` (loan-anchored release/substitution); `application/loans.py:_close_loan` → `release_guarantees_for_loan` (row UPDATE); `application/member_exits.py:post_settlement` received-guarantee sweep; `application/corrections.py:record_recovery_receipt` → `release_guarantees_for_loan` (issue #21 full-recovery discharge, row UPDATE under the loan lock) | P10 |
 | E8 | guarantees → members (guarantor) | FU → FS | `application/guarantees.py:substitute_guarantee` (guarantee row locked, then `_guarantor_available_capacity`) | P13.14 (!29) |
 | E9 | guarantees → deposit_accounts (borrower) | FU → FU | `application/guarantees.py:release_guarantee` cover guard (borrower deposit L590, after the release write) | P13.14 (!29) |
 | E10 | members (self) → deposit_accounts (self) | FU/FS → FU | `application/transactions.py:record_deposit` — member **FOR UPDATE** since P13.13 (!32 upgraded it from FOR SHARE: a deposit may have to write a Dormant→Active reactivation, and taking FOR UPDATE from the start avoids the share→update lock upgrade that would deadlock two concurrent deposits to the same dormant member): `_require_member(for_update=True)` L182 → `_lock_account` L124; `record_withdrawal` still takes member FOR SHARE (call L233 → `_lock_account`) — the two modes coexist safely, conflicting at the member row (§4); `application/member_exits.py:_compute_under_locks`; `application/dividends.py:_distribute_one` (member held from the E2 scan) | P11/P12; deposit-path mode upgraded by P13.13 (!32) |
@@ -149,14 +154,15 @@ citation.
 | E12 | deposit_accounts (self) → share_accounts (self) | FU → FU | `application/member_exits.py:_compute_under_locks` (deposit then share via `_lock_account`); `application/dividends.py:_distribute_one` (same order) | P12 |
 | E13 | members (self) → share_accounts (self) | FS/FU → FU | `application/dividends.py:transfer_shares` (both members `sorted()` L1365, then both share accounts in the same member-id order L1384); `application/transactions.py:record_share_topup` (member FOR SHARE guard → share account, single member) — the deposit tier is skipped, which is always safe (§4) | P11/!30 |
 | E14 | share_accounts (self) → loans (self, id order) | FU → FU | `application/member_exits.py:_compute_under_locks` → `_active_loan_payoffs` (`ORDER BY id FOR UPDATE` L259) | P12 |
-| E15 | last row lock of any posting chain → advisory period barrier (shared) | row → advisory | `application/ledger.py:_post` → `accounting_periods.py:assert_open_period` (`pg_advisory_xact_lock_shared` L110) — called by EVERY posting: deposits/withdrawals/top-ups, disbursement, repayment, exit set-off, deposit interest, dividends/rebates, share transfer, reversal, P13.15 misc fees / adjustment reversals / write-off postings | issue #12 |
+| E15 | last row lock of any posting chain → advisory period barrier (shared) | row → advisory | `application/ledger.py:_post` → `accounting_periods.py:assert_open_period` (`pg_advisory_xact_lock_shared` L110) — called by EVERY posting: deposits/withdrawals/top-ups, disbursement, repayment, exit set-off, deposit interest, dividends/rebates, share transfer, reversal, P13.15 misc fees / adjustment reversals / write-off postings, issue-#21 recovery receipts | issue #12 |
 | E16 | advisory period barrier → advisory ref generator | advisory → advisory | `application/ledger.py:_post` (barrier first, then `_next_ref` `pg_advisory_xact_lock` L108 + `txn_ref_sequences` upsert). Member numbering (`members.py:_next_member_no` L91) takes ADVR with **no** row locks held | P7 |
 | E17 | users (admin set, id order) → users (target) | FU → FU | `application/users.py:change_user_status` / `assign_role` / `update_user` (`_lock_admin_set` L467 → `_lock_user_row` L483) | P13.5 |
 | E18 | users → otp_challenges | FU → FU | `application/auth.py:verify_otp` (user L179 → newest challenge L191); suspension voids challenges (row writes) under the same user lock (`users.py:_void_pending_otp_challenges`) | P13.5 |
 | E19 | users → refresh_tokens | FU → FU | `application/auth.py:rotate_refresh_token` (unlocked peek → user L255 → token L270); suspension revokes families under the user lock (`users.py:_revoke_refresh_families`) | P13.5 |
 | E20 | transactions → members (self) | FU → FS | `application/corrections.py:adjust_repayment` (original txn FOR UPDATE — serialises against generic reversal and second adjustments — then member FOR SHARE, holding off a concurrent terminal exit) | P13.15 |
-| E21 | members (self) → loans (self) | FS → FU | `application/corrections.py:adjust_repayment` (member FOR SHARE from E20, then the loan row — the deposit/share tiers are skipped, which is always safe, §4) | P13.15 |
-| E22 | loan_write_offs → loans | FU → FU | `application/corrections.py:post_write_off` (snapshot row FOR UPDATE, then the loan row for the component re-verification + terminal transition) | P13.15 |
+| E21 | members (self) → loans (self) | FS → FU | `application/corrections.py:adjust_repayment` (member FOR SHARE from E20, then the loan row — the deposit/share tiers are skipped, which is always safe, §4); `application/corrections.py:record_recovery_receipt` (issue #21 — member FOR SHARE from E23, then the written-off loan row) | P13.15; #21 |
+| E22 | loan_write_offs → loans | FU → FU | `application/corrections.py:post_write_off` (snapshot row FOR UPDATE, then the loan row for the component re-verification + terminal transition); `application/corrections.py:record_recovery_receipt` (issue #21 — snapshot row FOR UPDATE pinning the claim math, then the loan row via the E23→E21 chain, anchoring the full-recovery guarantee release in E7 order) | P13.15; #21 |
+| E23 | loan_write_offs → members (self) | FU → FS | `application/corrections.py:record_recovery_receipt` (issue #21 — the claim anchor is locked FIRST, then the member FOR SHARE via `transactions._require_member` holds off a concurrent terminal exit; the exit's unresolved-claim guard in `member_exits._compute_under_locks` relies on this conflict at T1) | #21 |
 
 **Single-node lockers** (no outgoing domain edges — they enter the DAG
 and stop, or never touch it):
@@ -195,7 +201,7 @@ continues mid-chain — share top-up at T3, deposit-interest at T2,
 repayment at T4 — still only moves down). Ties inside a tier are broken
 by a **total order**: global member-id order for multi-member
 operations (E13, the !30 rule), `ORDER BY id` for multi-row scans
-(E2, E14, arrears, E17). All E1–E22 edges point downward **except two
+(E2, E14, arrears, E17). All E1–E23 edges point downward **except two
 upward edges out of the guarantees tier — E8 (→ guarantor member, T1)
 and E9 (→ borrower deposit, T2)** — so any cycle would have to pass
 through one of them. Each is safe for a different, checkable reason.
@@ -215,6 +221,22 @@ conflicts with a terminal exit's member FOR UPDATE (E1) exactly like
 the P9/P11 guard chains, so adjustment-vs-exit serialises at T1 before
 any loan-tier contention; adjustment-vs-repayment serialises at T4
 (repayment is a LOANS-alone single-node locker).
+
+**The issue-#21 edge E23 (WOFF, T0 → member, T1) is strictly downward
+and anchor-first, the exact E20 shape.** The recovery receipt locks
+the WOFF anchor FIRST (serialising concurrent receipts so the
+outstanding-claim math never races), then the member FOR SHARE (E23),
+then the written-off loan (the existing E21 hop), then guarantees on
+the full-recovery discharge (the existing E7 row write) — every hop
+downward. Nothing anywhere acquires a loan_write_offs row while
+holding T1+ locks (the E22 argument verbatim: `request_write_off`
+inserts the snapshot under the loan lock — a plain write, not a lock
+on WOFF; votes/voids lock WOFF alone), so no wait can point back up
+into T0. The member FOR SHARE conflicts with a terminal exit's member
+FOR UPDATE (E1) at T1 — receipt-vs-exit serialises there, which is
+precisely what the issue-#21 unresolved-claim exit guard
+(`member_exits._compute_under_locks`) relies on: whichever wins, the
+loser re-reads a committed claim position.
 
 **The cross-actor edge E8 (and the guarantor continuation of E3):
 borrower's anchor/guarantee → guarantor's member row.** A transaction
@@ -423,6 +445,17 @@ commit/rollback, per-tenant keys so tenants never serialise each other.
   lock-graph edges.** The !47 MR statement — "the NPL check locks the
   loan row — terminal node of member → accounts → loans; case
   mutations lock the case row only" — matches this file.
+- **Issue #21 (bad-debt recovery receipts) — AS-BUILT (this MR):** ONE
+  new strictly-downward edge, E23 (loan_write_offs FOR UPDATE →
+  members FOR SHARE), landed first-class in §2/§3/§4: the recovery
+  receipt locks the claim anchor first (serialising concurrent
+  receipts), then rides the existing E21 (member FOR SHARE → loan FOR
+  UPDATE), E7 (loans → guarantees row write, the full-recovery
+  discharge) and E15/E16 (the RC- posting) hops. The issue-#21 exit
+  guard (`member_exits._compute_under_locks` unresolved-claim check)
+  adds NO lock site — a plain read under the member FOR UPDATE the
+  exit already holds, race-safe against receipts via the E23 FOR
+  SHARE conflict at T1 (§4).
 - **P19 (M-Pesa)** and later prompts: any lock they take must land as
   an edge here first-class, in the same MR.
 
@@ -538,6 +571,26 @@ hit and no site: the row lock it takes on conflict is the same-table
 idempotency_keys row, in the middleware's own transaction, before any
 handler runs — the claim stays a single-node locker. **Zero new
 lock-graph edges.**
+
+**Issue-#21 delta (bad-debt recovery receipts, authored on this
+branch):** the recovery branch adds exactly **two new executable SQL
+lock sites**, both in `application/corrections.py:
+record_recovery_receipt` — the loan_write_offs claim anchor
+`FOR UPDATE` (the E23 tail) and the written-off loan `FOR UPDATE` (the
+E21 continuation); the member `FOR SHARE` hop rides the EXISTING
+`transactions._require_member` literal (no new site) — bringing the
+executable-site count to **69**. Combined grep totals: 130 / 30 / 36 /
+2 / 40 = **207** (`for update` / `for share` / `skip locked` /
+`for no key update` / `advisory`; union of matching lines, was
+123/26/36/2/37 = 193 at the (c) delta) — the twelve extra lines beyond
+the two new sites are docstrings/comments restating the E23 chain
+(corrections module + service docstrings, the member_exits exit-guard
+comment, and this file's own quotes are outside `backend/src`). The
+0030 constraint/append-only triggers live in migration DDL, not `src`,
+and take only same-row/parent MVCC reads (no locking probes — unlike
+the 0028 fence, deliberately: the service serialises on the WOFF row
+it already holds, so a locking probe would add a redundant wait edge).
+**One new lock-graph edge (E23), landed first-class in this MR.**
 
 ## 9. Cross-check: MR prose vs code-derived DAG (P-DIAG.0 step 3)
 
