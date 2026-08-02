@@ -120,11 +120,14 @@ async def _case_row(tid: uuid.UUID, case_id: str) -> Any:
 
 
 async def _closed_audit_count(tid: uuid.UUID, case_id: str) -> int:
+    # The bind parameter is named :tenant (not :tid) because the shared
+    # count() helper takes the tenant id as its first positional
+    # parameter, also named tid — a same-named bind kwarg collides.
     return await count(
         tid,
-        "SELECT count(*) FROM audit_log WHERE tenant_id = CAST(:tid AS uuid) "
+        "SELECT count(*) FROM audit_log WHERE tenant_id = CAST(:tenant AS uuid) "
         "AND action = 'recovery_case.closed' AND entity_id = :eid",
-        tid=str(tid),
+        tenant=str(tid),
         eid=case_id,
     )
 
@@ -209,9 +212,9 @@ def test_fm2_concurrent_double_open_exactly_one_case() -> None:
         # uq_recovery_cases_one_open and both inserts land (count 2).
         rows = await count(
             tid,
-            "SELECT count(*) FROM recovery_cases WHERE tenant_id = CAST(:tid AS uuid) "
+            "SELECT count(*) FROM recovery_cases WHERE tenant_id = CAST(:tenant AS uuid) "
             "AND loan_id = CAST(:lid AS uuid)",
-            tid=str(tid),
+            tenant=str(tid),
             lid=str(loan_id),
         )
         assert rows == 1
@@ -278,9 +281,9 @@ def test_fm3_auto_close_on_cure_exactly_once_and_new_case_after_renpl() -> None:
         assert second["id"] != case["id"]
         rows = await count(
             tid,
-            "SELECT count(*) FROM recovery_cases WHERE tenant_id = CAST(:tid AS uuid) "
+            "SELECT count(*) FROM recovery_cases WHERE tenant_id = CAST(:tenant AS uuid) "
             "AND loan_id = CAST(:lid AS uuid)",
-            tid=str(tid),
+            tenant=str(tid),
             lid=str(loan_id),
         )
         assert rows == 2
@@ -561,7 +564,12 @@ def test_notes_append_only_keyset_and_closed_case_refusal() -> None:
             assert [n["id"] for n in page1["items"]] == [note_ids[0]]
             assert page1["next_cursor"] is not None
             res = await client.get(
-                f"/recovery-cases/{case['id']}/notes?limit=1&cursor={page1['next_cursor']}",
+                f"/recovery-cases/{case['id']}/notes",
+                # params= so the client URL-encodes the cursor: the
+                # created_at|id cursor carries a '+00:00' offset whose
+                # raw '+' would decode to a space (the audit-log-suite
+                # pattern; real clients send encoded query strings).
+                params={"limit": 1, "cursor": page1["next_cursor"]},
                 headers=headers,
             )
             page2 = res.json()
@@ -828,9 +836,9 @@ def test_open_case_idempotency_key_replay_is_one_effect() -> None:
         # Side-effect count proves one effect (never return values).
         rows = await count(
             tid,
-            "SELECT count(*) FROM recovery_cases WHERE tenant_id = CAST(:tid AS uuid) "
+            "SELECT count(*) FROM recovery_cases WHERE tenant_id = CAST(:tenant AS uuid) "
             "AND loan_id = CAST(:lid AS uuid)",
-            tid=str(tid),
+            tenant=str(tid),
             lid=str(loan_id),
         )
         assert rows == 1

@@ -369,8 +369,14 @@ async def assign_recovery_case(
     assignee = (
         await session.execute(
             text(
-                "SELECT role_id, status FROM users "
-                "WHERE id = CAST(:uid AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+                # The role NAME is resolved server-side from the
+                # assignee's role_id (review B2) — users→roles join
+                # with explicit tenant predicates on both tables.
+                "SELECT u.role_id, u.status, r.name FROM users u "
+                "JOIN roles r ON r.id = u.role_id "
+                "AND r.tenant_id = CAST(:tid AS uuid) "
+                "WHERE u.id = CAST(:uid AS uuid) "
+                "AND u.tenant_id = CAST(:tid AS uuid)"
             ),
             {"uid": str(assignee_id), "tid": str(tenant_id)},
         )
