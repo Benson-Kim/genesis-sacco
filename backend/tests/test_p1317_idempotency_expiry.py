@@ -57,9 +57,7 @@ async def _challenge_count(tid: uuid.UUID) -> int:
 
 async def _key_count(tid: uuid.UUID) -> int:
     async with tenant_session(factory(), tid) as session:
-        count = (
-            await session.execute(text("SELECT count(*) FROM idempotency_keys"))
-        ).scalar_one()
+        count = (await session.execute(text("SELECT count(*) FROM idempotency_keys"))).scalar_one()
     return int(count)
 
 
