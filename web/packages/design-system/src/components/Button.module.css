@@ -3,12 +3,16 @@
   border: 1.5px solid var(--line);
   background: var(--card);
   color: var(--sub);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 9px 16px;
   font-weight: 800;
   font-size: 13px;
   cursor: pointer;
   font-family: inherit;
+  /* 44px minimum interactive target (issue #8). */
+  min-height: var(--touch-target-min);
+  /* Labels never wrap to a second line (issue #8). */
+  white-space: nowrap;
 }
 
 .btn:disabled {

@@ -65,17 +65,20 @@
 
 .input {
   width: 100%;
+  min-height: var(--touch-target-min);
   padding: 9px 12px;
   border-radius: 9px;
   border: 1.5px solid var(--line);
   font-size: 13px;
   font-family: inherit;
-  outline: none;
   background: #fff;
 }
 
-.input:focus {
+/* Focus ring replaced, never removed (issue #8). */
+.input:focus-visible {
+  outline: none;
   border-color: var(--navy);
+  box-shadow: 0 0 0 3px var(--navySoft);
 }
 
 .otpRow {
@@ -93,11 +96,13 @@
   font-weight: 800;
   border: 1.5px solid var(--line);
   border-radius: 10px;
-  outline: none;
 }
 
-.otpInput:focus {
+/* Focus ring replaced, never removed (issue #8). */
+.otpInput:focus-visible {
+  outline: none;
   border-color: var(--navy);
+  box-shadow: 0 0 0 3px var(--navySoft);
 }
 
 .wide {
