@@ -308,75 +308,18 @@ web:client-drift:
     - exists: ["web/packages/api-client/openapi.json"]
   script:
     - npm run check:client-drift
-
-# TEMPORARY (P14 !13 refresh — removed before merge, the !13 bootstrap:web
-# precedent): the agent sandbox has no PyPI/npm registry access, so the
-# regenerated OpenAPI snapshot + generated client are produced HERE, in CI,
-# downloaded as artifacts and committed verbatim.
-bootstrap:openapi:
-  image: python:3.12-slim
-  stage: lint
-  needs: []
-  rules:
-    - exists: ["web/packages/api-client/openapi.json"]
-  script:
-    - pip install --upgrade pip
-    - pip install ./backend
-    - python backend/scripts/export_openapi.py web/packages/api-client/openapi.json
-  artifacts:
-    paths:
-      - web/packages/api-client/openapi.json
-    expire_in: 1 week
-
-bootstrap:client:
-  image: node:22-alpine
-  stage: test
-  needs: ["bootstrap:openapi"]
-  rules:
-    - exists: ["web/packages/api-client/openapi.json"]
-  cache:
-    key:
-      files:
-        - web/package-lock.json
-    paths:
-      - .cache/npm
-  script:
-    - cd web
-    - npm ci
-    - npm run generate:api
-    # Positive check: freshly generated client matches the fresh snapshot.
-    - sh scripts/check-client-drift.sh
-    # Negative proof (P14 EXIT falsifiability): a deliberately staled
-    # generated client must FAIL the drift check.
+    # Falsifiability self-test (P14 EXIT): a deliberately staled generated
+    # client must make the same check FAIL — proven on EVERY pipeline, not
+    # once at bootstrap. Runs on a workspace copy; nothing is committed.
     - |
+      cp packages/api-client/src/generated/schema.d.ts /tmp/schema.orig.d.ts
       echo "// deliberately staled for the drift-check negative proof" >> packages/api-client/src/generated/schema.d.ts
       if npm run check:client-drift; then
         echo "ERROR: drift check passed against a staled client" >&2
         exit 1
       fi
+      cp /tmp/schema.orig.d.ts packages/api-client/src/generated/schema.d.ts
       echo "OK - drift check fails on a stale client"
-    - npm run generate:api
-    # Artifact download is 403 for the agent token (see the backend:test
-    # note above) — emit the generated files into the job log instead,
-    # gzip+base64, to be reconstructed and committed verbatim.
-    - |
-      node -e '
-        const fs = require("fs"), z = require("zlib");
-        const files = {};
-        for (const p of [
-          "packages/api-client/openapi.json",
-          "packages/api-client/src/generated/schema.d.ts",
-        ]) files[p] = fs.readFileSync(p).toString("base64");
-        const blob = z.gzipSync(JSON.stringify(files)).toString("base64");
-        console.log("===BEGIN_ARTIFACTS_B64===");
-        for (let i = 0; i < blob.length; i += 120) console.log(blob.slice(i, i + 120));
-        console.log("===END_ARTIFACTS_B64===");
-      '
-  artifacts:
-    paths:
-      - web/packages/api-client/openapi.json
-      - web/packages/api-client/src/generated/schema.d.ts
-    expire_in: 1 week
 
 # -----------------------------------------------------------------------------
 # Mobile — Flutter (member_app, admin_app, shared packages)

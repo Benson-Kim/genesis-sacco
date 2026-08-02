@@ -75,3 +75,41 @@ No secrets here — `NEXT_PUBLIC_*` values are public by definition (gate 1.6).
   are deny-by-default; they shape UX only — the API authorizes every call.
 - Mutations send an `Idempotency-Key` (one key per logical submission, gate 1.4).
 - All list UIs use the keyset (cursor) contract `{items, next_cursor}` (gate 1.3).
+
+## Security posture (gate 1.6 — banking standard)
+
+**Token storage & XSS blast radius.** No token ever touches
+`localStorage` (readable forever by any injected script). The access
+token exists only in a module-scope variable: an XSS payload would have
+to execute *while the tab lives* and intercept the in-memory store —
+it cannot harvest tokens at rest. The refresh token is per-tab
+`sessionStorage`, single-use (rotated with family-revocation on reuse
+by P3), so a stolen value dies on its first legitimate rotation. This
+bounds the blast radius of any script injection to the lifetime of one
+tab's session rather than "forever until the user clears storage".
+
+**Content-Security-Policy.** `src/middleware.ts` mints a per-request
+nonce; `script-src 'self' 'nonce-…' 'strict-dynamic'` — **no
+`unsafe-inline` scripts, no `unsafe-eval`**. The root layout forces
+dynamic rendering so Next's own inline bootstrap scripts carry the
+nonce. Documented Next.js-imposed exception: `style-src` keeps
+`'unsafe-inline'` because Next/styled-jsx inject inline `<style>`
+elements without nonce support — styles cannot execute script or read
+tokens; the script execution vector stays nonce-gated. `connect-src`
+allows only self + the API origin.
+
+**Other headers** (set in middleware AND `next.config.ts` for
+static-asset coverage): `frame-ancestors 'none'` + `X-Frame-Options:
+DENY` (clickjacking), `Referrer-Policy: strict-origin-when-cross-origin`,
+minimal `Permissions-Policy`, `X-Content-Type-Options: nosniff`.
+The whole set is test-enforced (`src/lib/__tests__/security-headers.test.ts`).
+
+**Least disclosure.** Errors render only the sanitized
+`{category, correlation_id}` envelope from the backend contract — no
+figures, no internals, no stack traces reach the DOM.
+
+**Hygiene gate (FM3).** `src/__tests__/client-hygiene.test.ts` +
+eslint `no-console` fail the pipeline on console logging, localStorage,
+cookie fiddling, any third-party analytics/telemetry, or CDN script
+references. The dependency lockfile is produced by CI and committed —
+no scripts are pulled from CDNs at runtime.
