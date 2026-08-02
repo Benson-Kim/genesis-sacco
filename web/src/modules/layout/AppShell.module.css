@@ -50,8 +50,18 @@
 }
 
 .nav {
-  padding: 4px 12px;
+  padding: 4px 12px 12px;
   flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Bottom-anchored utility zone (issue #8): secondary links pin to the
+   sidebar footer so core navigation stays clean. */
+.navUtility {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .navSection {

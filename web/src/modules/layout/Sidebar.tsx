@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
 import { NAV_SECTIONS } from "./nav";
+import { NavIcon } from "./NavIcon";
 import styles from "./AppShell.module.css";
 
 /**
@@ -31,21 +32,28 @@ export function Sidebar() {
           );
           if (visible.length === 0) return null;
           return (
-            <div key={section.label}>
+            <div
+              key={section.label}
+              // Utility links pin to the sidebar footer (issue #8).
+              className={section.utility === true ? styles.navUtility : undefined}
+            >
               <div className={styles.navSection}>{section.label}</div>
-              {visible.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={
-                    pathname === item.href
-                      ? `${styles.navItem} ${styles.navItemOn}`
-                      : styles.navItem
-                  }
-                >
-                  {item.label}
-                </Link>
-              ))}
+              {visible.map((item) => {
+                const active = pathname === item.href;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? "page" : undefined}
+                    className={
+                      active ? `${styles.navItem} ${styles.navItemOn}` : styles.navItem
+                    }
+                  >
+                    <NavIcon shape={item.icon} active={active} />
+                    {item.label}
+                  </Link>
+                );
+              })}
             </div>
           );
         })}
