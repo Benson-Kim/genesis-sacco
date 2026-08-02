@@ -21,7 +21,9 @@ def test_matrix_shape() -> None:
     matrix = seed_matrix()
     assert len(matrix) == 7
     for role in ROLE_NAMES:
-        assert len(matrix[role]) == 7
+        # 8 modules: the 7 prototype modules + the dedicated P13.15
+        # corrections module (A3 maker-checker).
+        assert len(matrix[role]) == 8
         for module in Module:
             assert set(matrix[role][module]) == set(Action)
 
@@ -52,6 +54,31 @@ def test_matrix_matches_prototype_seed_perms() -> None:
     accountant = matrix["Accountant"]
     assert accountant[Module.TRANSACTIONS][Action.EDIT] is True
     assert accountant[Module.APPLICATIONS][Action.VIEW] is False
+
+
+def test_corrections_module_grants_are_narrow() -> None:
+    """P13.15 A3: corrections are the fraud channel — the generic
+    non-admin defaults must never leak in. Maker (Accountant: create)
+    and checker (Branch Manager / Credit Committee: approve) are
+    distinct roles; Teller and Loan Officer hold NOTHING. Falsifiable:
+    routing corrections through the generic module defaults makes the
+    Teller/Loan Officer denials and the Branch Manager create-denial
+    fail."""
+    matrix = seed_matrix()
+    corrections = Module.CORRECTIONS
+    assert all(matrix["System Admin"][corrections].values())
+    maker = matrix["Accountant"][corrections]
+    assert maker[Action.VIEW] and maker[Action.CREATE]
+    assert not maker[Action.EDIT] and not maker[Action.APPROVE]
+    for checker_role in ("Branch Manager", "Credit Committee"):
+        checker = matrix[checker_role][corrections]
+        assert checker[Action.VIEW] and checker[Action.APPROVE]
+        assert not checker[Action.CREATE] and not checker[Action.EDIT]
+    auditor = matrix["Auditor"][corrections]
+    assert auditor[Action.VIEW]
+    assert not any((auditor[Action.CREATE], auditor[Action.EDIT], auditor[Action.APPROVE]))
+    for denied_role in ("Teller", "Loan Officer"):
+        assert not any(matrix[denied_role][corrections].values())
 
 
 def test_every_operation_carries_the_authz_dependency() -> None:

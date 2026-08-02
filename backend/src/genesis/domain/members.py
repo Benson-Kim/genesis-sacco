@@ -85,6 +85,8 @@ class MoneyOperation(enum.StrEnum):
     SHARE_TRANSFER_OUT = "share transfer out"
     SHARE_TRANSFER_IN = "share transfer in"
     EXIT_REQUEST = "exit request"
+    # P13.15: staff-charged misc fee (money IN — the member pays it).
+    FEE = "fee posting"
 
 
 #: Code-owned capability map (P13.13 FM2 — the single gatekeeper):
@@ -105,6 +107,9 @@ _MONEY_IN = frozenset({MemberStatus.ACTIVE, MemberStatus.ARREARS, MemberStatus.D
 MEMBER_OPERATIONS: dict[MoneyOperation, frozenset[MemberStatus]] = {
     MoneyOperation.DEPOSIT: _MONEY_IN,
     MoneyOperation.LOAN_REPAYMENT: _MONEY_IN,
+    # P13.15: a fee is money IN (the member settles it) — same statuses
+    # as deposit/repayment; exited members are refused by construction.
+    MoneyOperation.FEE: _MONEY_IN,
     MoneyOperation.SHARE_TOPUP: frozenset({MemberStatus.ACTIVE, MemberStatus.ARREARS}),
     MoneyOperation.WITHDRAWAL: _ACTIVE_ONLY,
     MoneyOperation.BORROW: _ACTIVE_ONLY,
