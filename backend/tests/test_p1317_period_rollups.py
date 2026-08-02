@@ -422,9 +422,7 @@ def test_rollups_are_write_once_and_late_inserts_fenced() -> None:
         with pytest.raises(DBAPIError, match="write-once"):
             async with tenant_session(factory(), tid) as session:
                 await session.execute(
-                    text(
-                        "DELETE FROM member_period_balances WHERE tenant_id = CAST(:tid AS uuid)"
-                    ),
+                    text("DELETE FROM member_period_balances WHERE tenant_id = CAST(:tid AS uuid)"),
                     {"tid": str(tid)},
                 )
         with pytest.raises(DBAPIError, match="late inserts are refused"):
