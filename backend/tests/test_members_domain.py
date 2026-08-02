@@ -88,6 +88,12 @@ _EXPECTED_OPERATIONS = {
     # P13.15: a fee is money IN (the member pays it); exited members
     # are refused like every operation (terminal).
     MoneyOperation.FEE: {MemberStatus.ACTIVE, MemberStatus.ARREARS, MemberStatus.DORMANT},
+    # Issue #21: a recovery receipt is money IN against the surviving
+    # written-off claim — deliberately the deposit/repayment statuses;
+    # exited members are refused like every operation (terminal), and
+    # the issue-#21 exit guard makes an exited-with-open-claim state
+    # unreachable going forward.
+    MoneyOperation.RECOVERY: {MemberStatus.ACTIVE, MemberStatus.ARREARS, MemberStatus.DORMANT},
 }
 
 
@@ -105,12 +111,15 @@ def test_exited_members_may_perform_no_money_operation(operation: MoneyOperation
 
 def test_dormant_members_may_only_deposit_repay_pay_fees_and_request_exit() -> None:
     # P13.15: FEE joined the money-in set (deposit/repayment statuses) —
-    # a dormant member may settle a fee, never move money out.
+    # a dormant member may settle a fee, never move money out. Issue
+    # #21: RECOVERY joined the same money-in set — a dormant member may
+    # settle their written-off claim, never move money out.
     allowed = {op for op in MoneyOperation if member_may(MemberStatus.DORMANT, op)}
     assert allowed == {
         MoneyOperation.DEPOSIT,
         MoneyOperation.LOAN_REPAYMENT,
         MoneyOperation.FEE,
+        MoneyOperation.RECOVERY,
         MoneyOperation.EXIT_REQUEST,
     }
 

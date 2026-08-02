@@ -798,9 +798,10 @@ def test_fm9_cross_tenant_probes_and_idempotent_replay() -> None:
     API. Idempotency: replaying the SAME actor's key returns the
     stored response and records exactly ONE receipt (side-effect
     count, never the return value alone); a DIFFERENT actor replaying
-    the same key MISSES the stored response and records their own
-    receipt (the !29 scoping rule) — proven by the row count moving
-    100.00 -> 200.00 total."""
+    the same key MISSES the stored response — the actor rides the
+    request hash, so the cross-actor replay gets the 409 conflict
+    envelope and ZERO new side effects (the !29 scoping rule, the
+    test_a5 house semantics), never the first actor's response."""
 
     async def run() -> None:
         tid_a, actor_a, token_a = await _seed_actor()
@@ -828,7 +829,9 @@ def test_fm9_cross_tenant_probes_and_idempotent_replay() -> None:
         assert receipts == 1  # side-effect count, not the response
 
         # Cross-actor replay MISSES (the !29 scoping lesson): the
-        # second actor's identical key executes as a NEW request.
+        # actor rides the request hash, so the second actor's identical
+        # key + body gets the 409 conflict envelope — never the stored
+        # response — and no receipt lands (side-effect count unmoved).
         _actor2, token2 = await _seed_extra_user(tid_a, "Accountant")
         async with api_client() as client:
             other = await client.post(
@@ -836,9 +839,11 @@ def test_fm9_cross_tenant_probes_and_idempotent_replay() -> None:
                 json={"amount": "100.00", "channel": "bank"},
                 headers=_headers(token2, idem=key),
             )
-            assert other.status_code == 201
+            assert other.status_code == 409
+            assert other.headers.get("idempotency-replayed") != "true"
+            assert other.json()["category"] == "conflict"
         _, _, receipts, _ = await _counts(tid_a)
-        assert receipts == 2
+        assert receipts == 1
 
         # Cross-tenant: zero rows under tenant B's session; 404 via API.
         async with tenant_session(factory(), tid_b) as session:
