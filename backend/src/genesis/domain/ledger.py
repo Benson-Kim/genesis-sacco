@@ -53,6 +53,10 @@ class TxnType(enum.StrEnum):
     # (WO-); values match the 0025 transactions.type CHECK.
     FEE = "fee"
     LOAN_WRITE_OFF = "loan_write_off"
+    # Issue #21 (P13.15 A4 follow-up): bad-debt recovery receipt (RC-)
+    # against a written-off loan's surviving claim; value matches the
+    # 0030 transactions.type CHECK.
+    LOAN_RECOVERY = "loan_recovery"
 
 
 class Channel(enum.StrEnum):
@@ -94,6 +98,13 @@ class Account(enum.StrEnum):
     INTEREST_INCOME = "income.interest"
     PENALTY_INCOME = "income.penalties"
     FEE_INCOME = "income.fees"
+    # Issue #21: cash recovered against a written-off loan's surviving
+    # claim is recognised as bad-debt recovery INCOME (the accounting
+    # treatment named on the issue) — never a reversal of the WO-
+    # posting and never a resurrection of loans.receivable. The claim
+    # itself lives in the write-once loan_write_offs snapshot; partial
+    # recoveries are tracked by the append-only loan_recoveries rows.
+    RECOVERY_INCOME = "income.bad_debt_recoveries"
 
     # Expense accounts
     INTEREST_EXPENSE = "interest.expense"
@@ -179,6 +190,7 @@ REF_PREFIX: dict[TxnType, str] = {
     TxnType.SHARE_TRANSFER_IN: "ST-",  # sequence (the WD- precedent)
     TxnType.FEE: "FE-",  # P13.15 misc fees
     TxnType.LOAN_WRITE_OFF: "WO-",  # P13.15 write-off provisioning posting
+    TxnType.LOAN_RECOVERY: "RC-",  # issue #21 bad-debt recovery receipts
 }
 
 # Channel-specific prefix for deposits. Deposits only arrive via M-Pesa or
@@ -619,6 +631,42 @@ def build_write_off_posting(amount: Decimal) -> PostingSpec:
     )
 
 
+def build_loan_recovery_posting(amount: Decimal, channel: Channel) -> PostingSpec:
+    """Bad-debt recovery receipt against a written-off loan (issue #21):
+    RC- ref.
+
+    DR cash / CR income.bad_debt_recoveries — the treatment named on
+    issue #21: cash recovered on a claim whose receivable was already
+    derecognised by the WO- posting is recognised as recovery INCOME.
+    The write-off posting is never reversed and loans.receivable is
+    never resurrected (the loan stays written_off; the surviving claim
+    lives in the write-once loan_write_offs snapshot). Money physically
+    arrives, so only the cash channels (MPESA/BANK) are valid —
+    ACCRUAL/INTERNAL are refused exactly like deposits and fees.
+
+    The AMOUNT is the cash actually received (caller-observed, like a
+    repayment) — but the CLAIM it draws down (total_written_off and the
+    receipts already recorded) is resolved server-side by the
+    corrections service under the write-off row lock, and a receipt can
+    never exceed the outstanding claim (issue #21: partial recoveries
+    tracked against total_written_off).
+    """
+    amt = to_cents(amount)
+    if channel not in (Channel.MPESA, Channel.BANK):
+        raise ValueError(
+            f"recovery receipts are only valid on MPESA or BANK channels, got {channel!r}"
+        )
+    return PostingSpec(
+        txn_type=TxnType.LOAN_RECOVERY,
+        channel=channel,
+        amount=amt,
+        lines=(
+            LedgerLine(account=_cash_account(channel), side=Side.DEBIT, amount=amt),
+            LedgerLine(account=Account.RECOVERY_INCOME, side=Side.CREDIT, amount=amt),
+        ),
+    )
+
+
 def build_reversal_posting(original: PostingSpec) -> PostingSpec:
     """Return a reversing entry that exactly negates the original (gate 1.5).
 
@@ -670,6 +718,9 @@ MEMBER_DIRECTION: dict[TxnType, Side] = {
     # repayment leg would (money into their position).
     TxnType.FEE: Side.DEBIT,
     TxnType.LOAN_WRITE_OFF: Side.CREDIT,
+    # Issue #21: a recovery receipt draws down the member's surviving
+    # written-off claim — money into their position, like a repayment.
+    TxnType.LOAN_RECOVERY: Side.CREDIT,
 }
 
 
@@ -730,6 +781,12 @@ MEMBER_INITIATED: dict[TxnType, bool] = {
     # dormancy clock.
     TxnType.FEE: False,
     TxnType.LOAN_WRITE_OFF: False,
+    # Issue #21: recovery receipts are COLLECTIONS outcomes recorded by
+    # staff — the funds may originate from auctions, guarantor calls or
+    # negotiated settlements, so a receipt is never proof the member
+    # transacted; counting it would quietly keep a written-off member's
+    # account out of dormancy monitoring (the P13.13 FM1 gaming vector).
+    TxnType.LOAN_RECOVERY: False,
 }
 
 
@@ -780,6 +837,7 @@ ACCOUNT_CLASS: dict[Account, AccountClass] = {
     Account.INTEREST_INCOME: AccountClass.INCOME,
     Account.PENALTY_INCOME: AccountClass.INCOME,
     Account.FEE_INCOME: AccountClass.INCOME,
+    Account.RECOVERY_INCOME: AccountClass.INCOME,
     Account.INTEREST_EXPENSE: AccountClass.EXPENSE,
     Account.DIVIDEND_EXPENSE: AccountClass.EXPENSE,
     Account.REBATE_EXPENSE: AccountClass.EXPENSE,

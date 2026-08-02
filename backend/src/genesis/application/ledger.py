@@ -722,6 +722,47 @@ async def post_loan_write_off(
     return result
 
 
+async def post_loan_recovery(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    member_id: uuid.UUID,
+    loan_id: uuid.UUID,
+    amount: Decimal,
+    channel: Channel,
+    actor_id: uuid.UUID | None = None,
+    *,
+    write_off_id: uuid.UUID,
+) -> PostingResult:
+    """Post a bad-debt recovery receipt (issue #21): RC- ref.
+
+    DR cash / CR income.bad_debt_recoveries. Runs in the caller's
+    transaction; the corrections recovery service owns the atomic unit
+    (claim re-verification under the write-off row lock + the
+    append-only loan_recoveries row + audit + outbox) and has already
+    verified the receipt against the outstanding claim. occurred_at is
+    server-resolved NOW inside _post, so the P12.5 open-period gate
+    applies (the P13.15 A2 rule). Payload carries ids and amounts only
+    — never names (gate 1.6).
+    """
+    spec = build_loan_recovery_posting(amount, channel)
+    result = await _post(session, tenant_id, member_id, spec, actor_id)
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="ledger.recovery_posted",
+        payload={
+            "txn_id": str(result.txn_id),
+            "txn_ref": result.txn_ref,
+            "member_id": str(member_id),
+            "loan_id": str(loan_id),
+            "write_off_id": str(write_off_id),
+            "amount": str(spec.amount),  # rounded, matches the ledger (1.5)
+            "channel": channel.value,
+        },
+    )
+    return result
+
+
 async def post_exit_settlement(
     session: AsyncSession,
     tenant_id: uuid.UUID,

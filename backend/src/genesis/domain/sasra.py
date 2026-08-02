@@ -42,7 +42,9 @@ from genesis.domain.ledger import Account
 #: the regulator's prescribed line items change.
 #: 2025.2 (P13.15): adds X400 "Loan write-off expense" for the new
 #: expense.loan_writeoffs account (the write-off provisioning posting).
-SASRA_RETURN_VERSION = "SASRA-DS-2025.2"
+#: 2025.3 (issue #21): adds I400 "Recoveries on loans written off" for
+#: the new income.bad_debt_recoveries account (RC- recovery receipts).
+SASRA_RETURN_VERSION = "SASRA-DS-2025.3"
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,11 @@ SASRA_LINES: tuple[SasraLine, ...] = (
     SasraLine("I100", "Interest income on loans", (Account.INTEREST_INCOME,)),
     SasraLine("I200", "Penalty income", (Account.PENALTY_INCOME,)),
     SasraLine("I300", "Fee income", (Account.FEE_INCOME,)),
+    # Issue #21: cash recovered against written-off loans (RC-
+    # receipts) is recovery income — the written-off portfolio never
+    # re-enters A200 (write-off is not forgiveness, but neither is a
+    # recovery a resurrection of the receivable).
+    SasraLine("I400", "Recoveries on loans written off", (Account.RECOVERY_INCOME,)),
     SasraLine("X100", "Interest expense on member deposits", (Account.INTEREST_EXPENSE,)),
     SasraLine("X200", "Dividends on member shares", (Account.DIVIDEND_EXPENSE,)),
     SasraLine("X300", "Rebates on member deposits", (Account.REBATE_EXPENSE,)),

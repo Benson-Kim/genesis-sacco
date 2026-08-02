@@ -139,10 +139,12 @@ _LOAN_ALLOWED: dict[LoanStatus, frozenset[LoanStatus]] = {
 def loan_transition(current: LoanStatus, target: LoanStatus) -> LoanStatus:
     """The single gatekeeper for loan status changes (gate 1.4).
 
-    WRITTEN_OFF is terminal: post-write-off recoveries are a future
-    explicit branch (bad-debt-recovery income posting, see the P13.15
-    follow-up issue) — a repayment or adjustment against a written-off
-    loan is refused loudly today. CLOSED re-opens ONLY via the P13.15
+    WRITTEN_OFF is terminal — DELIBERATELY even for the issue-#21
+    recovery branch: a bad-debt recovery receipt recognises income
+    against the surviving write-once claim and NEVER resurrects the
+    loan (corrections.record_recovery_receipt touches no loan status
+    or balance); a repayment or adjustment against a written-off loan
+    stays refused loudly. CLOSED re-opens ONLY via the P13.15
     repayment-adjustment branch (see _LOAN_ALLOWED); generic ledger
     corrections remain reversing entries, never status edits.
     """

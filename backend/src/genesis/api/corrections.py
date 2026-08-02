@@ -163,6 +163,51 @@ class WriteOffPostOut(BaseModel):
     status: str
 
 
+class RecoveryReceiptBody(BaseModel):
+    """The cash actually received and its channel (issue #21). The
+    CLAIM figures — total_written_off and the receipts already
+    recorded — are server-resolved from the write-once snapshot and
+    the append-only loan_recoveries rows under the write-off row lock;
+    a receipt exceeding the outstanding claim is a 409. extra="forbid"
+    turns any other caller-supplied field into a 422."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    amount: Decimal = Field(gt=0, le=1_000_000_000, decimal_places=2)
+    channel: Channel
+
+
+class RecoveryReceiptOut(BaseModel):
+    recovery_id: str
+    write_off_id: str
+    loan_id: str
+    member_id: str
+    txn_id: str
+    txn_ref: str
+    amount: str
+    recovered_total: str
+    outstanding_claim: str
+    claim_fully_recovered: bool
+    guarantees_released: int
+    recovery_case_id: str | None
+
+
+class RecoveryReceiptRowOut(BaseModel):
+    id: str
+    amount: str
+    txn_id: str
+    recovery_case_id: str | None
+    recorded_by: str
+    created_at: str
+
+
+class RecoveryReceiptsOut(BaseModel):
+    items: list[RecoveryReceiptRowOut]
+    recovered_total: str
+    outstanding_claim: str
+    next_cursor: str | None
+
+
 def _write_off_out(record: corrections_service.WriteOffRecord) -> WriteOffOut:
     return WriteOffOut(
         id=str(record.id),
@@ -295,4 +340,70 @@ async def post_write_off(
         txn_ref=result.txn_ref,
         total_written_off=str(result.total_written_off),
         status=result.status.value,
+    )
+
+
+@router.post("/corrections/write-offs/{write_off_id}/recoveries", status_code=201)
+async def record_recovery_receipt(
+    write_off_id: uuid.UUID, body: RecoveryReceiptBody, ctx: CorrectionsCreateCtx
+) -> RecoveryReceiptOut:
+    """Record a bad-debt recovery receipt against a posted write-off
+    (issue #21): RC- posting + append-only receipt row, never a
+    resurrection of the loan."""
+    channel = require_cash_channel(body.channel)
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        result = await corrections_service.record_recovery_receipt(
+            session,
+            ctx.tenant_id,
+            ctx.user_id,
+            write_off_id,
+            amount=body.amount,
+            channel=channel,
+        )
+    return RecoveryReceiptOut(
+        recovery_id=str(result.recovery_id),
+        write_off_id=str(result.write_off_id),
+        loan_id=str(result.loan_id),
+        member_id=str(result.member_id),
+        txn_id=str(result.txn_id),
+        txn_ref=result.txn_ref,
+        amount=str(result.amount),
+        recovered_total=str(result.recovered_total),
+        outstanding_claim=str(result.outstanding_claim),
+        claim_fully_recovered=result.claim_fully_recovered,
+        guarantees_released=result.guarantees_released,
+        recovery_case_id=str(result.recovery_case_id) if result.recovery_case_id else None,
+    )
+
+
+@router.get("/corrections/write-offs/{write_off_id}/recoveries")
+async def list_recovery_receipts(
+    write_off_id: uuid.UUID,
+    ctx: CorrectionsViewCtx,
+    cursor: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> RecoveryReceiptsOut:
+    """Receipts recorded against one write-off claim (keyset, oldest
+    first) with the reconstructed recovered/outstanding position."""
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        page = await corrections_service.list_recovery_receipts(
+            session, ctx.tenant_id, write_off_id, cursor=cursor, limit=limit
+        )
+    return RecoveryReceiptsOut(
+        items=[
+            RecoveryReceiptRowOut(
+                id=str(r.id),
+                amount=str(r.amount),
+                txn_id=str(r.txn_id),
+                recovery_case_id=str(r.recovery_case_id) if r.recovery_case_id else None,
+                recorded_by=str(r.recorded_by),
+                created_at=r.created_at.isoformat(),
+            )
+            for r in page.items
+        ],
+        recovered_total=str(page.recovered_total),
+        outstanding_claim=str(page.outstanding_claim),
+        next_cursor=page.next_cursor,
     )

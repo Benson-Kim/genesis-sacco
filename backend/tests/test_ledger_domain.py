@@ -391,6 +391,33 @@ def test_fee_posting_rejects_non_cash_channels(channel: Channel) -> None:
         build_fee_posting(Decimal("100"), channel)
 
 
+def test_loan_recovery_posting_debits_cash_and_credits_recovery_income() -> None:
+    """Issue #21 bad-debt recovery receipt (RC-). HAND-COMPUTED: a
+    10,000.00 recovery received via bank -> DR cash.bank 10,000.00 /
+    CR income.bad_debt_recoveries 10,000.00, balanced. The posting
+    NEVER touches loans.receivable — the receivable was derecognised
+    by the WO- posting and a recovery is income, not a resurrection.
+    Falsifiable: point the credit leg at loans.receivable (the
+    resurrection bug) and the asserts fail."""
+    spec = build_loan_recovery_posting(Decimal("10000.00"), Channel.BANK)
+    spec.assert_balanced()
+    assert spec.txn_type is TxnType.LOAN_RECOVERY
+    assert spec.amount == Decimal("10000.00")
+    assert spec.lines == (
+        LedgerLine(account=Account.CASH_BANK, side=Side.DEBIT, amount=Decimal("10000.00")),
+        LedgerLine(account=Account.RECOVERY_INCOME, side=Side.CREDIT, amount=Decimal("10000.00")),
+    )
+    assert ref_prefix(TxnType.LOAN_RECOVERY, Channel.BANK) == "RC-"
+
+
+@pytest.mark.parametrize("channel", [Channel.ACCRUAL, Channel.INTERNAL])
+def test_loan_recovery_posting_rejects_non_cash_channels(channel: Channel) -> None:
+    """A recovery receipt is cash physically arriving — never a system
+    accrual (issue #21)."""
+    with pytest.raises(ValueError, match="MPESA or BANK"):
+        build_loan_recovery_posting(Decimal("100"), channel)
+
+
 def test_write_off_posting_derecognises_the_receivable() -> None:
     """P13.15 write-off provisioning posting (WO-). HAND-COMPUTED: a
     25,000.00 written-off principal balance -> DR
@@ -439,3 +466,7 @@ def test_member_initiated_allow_list_is_exactly_the_hand_written_set() -> None:
     # member activity either.
     assert not MEMBER_INITIATED[TxnType.FEE]
     assert not MEMBER_INITIATED[TxnType.LOAN_WRITE_OFF]
+    # Issue #21: recovery receipts are collections outcomes recorded by
+    # staff (funds may come from auctions/guarantors) — counting them
+    # would keep a written-off member out of dormancy monitoring.
+    assert not MEMBER_INITIATED[TxnType.LOAN_RECOVERY]

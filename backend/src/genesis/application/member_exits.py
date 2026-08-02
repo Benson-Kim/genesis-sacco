@@ -292,6 +292,7 @@ async def _compute_under_locks(
     Eligibility raised here (least disclosure — no figures echoed):
       * live guarantees GIVEN by the member (under the deposit lock)
       * open loan applications
+      * an unresolved POSTED write-off claim (issue #21)
     """
     deposit_account_id, deposit_balance = await _lock_account(
         session, tenant_id, kind="deposit", member_id=member_id
@@ -306,6 +307,41 @@ async def _compute_under_locks(
         )
     if await _open_application_count(session, tenant_id, member_id) > 0:
         raise ConflictError("member has open loan applications: resolve them before exit")
+    # Issue #21 (write-off is NOT forgiveness — the documented exit
+    # decision): a POSTED write-off's surviving claim blocks exit until
+    # fully recovered. The member's written-off loan carries no
+    # *active* balance, so without this guard the claim would silently
+    # walk out with the settlement. The recovered total is
+    # reconstructed from the append-only loan_recoveries rows (v1.1
+    # rule 2). Race-safe: the caller holds the member row FOR UPDATE
+    # and every recovery receipt takes the same member row FOR SHARE
+    # (corrections.record_recovery_receipt), so this read serialises
+    # against concurrent receipts at the member tier (the P13.15
+    # adjustment-vs-exit argument). A committee-approved WAIVER is a
+    # future explicit branch recorded on issue #21; until it exists,
+    # full recovery is the only unblock.
+    unresolved_claim = (
+        await session.execute(
+            text(
+                # Explicit tenant predicates on top of forced RLS
+                # (v1.1 rule 4); served by idx_loan_write_offs_member
+                # + idx_loan_recoveries_write_off.
+                "SELECT 1 FROM loan_write_offs w "
+                "WHERE w.member_id = CAST(:m AS uuid) "
+                "AND w.tenant_id = CAST(:tid AS uuid) AND w.status = 'posted' "
+                "AND w.total_written_off > "
+                " (SELECT COALESCE(SUM(r.amount), 0) FROM loan_recoveries r "
+                "  WHERE r.write_off_id = w.id AND r.tenant_id = w.tenant_id) "
+                "LIMIT 1"
+            ),
+            {"m": str(member_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if unresolved_claim is not None:
+        raise ConflictError(
+            "member has an unresolved written-off loan claim: record its "
+            "recovery before exit (write-off is not forgiveness)"
+        )
     payoffs = await _active_loan_payoffs(session, tenant_id, member_id, as_of)
     computation = compute_settlement(
         shares=share_balance,
