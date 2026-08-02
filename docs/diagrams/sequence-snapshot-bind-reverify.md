@@ -1,26 +1,28 @@
 <!--
   P-DIAG.5 — Sequence 2/3: the SNAPSHOT-BIND-REVERIFY pattern (as-built)
   Authored against main @ 08541b860f1445b16c342c39b6606d86b9dbeb17
-  Drift rule: v1.2 rule 11 — any MR that changes this flow in either
-  consumer (P12 exits, !30/!36 dividends) MUST update this file in the
-  same MR. Future prompts/MRs REFERENCE this diagram instead of
-  re-describing the pattern (v1.1 rule 3 is its normative statement).
+  P13.15 (!46) extended the consumer table with the loan write-off.
+  Drift rule: v1.2 rule 11 — any MR that changes this flow in any
+  consumer (P12 exits, !30/!36 dividends, P13.15 write-offs) MUST
+  update this file in the same MR. Future prompts/MRs REFERENCE this
+  diagram instead of re-describing the pattern (v1.1 rule 3 is its
+  normative statement).
   Lock authority: the full lock sets below are lock-order.md edges
-  E1/E10/E12/E14 (exit) and E2/E10/E12 (distribution) — cited by edge
-  id, never restated.
+  E1/E10/E12/E14 (exit), E2/E10/E12 (distribution) and E22 (write-off
+  posting) — cited by edge id, never restated.
 -->
 
 # Sequence — snapshot-bind-reverify (P-DIAG.5, pattern 2)
 
 The v1.1 rule 3 lifecycle: **persist snapshot → committee approval
 binds to it → execution re-verifies component-by-component under the
-full lock set → 409 on drift, posting nothing.** Two consumers on main
-at the authoring SHA:
+full lock set → 409 on drift, posting nothing.** Three consumers:
 
 | Consumer | Snapshot writer | Re-verifier | Snapshot store | Since |
 |---|---|---|---|---|
 | Member exit settlement | `genesis/application/member_exits.py:request_exit` (L321) | `member_exits.py:post_settlement` (L679) | `member_exits` row (partial UNIQUE `uq_member_exits_open`) | P12 |
 | Dividend declaration | `genesis/application/dividends.py:declare_dividend` (L586) | `dividends.py:_verify_snapshot` (L953), first distribution run | `dividend_declarations` row — **DB-level write-once trigger** `dividend_declarations_write_once` (0020) | !30 |
+| Loan write-off (P13.15) | `genesis/application/corrections.py:request_write_off` (snapshot of balance / penalty_due / classification under the loan row lock) | `corrections.py:post_write_off` (lock-order.md E22: WOFF anchor FOR UPDATE → loan FOR UPDATE; balance AND penalty_due re-verified against the snapshot; 409 on drift, posting nothing; the requester can neither vote nor execute) | `loan_write_offs` row — **DB-level write-once trigger** `loan_write_offs_write_once` (0025); one live workflow per loan via partial UNIQUE `uq_loan_write_offs_open`; drifted snapshots are VOIDED and re-requested, never edited | !46 |
 
 ```mermaid
 sequenceDiagram
