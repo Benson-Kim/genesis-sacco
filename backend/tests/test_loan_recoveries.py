@@ -569,8 +569,7 @@ def test_fm5_guarantees_released_exactly_by_the_full_recovery_receipt() -> None:
             recovered_audits = (
                 await session.execute(
                     text(
-                        "SELECT count(*) FROM audit_log "
-                        "WHERE action = 'write_off.claim_recovered'"
+                        "SELECT count(*) FROM audit_log WHERE action = 'write_off.claim_recovered'"
                     )
                 )
             ).scalar_one()
@@ -618,10 +617,7 @@ def test_fm6_receipts_are_append_only_and_the_posting_balances() -> None:
         with pytest.raises(DBAPIError, match="append-only"):
             async with tenant_session(factory(), tid) as session:
                 await session.execute(
-                    text(
-                        "UPDATE loan_recoveries SET amount = '1.00' "
-                        "WHERE id = CAST(:id AS uuid)"
-                    ),
+                    text("UPDATE loan_recoveries SET amount = '1.00' WHERE id = CAST(:id AS uuid)"),
                     {"id": str(receipt.recovery_id)},
                 )
         with pytest.raises(DBAPIError, match="append-only"):
