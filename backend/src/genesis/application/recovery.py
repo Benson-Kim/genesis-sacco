@@ -90,7 +90,7 @@ from genesis.application.batch_runner import SessionScope, run_in_batches
 from genesis.application.outbox import enqueue_event
 from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
 from genesis.domain.lending import NPL_CLASSES, LoanStatus
-from genesis.domain.rbac import AUDITOR, Action, Module
+from genesis.domain.rbac import ASSURANCE_ROLES, Action, Module
 from genesis.domain.recovery import RecoveryCaseStatus, transition
 from genesis.domain.users import UserStatus
 from genesis.errors import ConflictError, InvalidInputError, NotFoundError
@@ -119,16 +119,12 @@ DEFAULT_CLOSE_BATCH_SIZE = 200
 
 #: Review B2 (segregation of duties / three lines of defense): roles
 #: whose FUNCTION is assurance are excluded from collections
-#: assignability even though their RBAC grants include loan_book:view
-#: (the Auditor views everything BY DESIGN, so the permission matrix
-#: alone can never express this exclusion). Identified by role NAME:
-#: names are the codebase's canonical role identity — domain/rbac
-#: seeds the system matrix keyed by ROLE_NAMES, rbac.seed_permissions
-#: looks roles up by name, and the roles table carries no role-type
-#: flag column — so a name constant is the least-fragile mechanism
-#: available. The name is resolved SERVER-SIDE from the assignee's
+#: assignability even though their RBAC grants include loan_book:view.
+#: The set is domain-owned (genesis.domain.rbac.ASSURANCE_ROLES — one
+#: source of truth, shared with the issue-#24 maker-checker CHECKER
+#: exclusion); the name is resolved SERVER-SIDE from the assignee's
 #: role_id (users -> roles join), never from a client-supplied flag.
-_ASSURANCE_ROLES: frozenset[str] = frozenset({AUDITOR})
+_ASSURANCE_ROLES: frozenset[str] = ASSURANCE_ROLES
 
 #: Bound-parameter set for the NPL labels (v1.1 rule 6: enum values are
 #: never string-interpolated). Sorted for a deterministic SQL text so
