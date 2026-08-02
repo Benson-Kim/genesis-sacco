@@ -906,11 +906,11 @@ def test_late_insert_fence_lock_conflicts_with_marker_update() -> None:
     FOR KEY SHARE) and session C acquires the lock, failing this
     test. Session A is rolled back; no fabricated row survives."""
 
-    class _Abort(Exception):
+    class _AbortError(Exception):
         pass
 
     async def run() -> None:
-        tid, uid, _ = await seed_actor()
+        tid, _, _ = await seed_actor()
         _, (p1_start, p1_end), _ = await _seed_history(tid)
         await _insert_legacy_closed_period(tid, p1_start, p1_end)
 
@@ -918,7 +918,7 @@ def test_late_insert_fence_lock_conflicts_with_marker_update() -> None:
             "SELECT 1 FROM accounting_periods "
             "WHERE tenant_id = CAST(:tid AS uuid) AND period_start = :ps "
         )
-        with pytest.raises(_Abort):
+        with pytest.raises(_AbortError):
             async with tenant_session(factory(), tid) as session_a:
                 await session_a.execute(
                     text(
@@ -940,7 +940,7 @@ def test_late_insert_fence_lock_conflicts_with_marker_update() -> None:
                             text(period_probe + "FOR NO KEY UPDATE NOWAIT"),
                             {"tid": str(tid), "ps": p1_start},
                         )
-                raise _Abort  # roll session A back: the row must not land
+                raise _AbortError  # roll A back: the row must not land
 
         rows = await _count(tid, "SELECT count(*) FROM account_period_balances")
         assert rows == 0, "the fabricated probe row must not survive the rollback"
