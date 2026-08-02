@@ -323,7 +323,7 @@ async def open_recovery_case(
                 # #23, v1.1 rule 5): rowcount 0 means a live case
                 # already exists — never SELECT-then-INSERT. The
                 # arbiter predicate mirrors the 0033 partial UNIQUE.
-                "INSERT INTO recovery_cases "
+                "INSERT INTO recovery_cases "  # noqa: S608 - code-owned fragment
                 "(id, tenant_id, loan_id, opened_by, classification_at_open, "
                 " days_past_due_at_open) "
                 "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:lid AS uuid), "

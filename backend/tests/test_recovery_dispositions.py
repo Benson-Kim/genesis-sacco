@@ -70,8 +70,8 @@ from genesis.application.arrears import run_arrears_for_tenant
 from genesis.domain.rbac import ROLE_NAMES, Action, Module, seed_matrix
 from genesis.errors import ConflictError
 from genesis.infrastructure.tenancy import tenant_session
-from test_recovery_cases import AS_OF, _case_row, _mark_schedule_paid, _npl_loan, _open_case_api
 from test_penalty_accrual import _scope
+from test_recovery_cases import AS_OF, _case_row, _mark_schedule_paid, _npl_loan, _open_case_api
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("DATABASE_URL"), reason="requires a migrated database"
@@ -496,7 +496,7 @@ def test_fm8_new_routes_enforce_the_loan_book_matrix_per_role() -> None:
 def test_fm9_cross_tenant_disposition_probes_are_invisible() -> None:
     async def run() -> None:
         tid_a, _, token_a = await seed_actor()
-        tid_b, _, token_b = await seed_actor()
+        _tid_b, _, token_b = await seed_actor()
         loan_id = await _npl_loan(tid_a)
         case = await _open_case_api(token_a, loan_id)
 

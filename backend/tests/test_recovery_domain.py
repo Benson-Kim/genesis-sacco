@@ -74,16 +74,16 @@ def test_status_partitions_and_staff_targets_pinned() -> None:
       declared cure or write-off must be unrepresentable via the
       disposition route (FM2's guard set). Falsifiable: adding either
       close to the staff set fails here."""
-    assert LIVE_STATUSES | TERMINAL_STATUSES == set(RecoveryCaseStatus)
+    assert set(RecoveryCaseStatus) == LIVE_STATUSES | TERMINAL_STATUSES
     assert not (LIVE_STATUSES & TERMINAL_STATUSES)
     for status in TERMINAL_STATUSES:
         for target in RecoveryCaseStatus:
             with pytest.raises(InvalidRecoveryTransitionError):
                 transition(status, target)
-    assert STAFF_DISPOSITION_TARGETS == set(RecoveryCaseStatus) - {
+    assert set(RecoveryCaseStatus) - {
         RecoveryCaseStatus.CLOSED_CURED,
         RecoveryCaseStatus.CLOSED_WRITTEN_OFF,
-    }
+    } == STAFF_DISPOSITION_TARGETS
 
 
 def test_npl_classes_pinned_to_classify() -> None:
