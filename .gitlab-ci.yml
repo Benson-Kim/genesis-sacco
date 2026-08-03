@@ -271,6 +271,63 @@ web:build:
       - web/.next
     expire_in: 1 week
 
+# Dependency-change utility (P15): the npm registry is proxy-blocked in
+# the agent sandbox, so lockfile updates are produced IN CI and committed
+# from the job artifact (the P14 "lockfile is produced by CI" convention).
+# Manual + allow_failure: it never gates a pipeline.
+web:lockfile:
+  image: node:22-alpine
+  stage: lint
+  needs: []
+  cache: []
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      exists: ["web/package.json"]
+      when: manual
+      allow_failure: true
+  script:
+    - cd web
+    - npm install --package-lock-only --ignore-scripts
+    - echo "Download the artifact and commit web/package-lock.json"
+  artifacts:
+    paths:
+      - web/package-lock.json
+    expire_in: 1 week
+
+# Playwright E2E (P15 exit criterion, blocker (e): evidence is in-project
+# pipeline runs). Runs the REAL production build (next start — middleware/
+# CSP live) in real browsers; the API is mocked at the BROWSER network
+# boundary inside the specs (page.route) — request counts/bodies are the
+# assertion surface for double-submit/409 single-attempt proofs.
+web:e2e:
+  image: mcr.microsoft.com/playwright:v1.49.1-noble
+  stage: test
+  needs: []
+  rules:
+    - exists: ["web/playwright.config.ts"]
+  cache:
+    key:
+      files:
+        - web/package-lock.json
+    paths:
+      - .cache/npm
+  variables:
+    # NEXT_PUBLIC_* are inlined at build time; the tenant id is public
+    # by definition (gate 1.6) and only needs a stable value here.
+    NEXT_PUBLIC_TENANT_ID: "22222222-2222-2222-2222-222222222222"
+    CI: "true"
+  script:
+    - cd web
+    - npm ci
+    - npm run build
+    - npx playwright test
+  artifacts:
+    when: on_failure
+    paths:
+      - web/playwright-report
+      - web/test-results
+    expire_in: 1 week
+
 # Contract drift-checks (P14): the web client is GENERATED from the backend
 # OpenAPI contract and may never silently drift from it.
 #   spec-drift   — backend code vs committed openapi.json snapshot

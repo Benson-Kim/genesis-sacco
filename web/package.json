@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "generate:api": "openapi-typescript packages/api-client/openapi.json -o packages/api-client/src/generated/schema.d.ts",
-    "check:client-drift": "sh scripts/check-client-drift.sh"
+    "check:client-drift": "sh scripts/check-client-drift.sh",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.1.0",
+    "@playwright/test": "1.49.1",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.5.0",
     "@testing-library/react": "^16.0.1",
