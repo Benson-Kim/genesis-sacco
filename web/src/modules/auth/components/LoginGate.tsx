@@ -30,7 +30,7 @@ function errorMessage(error: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
-export function LoginGate() {
+export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
   const router = useRouter();
   const [stage, setStage] = useState<"request" | "verify">("request");
   const [email, setEmail] = useState("");
@@ -116,6 +116,9 @@ export function LoginGate() {
           <div className={styles.subtitle}>
             We&apos;ll send a one-time password to your registered email.
           </div>
+          {notice !== undefined && notice !== "" && (
+            <div className={styles.notice}>{notice}</div>
+          )}
           <Field label="Email" htmlFor="login-email">
             <input
               id="login-email"
