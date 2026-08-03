@@ -62,7 +62,7 @@ flowchart TD
 
 | Flow step | Implementation |
 |---|---|
-| Stage machine (submitted → … → disbursed, rejected) | `domain/lending.py:ApplicationStage` + `_STAGE_ALLOWED` transition map, executed under the application row lock (`application/loan_applications.py:transition_stage`); rejection sweep releases pledges (`_release_application_pledges`) |
+| Stage machine (submitted → … → disbursed, rejected) | `domain/lending.py:ApplicationStage` + its `_ALLOWED` transition map, executed under the application row lock (`application/loan_applications.py:transition_stage`); rejection sweep releases pledges (`_release_application_pledges`) |
 | Cover % | `application/loan_applications.py` cover computation over deposits + `application/guarantees.py` pledges (product rules server-side) |
 | Committee vote | `application/loan_applications.py:cast_vote` — [`sequence-committee-voting.md`](sequence-committee-voting.md); quorum `application/tenant_settings.py:committee_quorum` at vote time; approver authority band `enforce_authority_band` |
 | Atomic payout + re-checks | `application/ledger.py:disburse_loan` — approval check, deposit-multiplier re-check under the row lock (issue #15), unconsented-pledge refusal, loan + schedule (`domain/lending` amortisation), LN- posting, outbox: ONE transaction (locks: lock-order.md E4/E5 → E15/E16) |
