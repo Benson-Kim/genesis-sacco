@@ -63,6 +63,7 @@ flowchart TD
         APP["loan_applications<br/>FOR UPDATE"]
         ADJ["repayment_adjustments<br/>FOR UPDATE (issue-#24 approval anchor;<br/>reject locks it alone)"]
         TXN["transactions<br/>FOR UPDATE (reversal; adjustment chain)"]
+        WOFF["loan_write_offs<br/>FOR UPDATE (posting; issue-#21 receipt anchor;<br/>votes/voids lock it alone)"]
     end
 
     subgraph T1["Tier 1 — member rows (root of the money chain)"]
