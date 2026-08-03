@@ -13,6 +13,7 @@ import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
 import { Banner, Button, Field, Modal } from "@genesis/design-system";
+import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
@@ -256,15 +257,8 @@ function EditForm({
 
   return (
     <form onSubmit={submit}>
-      {conflict && (
-        <Banner variant="error">
-          This record changed since you loaded it (or conflicts with an existing
-          one). Your change was NOT applied.
-          <div className={styles.actions}>
-            <Button type="button" onClick={() => void reloadRecord()}>Reload record</Button>
-          </div>
-        </Banner>
-      )}
+      {/* One copy of the 409 reload-and-re-enter flow (gate 1.1). */}
+      <ConflictBanner error={update.error} onReload={() => void reloadRecord()} />
       {update.isError && !conflict && <ErrorBanner error={update.error} />}
       <Field label="Full name" htmlFor="edit-name">
         <input
@@ -488,21 +482,17 @@ function ConfirmActionDialog({
               </div>
             </>
           )}
-          {action.isError && <ErrorBanner error={action.error} />}
-          {conflict && (
-            <div className={styles.actions}>
-              <Button
-                onClick={() => {
-                  // Explicit reload flow: fetch the current record, then the
-                  // operator re-initiates the action from fresh state.
-                  void queryClient.refetchQueries({ queryKey: ["users", "detail", user.id] });
-                  onClose();
-                }}
-              >
-                Reload record
-              </Button>
-            </div>
-          )}
+          {action.isError && !conflict && <ErrorBanner error={action.error} />}
+          {/* Explicit reload flow (one copy — gate 1.1): fetch the current
+              record, then the operator re-initiates the action from fresh
+              state. The stale action is never replayed. */}
+          <ConflictBanner
+            error={action.error}
+            onReload={() => {
+              void queryClient.refetchQueries({ queryKey: ["users", "detail", user.id] });
+              onClose();
+            }}
+          />
           <div className={styles.actions}>
             <Button onClick={onClose} disabled={action.isPending}>
               Cancel
