@@ -14,22 +14,42 @@ Design decisions (each a named gate of the prompt):
   DB CHECKs (classification_at_open in NPL set, days_past_due_at_open
   > 90) are the backstop that makes an open-on-performing row
   unrepresentable.
-* ONE OPEN CASE PER LOAN (FM2, addendum A3): the 0026 partial UNIQUE
-  uq_recovery_cases_one_open is claimed atomically with
-  INSERT ... ON CONFLICT DO NOTHING checked by rowcount (v1.1 rule 5)
-  — a concurrent double-open lands exactly one row.
-* AUTO-CLOSE (FM3, addendum A6): the arrears job's close pass scans
-  OPEN cases (case rows locked FOR UPDATE SKIP LOCKED, id-keyset via
-  the shared batch runner) and closes those whose loan has left NPL:
+* ONE LIVE CASE PER LOAN (FM2, addendum A3 as extended by issue #23):
+  the partial UNIQUE uq_recovery_cases_one_open (0033: WHERE status IN
+  the LIVE set — a paused case still blocks a second case for the same
+  loan) is claimed atomically with INSERT ... ON CONFLICT DO NOTHING
+  checked by rowcount (v1.1 rule 5) — a concurrent double-open lands
+  exactly one row.
+* STAFF DISPOSITIONS (issue #23 N2): set_case_disposition moves a case
+  between the workable state and the two live pauses
+  (irrecoverable_pending_write_off / disputed) or closes it as
+  closed_restructured — targets restricted to the code-owned
+  STAFF_DISPOSITION_TARGETS (closed_cured / closed_written_off are
+  JOB-ONLY loan-fact outcomes; a staff-declared cure or write-off is a
+  rejected design), legality owned by the SINGLE
+  domain/recovery.transition gatekeeper (addendum A1), optimistic-
+  locked (409 on stale version) under the case row lock. closed_at is
+  written server-side only when the target is terminal (A7).
+* AUTO-CLOSE (FM3, addendum A6; issue #23 semantics): the arrears
+  job's close pass scans ALL LIVE cases (case rows locked FOR UPDATE
+  SKIP LOCKED, id-keyset via the shared batch runner) and closes those
+  whose loan facts warrant it — loan facts end a pause too:
   cure = the stored classification (the job's own output, written
   moments earlier in the same run) is no longer in NPL_CLASSES, or the
   loan reached 'closed' (fully repaid / exit-settled — definitionally
   cured); a 'written_off' loan closes as closed_written_off instead
-  (the status exists on main since 0001; P13.15 makes it REACHABLE —
-  linkage recorded in !47). Idempotent by side-effect counts: the scan
-  matches only status='open' rows, so a re-run scans nothing and
-  closes nothing new. Every close passes through the single
-  domain/recovery.transition gatekeeper (addendum A1).
+  (reachable via P13.15). A disputed or irrecoverable-pending case
+  whose loan cures or is written off closes exactly the same way —
+  money talks; the pause only removes the case from the workable
+  worklist. Idempotent by side-effect counts: the scan matches only
+  live-status rows whose loan facts warrant a close, so a re-run scans
+  nothing and closes nothing new. Every close passes through the
+  single domain/recovery.transition gatekeeper (addendum A1).
+* OUTCOME NOTES (issue #23 N3, option 1): exactly ONE outcome note per
+  case, at/after closure only — terminal-status gate under the case
+  row lock plus the 0033 partial UNIQUE uq_recovery_notes_one_outcome
+  claimed atomically (v1.1 rule 5). Outcome notes are NEW append-only
+  rows: no edit/delete route exists anywhere (addendum A2 intact).
 * ASSIGNMENT (FM4, addendum A4; review B2): the assignee must be an
   ACTIVE user of the SAME tenant whose role holds the recovery
   permission — loan_book:view, the grant that lets them see the
@@ -62,10 +82,11 @@ Lock order (matches docs/diagrams/lock-order.md, updated in this MR):
 the NPL check at open locks the LOAN row — the terminal node of the
 established chain member -> accounts -> loans (the P10/P13.8 pattern;
 a "LOANS alone" single-node entry) — and only INSERTS the case row
-under it. Case mutations (assign, note, close-pass) lock the CASE row
-only: recovery_cases is a single-node locker with no outgoing lock
-edges (assignee validation reads users/permissions as plain MVCC
-snapshot, no lock). No new lock-graph edges.
+under it. Case mutations (assign, note, disposition, outcome note,
+close-pass) lock the CASE row only: recovery_cases is a single-node
+locker with no outgoing lock edges (assignee validation reads
+users/permissions as plain MVCC snapshot, no lock). No new lock-graph
+edges.
 
 Every read AND write carries an explicit bound tenant_id predicate on
 top of forced RLS (v1.1 rule 4); every value is a bound parameter
@@ -91,7 +112,14 @@ from genesis.application.outbox import enqueue_event
 from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
 from genesis.domain.lending import NPL_CLASSES, LoanStatus
 from genesis.domain.rbac import ASSURANCE_ROLES, Action, Module
-from genesis.domain.recovery import RecoveryCaseStatus, transition
+from genesis.domain.recovery import (
+    LIVE_STATUSES,
+    STAFF_DISPOSITION_TARGETS,
+    TERMINAL_STATUSES,
+    InvalidRecoveryTransitionError,
+    RecoveryCaseStatus,
+    transition,
+)
 from genesis.domain.users import UserStatus
 from genesis.errors import ConflictError, InvalidInputError, NotFoundError
 
@@ -103,6 +131,7 @@ __all__ = [
     "RecoveryClosePassResult",
     "WorklistPage",
     "WorklistRow",
+    "add_outcome_note",
     "add_recovery_note",
     "assign_recovery_case",
     "close_scan_sql",
@@ -112,6 +141,7 @@ __all__ = [
     "notes_page_sql",
     "open_recovery_case",
     "run_recovery_close_pass",
+    "set_case_disposition",
     "worklist_sql",
 ]
 
@@ -131,6 +161,15 @@ _ASSURANCE_ROLES: frozenset[str] = ASSURANCE_ROLES
 #: the EXPLAIN capture asserts against the exact production statement.
 _NPL_PARAM_NAMES: tuple[str, ...] = tuple(f"npl{i}" for i in range(len(NPL_CLASSES)))
 _NPL_PLACEHOLDERS = ", ".join(f":{name}" for name in _NPL_PARAM_NAMES)
+
+#: The LIVE-status IN-list as a static SQL fragment. Interpolation is
+#: safe and deliberate (v1.1 rule 6's identifier carve-out): the values
+#: come from the CODE-OWNED domain enum (genesis.domain.recovery
+#: LIVE_STATUSES — never caller input), and the fragment must mirror
+#: the 0033 partial-index predicate so the ON CONFLICT arbiter
+#: inference and the close-scan index qual both hold. Sorted for a
+#: deterministic statement (the EXPLAIN-capture precedent).
+_LIVE_STATUS_SQL = "(" + ", ".join(f"'{s.value}'" for s in sorted(LIVE_STATUSES)) + ")"
 
 
 def npl_params() -> dict[str, str]:
@@ -182,6 +221,8 @@ class CaseNoteRecord:
     author_id: uuid.UUID
     note: str
     created_at: datetime
+    #: Issue #23 N3: True for the single post-closure outcome note.
+    is_outcome: bool
 
 
 @dataclass(frozen=True)
@@ -242,10 +283,11 @@ async def open_recovery_case(
     The loan row is locked FOR UPDATE first (gate 1.4): the NPL check
     and the copied classification/dpd snapshot cannot race a concurrent
     repayment or the arrears job (both take the same lock). The
-    one-open-case invariant is claimed atomically on the 0026 partial
-    UNIQUE via ON CONFLICT DO NOTHING + rowcount (v1.1 rule 5) — under
-    the loan lock two concurrent opens serialise, and the claim is the
-    DB-level backstop the falsifiability test removes.
+    one-LIVE-case invariant (issue #23: a paused case blocks a second
+    case too) is claimed atomically on the 0033 partial UNIQUE via
+    ON CONFLICT DO NOTHING + rowcount (v1.1 rule 5) — under the loan
+    lock two concurrent opens serialise, and the claim is the DB-level
+    backstop the falsifiability test removes.
 
     Least disclosure (rule 7): refusals name the category only; the
     exact classification/days-past-due figures live in the audit row
@@ -277,15 +319,17 @@ async def open_recovery_case(
         CursorResult[Any],
         await session.execute(
             text(
-                # The atomic one-open-case claim (addendum A3, v1.1
-                # rule 5): rowcount 0 means an open case already exists
-                # — never SELECT-then-INSERT.
-                "INSERT INTO recovery_cases "
+                # The atomic one-LIVE-case claim (addendum A3 / issue
+                # #23, v1.1 rule 5): rowcount 0 means a live case
+                # already exists — never SELECT-then-INSERT. The
+                # arbiter predicate mirrors the 0033 partial UNIQUE.
+                "INSERT INTO recovery_cases "  # noqa: S608 - code-owned fragment
                 "(id, tenant_id, loan_id, opened_by, classification_at_open, "
                 " days_past_due_at_open) "
                 "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:lid AS uuid), "
                 "CAST(:actor AS uuid), :cls, :dpd) "
-                "ON CONFLICT (tenant_id, loan_id) WHERE status = 'open' DO NOTHING"
+                f"ON CONFLICT (tenant_id, loan_id) WHERE status IN {_LIVE_STATUS_SQL} "
+                "DO NOTHING"
             ),
             {
                 "id": str(case_id),
@@ -298,7 +342,7 @@ async def open_recovery_case(
         ),
     )
     if claim.rowcount == 0:
-        raise ConflictError("an open recovery case already exists for this loan")
+        raise ConflictError("a live recovery case already exists for this loan")
     # Exact figures live in the audit row (rule 7), in-transaction
     # (gate 1.5); staff notification rides the outbox (gate 1.2).
     await record_audit(
@@ -358,7 +402,9 @@ async def assign_recovery_case(
     if row is None:
         raise NotFoundError(f"recovery case {case_id} not found")
     if RecoveryCaseStatus(str(row[0])) is not RecoveryCaseStatus.OPEN:
-        raise ConflictError("recovery case is closed; assignment applies to open cases")
+        # Issue #23: paused (disputed / irrecoverable-pending) cases
+        # are deliberately NOT workable — assignment stays open-only.
+        raise ConflictError("recovery case is not open; assignment applies to open cases")
     previous_assignee = str(row[1]) if row[1] is not None else None
     if int(row[2]) != version:
         raise ConflictError("stale version for recovery case; reload and retry")
@@ -445,6 +491,101 @@ async def assign_recovery_case(
     return await get_recovery_case(session, tenant_id, case_id)
 
 
+async def set_case_disposition(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    *,
+    case_id: uuid.UUID,
+    version: int,
+    target: RecoveryCaseStatus,
+) -> RecoveryCaseRecord:
+    """Record a staff disposition on a case (issue #23 N2).
+
+    Targets are restricted to the code-owned STAFF_DISPOSITION_TARGETS
+    (FM2: closed_cured / closed_written_off are loan-fact outcomes only
+    the arrears job's auto-close pass produces — a staff-declared cure
+    or write-off is refused before any state is read). Legality of the
+    move itself is owned by the SINGLE domain gatekeeper (addendum A1).
+    The case row is locked (the documented single-node site — no
+    outgoing lock edges), the write is optimistic-locked (409 on stale
+    version), closed_at is written server-side iff the target is
+    terminal (A7), and audit + outbox land in the same transaction
+    (gates 1.5/1.2). NO money moves: this is workflow state only.
+    """
+    if target not in STAFF_DISPOSITION_TARGETS:
+        # FM2 guard: job-only loan-fact closes are unreachable here.
+        raise ConflictError(
+            "cured and written-off closures are produced by the arrears job, "
+            "never by staff disposition"
+        )
+    row = (
+        await session.execute(
+            text(
+                "SELECT status, version FROM recovery_cases "
+                "WHERE id = CAST(:cid AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "FOR UPDATE"
+            ),
+            {"cid": str(case_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"recovery case {case_id} not found")
+    current = RecoveryCaseStatus(str(row[0]))
+    if int(row[1]) != version:
+        raise ConflictError("stale version for recovery case; reload and retry")
+    try:
+        new_status = transition(current, target)
+    except InvalidRecoveryTransitionError as exc:
+        # Workflow states carry no figures — naming them stays within
+        # least disclosure (rule 7).
+        raise ConflictError(f"recovery case cannot move {current.value} -> {target.value}") from exc
+    result = cast(
+        CursorResult[Any],
+        await session.execute(
+            text(
+                # closed_at is server-side (A7): set iff the target is
+                # terminal (terminals never move again, so it is never
+                # cleared from a terminal). Explicit tenant predicate
+                # on the write (rule 4); the status+version predicate
+                # keeps the write exact under the row lock.
+                "UPDATE recovery_cases SET status = :st, "
+                "closed_at = CASE WHEN :terminal THEN now() ELSE NULL END, "
+                "version = version + 1, updated_at = now() "
+                "WHERE id = CAST(:cid AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "AND status = :cur AND version = :ver"
+            ),
+            {
+                "st": new_status.value,
+                "terminal": new_status in TERMINAL_STATUSES,
+                "cid": str(case_id),
+                "tid": str(tenant_id),
+                "cur": current.value,
+                "ver": version,
+            },
+        ),
+    )
+    if result.rowcount != 1:  # pragma: no cover - unreachable under the row lock
+        raise ConflictError("recovery case changed state during disposition; retry")
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="recovery_case.disposition_set",
+        entity="recovery_cases",
+        entity_id=str(case_id),
+        before={"status": current.value},
+        after={"status": new_status.value},
+    )
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="recovery_case.disposition_set",
+        payload={"case_id": str(case_id), "from": current.value, "to": new_status.value},
+    )
+    return await get_recovery_case(session, tenant_id, case_id)
+
+
 async def add_recovery_note(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -474,8 +615,11 @@ async def add_recovery_note(
     ).first()
     if row is None:
         raise NotFoundError(f"recovery case {case_id} not found")
-    if RecoveryCaseStatus(str(row[0])) is not RecoveryCaseStatus.OPEN:
-        raise ConflictError("recovery case is closed; notes apply to open cases")
+    if RecoveryCaseStatus(str(row[0])) not in LIVE_STATUSES:
+        # Terminal cases take no further regular notes (addendum A2's
+        # strictness); the ONE post-closure outcome note goes through
+        # add_outcome_note (issue #23 N3).
+        raise ConflictError("recovery case is closed; notes apply to live cases")
     note_id = uuid.uuid4()
     created_at = (
         await session.execute(
@@ -508,7 +652,90 @@ async def add_recovery_note(
         event_type="recovery_case.note_added",
         payload={"case_id": str(case_id), "note_id": str(note_id)},
     )
-    return CaseNoteRecord(id=note_id, author_id=actor_id, note=note, created_at=created_at)
+    return CaseNoteRecord(
+        id=note_id, author_id=actor_id, note=note, created_at=created_at, is_outcome=False
+    )
+
+
+async def add_outcome_note(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    *,
+    case_id: uuid.UUID,
+    note: str,
+) -> CaseNoteRecord:
+    """Record THE post-closure outcome note (issue #23 N3, option 1).
+
+    Exactly one per case, at/after closure only. The case row is locked
+    (the documented single-node site) and must be in a TERMINAL status;
+    the one-outcome invariant is claimed atomically on the 0033 partial
+    UNIQUE uq_recovery_notes_one_outcome via ON CONFLICT DO NOTHING +
+    rowcount (v1.1 rule 5) — a concurrent double-add lands exactly one
+    row. The note is a NEW append-only row (addendum A2 intact: no
+    edit/delete route exists anywhere); existing notes are never
+    touched. Audit row in the same transaction (gate 1.5).
+    """
+    if not note.strip():
+        raise InvalidInputError("note must not be empty")
+    row = (
+        await session.execute(
+            text(
+                "SELECT status FROM recovery_cases "
+                "WHERE id = CAST(:cid AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "FOR UPDATE"
+            ),
+            {"cid": str(case_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"recovery case {case_id} not found")
+    if RecoveryCaseStatus(str(row[0])) not in TERMINAL_STATUSES:
+        raise ConflictError("outcome notes apply to closed cases")
+    note_id = uuid.uuid4()
+    created = (
+        await session.execute(
+            text(
+                # The atomic one-outcome-note claim (v1.1 rule 5): the
+                # arbiter predicate mirrors the 0033 partial UNIQUE; no
+                # row returned means the outcome is already recorded.
+                "INSERT INTO recovery_case_notes "
+                "(id, tenant_id, case_id, author_id, note, is_outcome) "
+                "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:cid AS uuid), "
+                "CAST(:actor AS uuid), :note, true) "
+                "ON CONFLICT (tenant_id, case_id) WHERE is_outcome DO NOTHING "
+                "RETURNING created_at"
+            ),
+            {
+                "id": str(note_id),
+                "tid": str(tenant_id),
+                "cid": str(case_id),
+                "actor": str(actor_id),
+                "note": note,
+            },
+        )
+    ).first()
+    if created is None:
+        raise ConflictError("an outcome note is already recorded for this case")
+    created_at = created[0]
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="recovery_case.outcome_note_added",
+        entity="recovery_cases",
+        entity_id=str(case_id),
+        after={"note_id": str(note_id), "note": note, "is_outcome": True},
+    )
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="recovery_case.outcome_note_added",
+        payload={"case_id": str(case_id), "note_id": str(note_id)},
+    )
+    return CaseNoteRecord(
+        id=note_id, author_id=actor_id, note=note, created_at=created_at, is_outcome=True
+    )
 
 
 def notes_page_sql(*, with_cursor: bool) -> str:
@@ -519,7 +746,8 @@ def notes_page_sql(*, with_cursor: bool) -> str:
     """
     cursor = "AND (created_at, id) > (CAST(:c_ts AS timestamptz), CAST(:c_id AS uuid)) "
     return (
-        "SELECT id, author_id, note, created_at FROM recovery_case_notes "  # noqa: S608
+        "SELECT id, author_id, note, created_at, is_outcome "  # noqa: S608
+        "FROM recovery_case_notes "
         "WHERE tenant_id = CAST(:tid AS uuid) AND case_id = CAST(:cid AS uuid) "
         f"{cursor if with_cursor else ''}"
         "ORDER BY created_at, id LIMIT :limit"
@@ -551,6 +779,7 @@ async def list_case_notes(
             author_id=uuid.UUID(str(r[1])),
             note=str(r[2]),
             created_at=r[3],
+            is_outcome=bool(r[4]),
         )
         for r in rows[:limit]
     ]
@@ -645,33 +874,35 @@ async def list_worklist(
 
 
 def close_scan_sql(*, with_after: bool) -> str:
-    """The arrears job's auto-close scan (FM3, addendum A6).
+    """The arrears job's auto-close scan (FM3, addendum A6; issue #23).
 
-    Drives from OPEN cases (idx_recovery_cases_open_scan, id keyset)
-    and locks CASE rows only — FOR UPDATE OF c SKIP LOCKED, the shared
-    batch-runner discipline; the joined loan row is read WITHOUT a
-    lock (no lock-graph edge): loans.status and loans.classification
-    are the arrears job's own persisted output (1.1) — this run's
-    classify pass commits before the close pass starts, so a cure
-    detected by THIS run's classification closes in THIS run.
+    Drives from LIVE cases (idx_recovery_cases_open_scan — 0033: the
+    live-status partial index, id keyset) and locks CASE rows only —
+    FOR UPDATE OF c SKIP LOCKED, the shared batch-runner discipline;
+    the joined loan row is read WITHOUT a lock (no lock-graph edge):
+    loans.status and loans.classification are the arrears job's own
+    persisted output (1.1) — this run's classify pass commits before
+    the close pass starts, so a cure detected by THIS run's
+    classification closes in THIS run.
 
-    Close conditions, code-owned:
+    Close conditions, code-owned — loan facts end a pause too (issue
+    #23: a disputed or irrecoverable-pending case closes on the same
+    facts as an open one):
       * cure — the loan is active and its stored classification left
         the NPL set (bound :nplN parameters), or the loan reached
         'closed' (fully repaid / exit-settled);
-      * write-off — the loan reached 'written_off' (unreachable until
-        P13.15 wires the transition; the scan handles it as-built and
-        the linkage is recorded in !47).
+      * write-off — the loan reached 'written_off' (reachable via
+        P13.15).
 
-    A re-run scans zero rows (status='open' anti-condition) and closes
+    A re-run scans zero rows (live-status anti-condition) and closes
     nothing new — idempotency by side-effect counts.
     """
     after = "AND c.id > CAST(:after AS uuid) " if with_after else ""
     return (
-        "SELECT c.id, c.loan_id, l.status, l.classification "  # noqa: S608
+        "SELECT c.id, c.loan_id, c.status, l.status, l.classification "  # noqa: S608
         "FROM recovery_cases c "
         "JOIN loans l ON l.tenant_id = c.tenant_id AND l.id = c.loan_id "
-        "WHERE c.tenant_id = CAST(:tid AS uuid) AND c.status = 'open' "
+        f"WHERE c.tenant_id = CAST(:tid AS uuid) AND c.status IN {_LIVE_STATUS_SQL} "
         "AND ((l.status = 'active' AND l.classification NOT IN "
         f"({_NPL_PLACEHOLDERS})) "
         "OR l.status IN ('closed', 'written_off')) "
@@ -693,17 +924,25 @@ async def _close_one(
     tenant_id: uuid.UUID,
     *,
     case_id: str,
+    case_status: str,
     loan_id: str,
     loan_status: str,
     classification: str,
 ) -> RecoveryCaseStatus:
-    """Close one LOCKED open case through the single gatekeeper (A1)."""
+    """Close one LOCKED live case through the single gatekeeper (A1).
+
+    Issue #23: the scanned case may be open OR paused (disputed /
+    irrecoverable_pending_write_off) — the loan-fact outcome is legal
+    from every live posture, and the transition function stays the one
+    owner of that legality.
+    """
+    current = RecoveryCaseStatus(case_status)
     outcome = (
         RecoveryCaseStatus.CLOSED_WRITTEN_OFF
         if LoanStatus(loan_status) is LoanStatus.WRITTEN_OFF
         else RecoveryCaseStatus.CLOSED_CURED
     )
-    target = transition(RecoveryCaseStatus.OPEN, outcome)
+    target = transition(current, outcome)
     result = cast(
         CursorResult[Any],
         await session.execute(
@@ -714,9 +953,9 @@ async def _close_one(
                 "UPDATE recovery_cases SET status = :st, closed_at = now(), "
                 "version = version + 1, updated_at = now() "
                 "WHERE id = CAST(:cid AS uuid) AND tenant_id = CAST(:tid AS uuid) "
-                "AND status = 'open'"
+                "AND status = :cur"
             ),
-            {"st": target.value, "cid": case_id, "tid": str(tenant_id)},
+            {"st": target.value, "cur": current.value, "cid": case_id, "tid": str(tenant_id)},
         ),
     )
     if result.rowcount != 1:  # pragma: no cover - unreachable under the row lock
@@ -728,7 +967,7 @@ async def _close_one(
         action="recovery_case.closed",
         entity="recovery_cases",
         entity_id=case_id,
-        before={"status": RecoveryCaseStatus.OPEN.value},
+        before={"status": current.value},
         after={
             "status": target.value,
             "loan_id": loan_id,
@@ -766,9 +1005,10 @@ async def _close_batch(
             session,
             tenant_id,
             case_id=str(row[0]),
+            case_status=str(row[2]),
             loan_id=str(row[1]),
-            loan_status=str(row[2]),
-            classification=str(row[3]),
+            loan_status=str(row[3]),
+            classification=str(row[4]),
         )
         if outcome is RecoveryCaseStatus.CLOSED_WRITTEN_OFF:
             written_off += 1
@@ -784,13 +1024,15 @@ async def run_recovery_close_pass(
     *,
     batch_size: int = DEFAULT_CLOSE_BATCH_SIZE,
 ) -> RecoveryClosePassResult:
-    """Auto-close recovery cases whose loan left NPL (FM3, addendum A6).
+    """Auto-close LIVE recovery cases on loan facts (FM3, A6, #23).
 
     Runs as part of the arrears job (after the classify pass, so this
     run's cures close in this run) through the shared batch runner —
     short transactions, case rows FOR UPDATE SKIP LOCKED in id order
-    (v1.1 rule 8). Idempotent by side-effect counts: a re-run scans
-    zero rows and closes nothing new.
+    (v1.1 rule 8). Issue #23: paused cases (disputed /
+    irrecoverable_pending_write_off) close on the same loan facts as
+    open ones. Idempotent by side-effect counts: a re-run scans zero
+    rows and closes nothing new.
     """
     process = partial(_close_batch, tenant_id=tenant_id, batch_size=batch_size)
     scanned, _, payloads = await run_in_batches(session_scope, process, batch_size=batch_size)

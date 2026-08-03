@@ -5,14 +5,18 @@ Every route carries a RequirePermission dependency (deny by default);
 mutations are idempotent via the Idempotency-Key middleware (gate 1.4).
 Request bodies reject unknown fields (extra="forbid") — in particular
 NO timestamp may ride in (opened_at/first_assigned_at/closed_at are
-server-side only, addendum A7), and there is NO close route (cases
-close automatically on cure or write-off in the arrears job) and NO
-note edit/delete route (append-only, addendum A2).
+server-side only, addendum A7), and there is NO cure/write-off close
+route (loan-fact closes happen automatically in the arrears job; the
+issue-#23 disposition route is restricted to the code-owned
+staff-settable targets — pause, resume, restructure-close) and NO
+note edit/delete route (append-only, addendum A2; the single
+post-closure outcome note is a NEW append-only row).
 
 Permissions (P4 matrix, documented interpretation): the worklist and
 case reads sit on loan_book:view (the loan-detail entitlement — the
 worklist itself discloses no balances); opening a case is
-loan_book:create; assignment and notes are loan_book:edit. An
+loan_book:create; assignment, notes, dispositions and the outcome
+note are loan_book:edit (the case-mutation grant). An
 ASSIGNEE must be an active same-tenant user holding loan_book:view —
 the grant that lets them see the worklist they work — EXCLUDING
 assurance roles (the Auditor) for audit-independence: segregation of
@@ -34,6 +38,7 @@ from genesis.application import recovery as recovery_service
 from genesis.application.auth import AuthContext
 from genesis.application.recovery import CaseNoteRecord, RecoveryCaseRecord, WorklistRow
 from genesis.domain.rbac import Action, Module
+from genesis.domain.recovery import RecoveryCaseStatus
 from genesis.infrastructure.db import get_sessionmaker
 from genesis.infrastructure.tenancy import tenant_session
 from genesis.settings import get_settings
@@ -67,9 +72,26 @@ class CaseAssignBody(BaseModel):
 
 
 class CaseNoteBody(BaseModel):
+    """Shared by the regular-note and outcome-note routes (issue #23):
+    both carry exactly one text field, so one body model serves both
+    (reuse-first, 1.1)."""
+
     model_config = ConfigDict(extra="forbid")
 
     note: str = Field(min_length=1, max_length=2000)
+
+
+class CaseDispositionBody(BaseModel):
+    """extra="forbid": the caller supplies only the optimistic version
+    and the target status. The enum rejects unknown statuses at the
+    boundary (422); job-only targets (closed_cured/closed_written_off)
+    are refused by the service (409, FM2); the single domain
+    gatekeeper owns the legality of the move (issue #23 N2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: int = Field(ge=1)
+    status: RecoveryCaseStatus
 
 
 class CaseOut(BaseModel):
@@ -113,6 +135,8 @@ class NoteOut(BaseModel):
     author_id: str
     note: str
     created_at: str
+    #: Issue #23 N3: True for the single post-closure outcome note.
+    is_outcome: bool
 
 
 class NotesOut(BaseModel):
@@ -159,6 +183,7 @@ def _note_out(note: CaseNoteRecord) -> NoteOut:
         author_id=str(note.author_id),
         note=note.note,
         created_at=note.created_at.isoformat(),
+        is_outcome=note.is_outcome,
     )
 
 
@@ -212,12 +237,44 @@ async def assign_case(case_id: uuid.UUID, body: CaseAssignBody, ctx: EditCtx) ->
     return _case_out(record)
 
 
+@router.post("/{case_id}/disposition")
+async def set_disposition(case_id: uuid.UUID, body: CaseDispositionBody, ctx: EditCtx) -> CaseOut:
+    """Record a staff disposition (issue #23 N2): pause a case as
+    disputed or irrecoverable_pending_write_off, resume it to open, or
+    close it as restructured — through the single domain gatekeeper;
+    cure/write-off closes stay job-only (FM2)."""
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        record = await recovery_service.set_case_disposition(
+            session,
+            ctx.tenant_id,
+            ctx.user_id,
+            case_id=case_id,
+            version=body.version,
+            target=body.status,
+        )
+    return _case_out(record)
+
+
 @router.post("/{case_id}/notes", status_code=201)
 async def add_note(case_id: uuid.UUID, body: CaseNoteBody, ctx: EditCtx) -> NoteOut:
     """Append a note (addendum A2: append-only, no edit route exists)."""
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         note = await recovery_service.add_recovery_note(
+            session, ctx.tenant_id, ctx.user_id, case_id=case_id, note=body.note
+        )
+    return _note_out(note)
+
+
+@router.post("/{case_id}/outcome-note", status_code=201)
+async def add_case_outcome_note(case_id: uuid.UUID, body: CaseNoteBody, ctx: EditCtx) -> NoteOut:
+    """Record THE post-closure outcome note (issue #23 N3): exactly one
+    per case, at/after closure only, still append-only — no edit or
+    delete route exists."""
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        note = await recovery_service.add_outcome_note(
             session, ctx.tenant_id, ctx.user_id, case_id=case_id, note=body.note
         )
     return _note_out(note)

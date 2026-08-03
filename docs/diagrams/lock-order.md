@@ -184,7 +184,7 @@ and stop, or never touch it):
 | Repayment (P10) | LOANS alone (mid-chain entry) → E7 on payoff (closure releases guarantees) → E15 | `loans.py:record_repayment` L309 |
 | Arrears + penalty batch | LOANS alone, `ORDER BY l.id … FOR UPDATE OF l SKIP LOCKED`; **no ledger rows, no advisory** | `arrears.py:arrears_scan_sql` L223 |
 | Recovery case open (P13.16) | LOANS alone (mid-chain entry at the terminal node, the repayment pattern): NPL check + classification/dpd snapshot under the loan FOR UPDATE; the case row is INSERTed via the ON CONFLICT claim — **no case-row lock, nothing below T4, no ledger rows, no advisory** | `recovery.py:open_recovery_case` |
-| Recovery case mutations (P13.16) | recovery_cases row ALONE: assign/note take the case FOR UPDATE; the arrears close pass scans `ORDER BY c.id … FOR UPDATE OF c SKIP LOCKED` — the joined loans row is read **without** a lock (the job's own persisted classification, MVCC); assignee validation reads users/permissions with **no** locks | `recovery.py:assign_recovery_case` / `add_recovery_note` / `close_scan_sql` |
+| Recovery case mutations (P13.16; issue #23) | recovery_cases row ALONE: assign/note/disposition/outcome-note take the case FOR UPDATE; the arrears close pass scans `ORDER BY c.id … FOR UPDATE OF c SKIP LOCKED` (issue #23: over ALL live statuses, not only open) — the joined loans row is read **without** a lock (the job's own persisted classification, MVCC); assignee validation reads users/permissions with **no** locks | `recovery.py:assign_recovery_case` / `set_case_disposition` / `add_recovery_note` / `add_outcome_note` / `close_scan_sql` |
 | Dormancy batch (P13.13) | MSELF alone, `ORDER BY m.id … FOR UPDATE OF m SKIP LOCKED` (root tier, id order); the transition UPDATE, audit row and outbox INSERT happen under the held member row — **no ledger rows, no advisory, nothing below T1**. Reactivation is NOT this job: it rides E10 inside `record_deposit` | `dormancy.py:dormancy_scan_sql` L215; the worker cycle (`infrastructure/dormancy_worker.py`) takes no locks |
 | Deposit-interest batch | DSELF alone (SKIP LOCKED, id order) → E15/E16 posting | `deposit_interest.py:_accrue_batch` L231 |
 | Ledger reversal | TXN → E15 | `ledger.py:reverse_transaction` L694 |
@@ -651,6 +651,26 @@ anchor-first chain (the corrections module + approval docstrings).
 The 0031 write-once/SoD enforcement and the 0032 append-only triggers
 live in migration DDL, not `src`, and take no locking probes. **One
 new lock-graph edge (E24), landed first-class in this MR.**
+
+**Issue-#23 delta (recovery dispositions + outcome notes, authored on
+this branch):** the disposition work adds exactly **two new executable
+SQL lock sites**, both in `application/recovery.py` and both §3
+single-node lockers on the case row — the `set_case_disposition`
+anchor `FOR UPDATE` and the `add_outcome_note` anchor `FOR UPDATE`
+(the assign/note pattern, unchanged posture) — bringing the
+executable-site count to **73**. The close pass keeps its single
+`FOR UPDATE OF c SKIP LOCKED` site (now scanning all live statuses —
+a predicate change, not a lock-site change); the joined loans row
+stays an unlocked MVCC read. Combined grep totals: 136 / 31 / 36 / 2
+/ 40 = **215** (`for update` / `for share` / `skip locked` /
+`for no key update` / `advisory`; union of matching lines, was
+134/31/36/2/40 = 212 at the issue-#24 delta) — the one extra line
+beyond the two new sites is a docstring reflow restating the
+close-pass posture. The 0033 CHECK/index regeneration and the
+one-outcome partial UNIQUE live in migration DDL, not `src`, and take
+no locking probes. **Zero new lock-graph edges** — recovery_cases
+stays in the disjoint subgraph (§2), never held together with any
+other lock.
 
 ## 9. Cross-check: MR prose vs code-derived DAG (P-DIAG.0 step 3)
 

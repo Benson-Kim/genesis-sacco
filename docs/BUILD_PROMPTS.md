@@ -89,9 +89,9 @@ that. The next free number after the batch is 0034.
 
 | Issue | Scope | Status |
 |---|---|---|
-| #21 | bad-debt recovery receipts for written-off loans (P13.15 A4) | 🔄 IN PROGRESS — claims 0030; merges FIRST in the batch; the merging maintainer flips this row with the evidence |
-| #24 | P13.15 N1 maker-checker for adjustments + N4 repayments append-only trigger | 🔄 IN PROGRESS — claims 0031 (`down_revision = '0030'`) + 0032 (`down_revision = '0031'`); branch cut FROM #21's `duo/feature/21-bad-debt-recovery`; merges AFTER #21's MR (!51); the merging maintainer flips this row with the evidence |
-| #23 | P13.16 N2 richer case dispositions + N3 post-closure outcome notes | ❌ TODO — claims 0033; merges AFTER #24's MR |
+| #21 | bad-debt recovery receipts for written-off loans (P13.15 A4) | ✅ DONE — 0030 merged to main 2026-08-02 (!51, squash `7da3ed7` / merge `7ec83ad`) |
+| #24 | P13.15 N1 maker-checker for adjustments + N4 repayments append-only trigger | 🔄 IN PROGRESS — claims 0031 (`down_revision = '0030'`) + 0032 (`down_revision = '0031'`); branch cut FROM #21's `duo/feature/21-bad-debt-recovery`; merges AFTER #21's MR (!51); !52 pipelines 2725596935 + 2725604737 (combined state) green; the merging maintainer flips this row with the evidence |
+| #23 | P13.16 N2 richer case dispositions + N3 post-closure outcome notes | 🔄 IN PROGRESS — !53 claims 0033 (`down_revision = '0032'`); branch cut FROM #24's `duo/feature/24-p1315-maker-checker` @ `0e77383`; merges LAST, AFTER #24's MR (!52); the merging maintainer flips this row with the evidence |
 
 ---
 
