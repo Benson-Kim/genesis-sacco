@@ -1129,6 +1129,7 @@ async def reject_repayment_adjustment(
     adjustment_id: uuid.UUID,
     *,
     version: int,
+    reason: str,
 ) -> AdjustmentRecord:
     """Reject (void) a pending adjustment — optimistic-locked (issue
     #24; the WOFF void shape).
@@ -1143,7 +1144,21 @@ async def reject_repayment_adjustment(
     0031 partial unique excludes rejected rows), so a corrected
     request can be raised afresh; the rejected row itself is terminal,
     write-once workflow history.
+
+    The checker's rejection RATIONALE is required (!52 review F2: the
+    four-eyes record must show WHY the request was refused, exactly
+    because the freed slot allows a fresh request). It is workflow
+    metadata — never a money parameter (v1.1 rule 1 untouched) — and
+    lands in the audit ``after`` payload; the outbox payload stays
+    ids-only (the established least-payload posture) and no error
+    envelope ever echoes it (rule 7). The adjustment row itself is
+    untouched by design: its ``reason`` column is the MAKER's request
+    rationale and the row is terminal write-once history (0031).
     """
+    if not reason.strip():
+        # Defence in depth beneath the boundary validation (the
+        # Pydantic body already enforces min_length=1).
+        raise InvalidInputError("a rejection reason is required")
     ts = datetime.now(UTC)
     row = (
         await session.execute(
@@ -1193,6 +1208,8 @@ async def reject_repayment_adjustment(
         after={
             "adjustment_status": AdjustmentStatus.REJECTED.value,
             "checker_id": str(actor_id),
+            # !52 F2: the checker's rationale, on the record.
+            "reason": reason,
         },
     )
     await enqueue_event(

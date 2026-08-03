@@ -20,16 +20,22 @@ Design decisions (each a named gate of the prompt):
   loan) is claimed atomically with INSERT ... ON CONFLICT DO NOTHING
   checked by rowcount (v1.1 rule 5) — a concurrent double-open lands
   exactly one row.
-* STAFF DISPOSITIONS (issue #23 N2): set_case_disposition moves a case
-  between the workable state and the two live pauses
-  (irrecoverable_pending_write_off / disputed) or closes it as
-  closed_restructured — targets restricted to the code-owned
-  STAFF_DISPOSITION_TARGETS (closed_cured / closed_written_off are
-  JOB-ONLY loan-fact outcomes; a staff-declared cure or write-off is a
-  rejected design), legality owned by the SINGLE
-  domain/recovery.transition gatekeeper (addendum A1), optimistic-
-  locked (409 on stale version) under the case row lock. closed_at is
-  written server-side only when the target is terminal (A7).
+* STAFF DISPOSITIONS (issue #23 N2; !53 review F1/F2):
+  set_case_disposition moves a case between the workable state and the
+  two live pauses (irrecoverable_pending_write_off / disputed) or
+  closes it as closed_restructured — targets restricted to the
+  code-owned STAFF_DISPOSITION_TARGETS (closed_cured /
+  closed_written_off are JOB-ONLY loan-fact outcomes; a staff-declared
+  cure or write-off is a rejected design), legality owned by the
+  SINGLE domain/recovery.transition gatekeeper (addendum A1),
+  optimistic-locked (409 on stale version) under the case row lock.
+  closed_at is written server-side only when the target is terminal
+  (A7). !53 F2: a PAUSE disposition requires a contemporaneous reason,
+  captured into the audit payload (workflow metadata only). !53 F1:
+  the closed_restructured TERMINAL close requires THE outcome note
+  ATOMICALLY in the same transaction (one service call: status write +
+  outcome-note row via the one-outcome claim + audit together);
+  without it the call is a 422 with zero side effects.
 * AUTO-CLOSE (FM3, addendum A6; issue #23 semantics): the arrears
   job's close pass scans ALL LIVE cases (case rows locked FOR UPDATE
   SKIP LOCKED, id-keyset via the shared batch runner) and closes those
@@ -50,6 +56,9 @@ Design decisions (each a named gate of the prompt):
   row lock plus the 0033 partial UNIQUE uq_recovery_notes_one_outcome
   claimed atomically (v1.1 rule 5). Outcome notes are NEW append-only
   rows: no edit/delete route exists anywhere (addendum A2 intact).
+  !53 F1: for the staff-attested closed_restructured close the note
+  arrives THROUGH set_case_disposition in the same transaction; the
+  standalone add_outcome_note path remains for the job-closed cases.
 * ASSIGNMENT (FM4, addendum A4; review B2): the assignee must be an
   ACTIVE user of the SAME tenant whose role holds the recovery
   permission — loan_book:view, the grant that lets them see the
@@ -114,6 +123,7 @@ from genesis.domain.lending import NPL_CLASSES, LoanStatus
 from genesis.domain.rbac import ASSURANCE_ROLES, Action, Module
 from genesis.domain.recovery import (
     LIVE_STATUSES,
+    PAUSE_STATUSES,
     STAFF_DISPOSITION_TARGETS,
     TERMINAL_STATUSES,
     InvalidRecoveryTransitionError,
@@ -121,7 +131,7 @@ from genesis.domain.recovery import (
     transition,
 )
 from genesis.domain.users import UserStatus
-from genesis.errors import ConflictError, InvalidInputError, NotFoundError
+from genesis.errors import ConflictError, InvalidInputError, NotFoundError, UnprocessableError
 
 __all__ = [
     "DEFAULT_CLOSE_BATCH_SIZE",
@@ -499,8 +509,10 @@ async def set_case_disposition(
     case_id: uuid.UUID,
     version: int,
     target: RecoveryCaseStatus,
+    reason: str | None = None,
+    outcome_note: str | None = None,
 ) -> RecoveryCaseRecord:
-    """Record a staff disposition on a case (issue #23 N2).
+    """Record a staff disposition on a case (issue #23 N2; !53 F1/F2).
 
     Targets are restricted to the code-owned STAFF_DISPOSITION_TARGETS
     (FM2: closed_cured / closed_written_off are loan-fact outcomes only
@@ -512,6 +524,30 @@ async def set_case_disposition(
     version), closed_at is written server-side iff the target is
     terminal (A7), and audit + outbox land in the same transaction
     (gates 1.5/1.2). NO money moves: this is workflow state only.
+
+    !53 review F1 — the staff-attested TERMINAL close carries its
+    justification ATOMICALLY: a ``closed_restructured`` disposition
+    REQUIRES the outcome note and writes it in the SAME transaction
+    (this one service call: the status write, THE outcome-note row via
+    the existing one-outcome atomic claim — reuse 1.1, the
+    add_outcome_note path — and both audit rows land or none do). A
+    ``closed_restructured`` request without a note is a 422 — an
+    input-shape failure, decided and documented (not a 409: no state
+    conflicts, the request is simply incomplete) — raised BEFORE any
+    state is read, with zero side effects. The standalone outcome-note
+    route stays for the JOB-closed cases (closed_cured /
+    closed_written_off), whose closes are not staff calls.
+
+    !53 review F2 — a disposition into either PAUSE posture
+    (``disputed`` / ``irrecoverable_pending_write_off``, the
+    domain-owned PAUSE_STATUSES) REQUIRES a contemporaneous ``reason``,
+    captured into the audit ``after`` payload. Workflow metadata only —
+    never a money parameter (v1.1 rule 1 untouched); never echoed in
+    error envelopes (rule 7); the outbox payload stays ids/statuses
+    only (the established least-payload posture). Strict field-target
+    pairing: a reason on a non-pause target or a note on a
+    non-restructure target is refused (422) — every recorded rationale
+    is attributable to exactly the move it justifies.
     """
     if target not in STAFF_DISPOSITION_TARGETS:
         # FM2 guard: job-only loan-fact closes are unreachable here.
@@ -519,6 +555,22 @@ async def set_case_disposition(
             "cured and written-off closures are produced by the arrears job, "
             "never by staff disposition"
         )
+    # !53 F1/F2 input-shape gates: decided BEFORE any state is read, so
+    # a refusal has zero side effects.
+    if target in PAUSE_STATUSES:
+        if reason is None or not reason.strip():
+            raise UnprocessableError("a reason is required to pause a recovery case")
+    elif reason is not None:
+        raise UnprocessableError("a reason applies to pause dispositions only")
+    outcome_note_text: str | None = None
+    if target is RecoveryCaseStatus.CLOSED_RESTRUCTURED:
+        if outcome_note is None or not outcome_note.strip():
+            raise UnprocessableError(
+                "an outcome note is required to close a recovery case as restructured"
+            )
+        outcome_note_text = outcome_note
+    elif outcome_note is not None:
+        raise UnprocessableError("an outcome note applies to closed_restructured only")
     row = (
         await session.execute(
             text(
@@ -567,6 +619,24 @@ async def set_case_disposition(
     )
     if result.rowcount != 1:  # pragma: no cover - unreachable under the row lock
         raise ConflictError("recovery case changed state during disposition; retry")
+    after: dict[str, Any] = {"status": new_status.value}
+    if reason is not None:
+        # !53 F2: the pause rationale, on the record (audit only —
+        # rule 7: never echoed, never in the outbox payload).
+        after["reason"] = reason
+    if outcome_note_text is not None:
+        # !53 F1: THE outcome note, atomically in this same transaction
+        # — reuse of the one-outcome claim path (1.1): the case row it
+        # re-locks is already held (free), the terminal gate sees the
+        # status written above, the 0033 partial UNIQUE stays the
+        # arbiter (a fabricated pre-existing outcome row rolls the
+        # WHOLE disposition back — no partial state), and its own
+        # audit + outbox rows land with the disposition's or not at
+        # all.
+        note_record = await add_outcome_note(
+            session, tenant_id, actor_id, case_id=case_id, note=outcome_note_text
+        )
+        after["outcome_note_id"] = str(note_record.id)
     await record_audit(
         session,
         tenant_id,
@@ -575,7 +645,7 @@ async def set_case_disposition(
         entity="recovery_cases",
         entity_id=str(case_id),
         before={"status": current.value},
-        after={"status": new_status.value},
+        after=after,
     )
     await enqueue_event(
         session,

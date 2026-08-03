@@ -80,9 +80,17 @@ class AdjustmentApproveBody(BaseModel):
 
 
 class AdjustmentRejectBody(BaseModel):
+    """The checker's decision: the optimistic version plus the REQUIRED
+    rejection rationale (!52 review F2 — four-eyes practice puts the
+    checker's reason on the record, especially since a rejected slot
+    frees for a fresh request). The reason is workflow metadata, never
+    a money parameter (v1.1 rule 1 is not implicated); it lands in the
+    audit `after` payload, never in error envelopes (rule 7)."""
+
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class AdjustmentRecordOut(BaseModel):
@@ -365,11 +373,18 @@ async def reject_repayment_adjustment(
     adjustment_id: uuid.UUID, body: AdjustmentRejectBody, ctx: CorrectionsApproveCtx
 ) -> AdjustmentRecordOut:
     """Reject a pending adjustment (checker decision, optimistic-locked)
-    — frees the one-live-adjustment slot for a fresh request."""
+    — frees the one-live-adjustment slot for a fresh request. The
+    checker's rationale is REQUIRED (!52 F2) and recorded in the audit
+    row."""
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         record = await corrections_service.reject_repayment_adjustment(
-            session, ctx.tenant_id, ctx.user_id, adjustment_id, version=body.version
+            session,
+            ctx.tenant_id,
+            ctx.user_id,
+            adjustment_id,
+            version=body.version,
+            reason=body.reason,
         )
     return _adjustment_out(record)
 
