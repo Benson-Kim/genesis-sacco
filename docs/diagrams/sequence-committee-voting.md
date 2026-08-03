@@ -1,90 +1,87 @@
 <!--
   P-DIAG.5 — Sequence 1/3: the COMMITTEE/VOTING pattern (as-built)
   Authored against main @ 08541b860f1445b16c342c39b6606d86b9dbeb17
+  Redrawn business-readable and reconciled to main @
+  8f46aa54250ff1a066af423924f3eb54a9c72fb7 by the P-DIAG drift MR:
+  the loan write-off (!46) joins as the FOURTH consumer; code
+  citations moved out of the drawing into the Source-of-truth footer
+  (P-DIAG audience rule).
   Drift rule: v1.2 rule 11 — any MR that changes this flow in ANY of
-  its three consumers MUST update this file in the same MR. Future
+  its four consumers MUST update this file in the same MR. Future
   prompts/MRs REFERENCE this diagram instead of re-describing the
   pattern in prose.
   Lock authority: the anchor-row locks below are lock-order.md §3
-  single-node locker rows ("Application stage / committee vote /
-  create", "Exit vote / void", "Dividend vote / void") — cited, never
-  restated.
+  single-node locker rows — cited, never restated.
 -->
 
-# Sequence — committee/voting (P-DIAG.5, pattern 1)
+# Sequence — committee voting (P-DIAG.5, pattern 1)
 
-One pattern, three consumers, all on main at the authoring SHA:
+**Audience: business (committee members, managers, auditors).** The
+diagram uses business vocabulary only; the code citations live in the
+Source-of-truth footer.
 
-| Consumer | Vote function | Anchor row | One-vote UNIQUE table | Since |
-|---|---|---|---|---|
-| Loan committee | `genesis/application/loan_applications.py:cast_vote` (L475) | `loan_applications` | `committee_votes` (0005) | P9 |
-| Member exits | `genesis/application/member_exits.py:cast_exit_vote` (L478) | `member_exits` | `exit_votes` (0010) | P12 |
-| Dividends | `genesis/application/dividends.py:cast_dividend_vote` (L708) | `dividend_declarations` | `dividend_votes` (0020) | !30 |
+## The business rule this depicts
 
-Invariants the diagram encodes (each traceable to the cited code):
+Big decisions are never one person's keystroke. Approving a loan,
+paying out a leaving member, declaring a dividend and writing off a
+bad loan are all decided the same way: each committee member casts
+**one** vote (the system makes a second vote by the same person
+impossible), the quorum comes from the SACCO's configured settings at
+the moment of the vote, and the decision happens **only** when a vote
+tips the count past quorum — nobody can "decide" an item outside the
+voting room. Whoever initiated the item cannot vote on it (four-eyes
+control). Every vote and every decision is written to the permanent
+audit trail, and the affected member is notified through the same
+transaction that records the decision.
 
-1. **Vote cast under the anchor row lock** — `SELECT ... FOR UPDATE`
-   serialises voters; tallies and decisions are race-free.
-2. **Quorum read AT VOTE TIME** (the P13.7 consumer convention) —
-   `genesis/application/tenant_settings.py:committee_quorum` (L388) is
-   called inside the vote transaction, under the row lock; a quorum
-   change mid-vote governs the NEXT vote's tally only.
-3. **A decision is produced only by a vote event** — `decide` is only
-   invoked from the three `cast_*_vote` functions; nothing decides
-   retroactively.
-4. **One vote per voter by DB UNIQUE** — the `INSERT` relies on the
-   constraint; `IntegrityError` maps to 409 (double-voting impossible
-   even outside this code path).
+One pattern, four consumers, all on main at the reconciliation SHA:
+
+| Decision being voted | Since | Initiator ban |
+|---|---|---|
+| Loan application approval | P9 | vote-caster authority band also checked on approve |
+| Member exit settlement | P12 | requester cannot vote |
+| Dividend declaration | !30 | declarer cannot vote |
+| Loan write-off | !46 (P13.15) | requester cannot vote (and cannot post it later either) |
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant V as Staff voter (committee role)
-    participant API as api router<br/>loans.py / member_exits.py / dividends.py
-    participant SVC as cast_vote / cast_exit_vote / cast_dividend_vote<br/>(application layer)
-    participant CFG as tenant_settings.committee_quorum (L388)
-    participant DOM as domain/committee.py decide (L26)
-    participant PG as Postgres (forced RLS)
+    participant V as Committee member
+    participant SYS as SACCO system
+    participant CFG as SACCO settings
+    participant REC as Permanent records<br/>(votes, audit trail, notices)
 
-    V->>API: POST .../votes (Idempotency-Key)
-    API->>SVC: vote, AuthContext, tenant session
-    SVC->>PG: SELECT anchor row ... FOR UPDATE<br/>(explicit tenant_id predicate on top of RLS)
-    Note over SVC,PG: anchor lock serialises voters —<br/>lock-order.md §3 single-node rows
-    SVC->>SVC: stage/status guard (committee / requested / declared)<br/>+ separation of duties (initiator cannot vote: P12/!30)<br/>+ authority band on approve (loans only:<br/>tenant_settings.enforce_authority_band L420)
-    SVC->>PG: INSERT INTO committee_votes | exit_votes | dividend_votes
-    alt voter already voted
-        PG-->>SVC: UNIQUE violation
-        SVC-->>API: 409 conflict (one-vote UNIQUE)
+    V->>SYS: cast my vote on this item<br/>(loan / exit / dividend / write-off)
+    SYS->>SYS: hold the item so votes are counted one at a time
+    SYS->>SYS: is the item still open for voting?<br/>is this voter allowed? (the initiator is not)
+    SYS->>REC: record the vote
+    alt this person already voted
+        REC-->>SYS: refused — one vote per person
+        SYS-->>V: "you have already voted"
     else vote recorded
-        SVC->>PG: SELECT vote, count(*) ... GROUP BY vote (tally)
-        SVC->>PG: record_audit (in-transaction audit row)
-        SVC->>CFG: quorum read AT VOTE TIME, under the row lock (P13.7)
-        CFG->>PG: SELECT committee_quorum FROM tenant_settings
-        SVC->>DOM: decide(approvals, rejections, quorum)
-        alt no side reached quorum
-            DOM-->>SVC: None — anchor stays open
-        else quorum reached (rejection wins an ambiguous count)
-            DOM-->>SVC: APPROVED or REJECTED
-            SVC->>PG: transition + UPDATE anchor status, version + 1
-            SVC->>PG: record_audit (decided, before/after)
-            SVC->>PG: enqueue_event (outbox, SAME transaction)
+        SYS->>REC: tally all votes so far
+        SYS->>CFG: how many votes decide? (read at THIS moment —<br/>a settings change never rewrites past votes)
+        alt neither side has reached quorum yet
+            SYS-->>V: vote recorded — item stays open
+        else quorum reached (a tie or ambiguity counts as rejection)
+            SYS->>REC: item marked APPROVED or REJECTED,<br/>decision written to the audit trail,<br/>notice queued for delivery
+            SYS-->>V: vote recorded — item decided
         end
-        SVC-->>API: tally + decision
-        API-->>V: 200/201 (least-disclosure envelope)
     end
 ```
 
-## Code citations (valid at `08541b8`)
+## Source of truth (code citations, valid at `8f46aa5`)
 
-| Participant / message | Source |
+| Diagram step | Implementation |
 |---|---|
-| Anchor `FOR UPDATE` + stage guard | `loan_applications.py:cast_vote` L475 (guard: committee stage); `member_exits.py:cast_exit_vote` L478 (guard: requested; initiator ban); `dividends.py:cast_dividend_vote` L708 (initiator ban) |
-| Authority band (loans, approve only) | `tenant_settings.py:enforce_authority_band` L420, called from `cast_vote` under the row lock |
-| One-vote INSERT → UNIQUE → 409 | the `IntegrityError` handler in each `cast_*_vote` |
-| Quorum at vote time | `tenant_settings.py:committee_quorum` L388 (config read, fallback `domain/committee.py:COMMITTEE_QUORUM`) |
-| Decision only from a vote event | `domain/committee.py:decide` L26 — pure; called only by the three vote functions |
-| Decision transition + audit + outbox | each `cast_*_vote` decision branch: `transition`/`exit_transition`/`_transition`, `record_audit`, `application/outbox.py:enqueue_event` L17 |
+| The four vote functions | `application/loan_applications.py:cast_vote`; `application/member_exits.py:cast_exit_vote`; `application/dividends.py:cast_dividend_vote`; `application/corrections.py:cast_write_off_vote` (!46) |
+| "hold the item" (anchor row lock serialises voters) | `SELECT … FOR UPDATE` on `loan_applications` / `member_exits` / `dividend_declarations` / `loan_write_offs` — lock-order.md §3 single-node rows ("Application stage / committee vote / create", "Exit vote / void", "Dividend vote / void", write-off votes lock the WOFF anchor alone) |
+| "is this voter allowed?" | stage/status guards + initiator bans in each `cast_*_vote`; loan approvals additionally check the voter's authority band (`application/tenant_settings.py:enforce_authority_band`) |
+| "one vote per person" | DB UNIQUE constraints: `committee_votes` (0005), `exit_votes` (0010), `dividend_declaration_votes` (0020), `loan_write_off_votes` (0025); the `IntegrityError` handler in each vote function maps the violation to a 409 |
+| "how many votes decide?" (quorum at vote time) | `application/tenant_settings.py:committee_quorum`, called inside the vote transaction under the anchor lock (P13.7 consumer convention; fallback `domain/committee.py:COMMITTEE_QUORUM`) |
+| "quorum reached … rejection wins ambiguity" | `domain/committee.py:decide` — pure; called ONLY from the four vote functions, so a decision can only be produced by a vote event |
+| decision + audit + notice, one transaction | each vote function's decision branch: the status transition function, `application/audit.py:record_audit`, `application/outbox.py:enqueue_event` (same transaction — gate 1.2/1.5) |
 
-Downstream: an APPROVED anchor is **bound to its persisted snapshot**
-and re-verified at execution — that half of the lifecycle is
+Downstream: an APPROVED item is **bound to its frozen snapshot** and
+re-verified at execution — that half of the lifecycle is
 [`sequence-snapshot-bind-reverify.md`](sequence-snapshot-bind-reverify.md).

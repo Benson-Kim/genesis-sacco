@@ -5,6 +5,18 @@
   down_revision = "0021"), verified linear 0001..0022 at branch time.
   The in-flight 0023 claim (!40, P13.10) had NOT merged at authoring;
   its MR updates this file when it lands (v1.2 rules 11/14).
+  Reconciled to main @ 8f46aa54250ff1a066af423924f3eb54a9c72fb7 by the
+  P-DIAG drift MR: alembic head 0032 (0032_repayments_append_only.py,
+  down_revision = "0031"), verified linear 0001..0032 at branch time.
+  Nine tables from 0025-0031 join as subject areas 2.F/2.G; the §3/§4/
+  §5 registers are extended.
+  Re-reconciled to main @ d517769d1fb5e414c99d2ccf8bcbadf23a3d5085 by
+  the !55 as-built flip: alembic head 0034
+  (0034_recovery_claim_cap_lock.py, down_revision = "0033"), verified
+  linear 0001..0034. 0033 (!53, issue #23) alters recovery_cases /
+  recovery_case_notes (no new table); 0034 (!54) regenerates the 0030
+  within-claim constraint-trigger function (no table change) — §2.F,
+  §3, §4 and §5 updated accordingly (v1.2 rules 11/14).
   Derived exclusively from backend/migrations/versions/*.py — every
   entity is a real table from a migration; every edge cites the FK
   that implements it. Falsifiable gate: erd-spot-check.py (§6).
@@ -15,8 +27,9 @@
 
 # Entity-relationship diagram — as-built (P-DIAG.2)
 
-The entire schema at alembic head **0022**: **37 tables**, drawn as
-five subject-area `erDiagram`s (one diagram would not render readably;
+The entire schema at alembic head **0034**: **46 tables** (0033/0034
+alter existing tables and create none), drawn as
+seven subject-area `erDiagram`s (one diagram would not render readably;
 the split follows the module boundaries in the §3 traceability table).
 An entity appearing in more than one diagram (e.g. `members`,
 `transactions`, `users`) is the SAME table, repeated without its
@@ -31,10 +44,10 @@ attribute block where it only anchors a cross-area FK.
   [`erd-spot-check.py`](erd-spot-check.py) (§6).
 - **Every edge is a real FOREIGN KEY**, cited in the edge label as
   `column (migration)`. Nothing is inferred from code or prose.
-- **The tenant spine is drawn once, not 36 times.** Every table except
+- **The tenant spine is drawn once, not 45 times.** Every table except
   `tenants` carries `tenant_id uuid NOT NULL REFERENCES tenants(id)
   ON DELETE RESTRICT` (the 0001 pattern, repeated verbatim by every
-  later creating migration). Drawing those 36 edges would bury the
+  later creating migration). Drawing those 45 edges would bury the
   domain FKs, so the spine is shown representatively in diagram E and
   the `tenant_id FK` attribute on every entity stands for its edge.
 - **Attribute lists are keys, not column dictionaries**: PK, FKs,
@@ -390,11 +403,141 @@ erDiagram
     exports ||--o| export_artifacts : "export_artifacts.export_id UNIQUE (0013)"
 ```
 
+### 2.F Corrections, write-off & recovery (P13.15/P13.16, issues #21/#24/#23)
+
+```mermaid
+erDiagram
+    %% main @ 8f46aa54250ff1a066af423924f3eb54a9c72fb7 — alembic head 0032
+    %% !55 flip: 0033 (issue #23) widens recovery_cases.status and adds
+    %% recovery_case_notes.is_outcome — re-verified at main @ d517769, head 0034
+    repayment_adjustments {
+        uuid id PK
+        uuid tenant_id FK "tenant spine (0025)"
+        uuid repayment_id FK "partial UNIQUE uq_repayment_adjustments_claim (tenant_id, repayment_id) WHERE status <> rejected (0025, partial since 0031)"
+        uuid loan_id FK "-> loans.id (0025)"
+        uuid original_transaction_id FK "-> transactions.id (0025)"
+        uuid reversal_transaction_id FK "nullable -> transactions.id, filled at approval (0025/0031)"
+        uuid maker_id FK "-> users.id (0025)"
+        uuid checker_id FK "nullable -> users.id; ck_repayment_adjustments_sod: checker <> maker (0031)"
+        text status "pending_approval|posted|rejected CHECK; write-once workflow trigger (0031)"
+        numeric amount "CHECK = penalties + interest + principal (0025)"
+    }
+    loan_write_offs {
+        uuid id PK
+        uuid tenant_id FK "tenant spine (0025)"
+        uuid loan_id FK "partial UNIQUE uq_loan_write_offs_open (tenant_id, loan_id) WHERE status <> rejected (0025)"
+        uuid member_id FK "-> members.id (0025)"
+        numeric total_written_off "CHECK = balance + penalty_due, > 0; write-once trigger (0025)"
+        text classification "CHECK substandard|doubtful|loss - the prudential gate's DB backstop (0025)"
+        text status "requested|approved|rejected|posted CHECK (0025)"
+        uuid requested_by FK "nullable -> users.id (0025)"
+        uuid transaction_id FK "nullable -> transactions.id, the WO- posting (0025)"
+    }
+    loan_write_off_votes {
+        uuid id PK
+        uuid tenant_id FK "tenant spine (0025)"
+        uuid write_off_id FK "-> loan_write_offs.id (0025)"
+        uuid voter_id FK "UNIQUE (tenant_id, write_off_id, voter_id) double-vote guard (0025)"
+        text vote "approve|reject CHECK (0025)"
+    }
+    loan_recoveries {
+        uuid id PK
+        uuid tenant_id FK "tenant spine (0030)"
+        uuid write_off_id FK "-> loan_write_offs.id; within-claim constraint trigger (0030)"
+        uuid loan_id FK "-> loans.id (0030)"
+        uuid member_id FK "-> members.id (0030)"
+        uuid recovery_case_id FK "nullable -> recovery_cases.id, the P13.16 linkage (0030)"
+        uuid transaction_id FK "-> transactions.id, the RC- posting (0030)"
+        numeric amount "CHECK > 0; append-only triggers (0030)"
+        uuid recorded_by FK "-> users.id (0030)"
+    }
+    recovery_cases {
+        uuid id PK
+        uuid tenant_id FK "tenant spine (0026)"
+        uuid loan_id FK "partial UNIQUE uq_recovery_cases_one_open (tenant_id, loan_id) WHERE status IN live set (0026, regenerated 0033)"
+        text status "open|irrecoverable_pending_write_off|disputed|closed_cured|closed_written_off|closed_restructured CHECK (0026, widened 0033); closed_at set iff terminal CHECK (0033)"
+        uuid assignee_id FK "nullable -> users.id (0026)"
+        uuid opened_by FK "-> users.id (0026)"
+        text classification_at_open "CHECK substandard|doubtful|loss (0026)"
+        integer days_past_due_at_open "CHECK > 90 (0026)"
+    }
+    recovery_case_notes {
+        uuid id PK
+        uuid tenant_id FK "tenant spine (0026)"
+        uuid case_id FK "-> recovery_cases.id (0026)"
+        uuid author_id FK "-> users.id (0026)"
+        text note "CHECK length 1..2000; append-only by route design (0026)"
+        boolean is_outcome "partial UNIQUE uq_recovery_notes_one_outcome (tenant_id, case_id) WHERE is_outcome — one outcome note per case (0033)"
+    }
+    loans
+    repayments
+    members
+    users
+    transactions
+
+    repayments ||--o{ repayment_adjustments : "repayment_adjustments.repayment_id; one LIVE adjustment per repayment (0025/0031)"
+    loans ||--o{ repayment_adjustments : "repayment_adjustments.loan_id (0025)"
+    transactions ||--o{ repayment_adjustments : "repayment_adjustments.original_transaction_id (0025)"
+    transactions |o--o{ repayment_adjustments : "repayment_adjustments.reversal_transaction_id, nullable (0025)"
+    users ||--o{ repayment_adjustments : "repayment_adjustments.maker_id (0025)"
+    users |o--o{ repayment_adjustments : "repayment_adjustments.checker_id, nullable; SoD CHECK (0031)"
+    loans ||--o{ loan_write_offs : "loan_write_offs.loan_id; one live workflow per loan (0025)"
+    members ||--o{ loan_write_offs : "loan_write_offs.member_id (0025)"
+    users |o--o{ loan_write_offs : "loan_write_offs.requested_by, nullable (0025)"
+    transactions |o--o{ loan_write_offs : "loan_write_offs.transaction_id, nullable (0025)"
+    loan_write_offs ||--o{ loan_write_off_votes : "loan_write_off_votes.write_off_id (0025)"
+    users ||--o{ loan_write_off_votes : "loan_write_off_votes.voter_id (0025)"
+    loan_write_offs ||--o{ loan_recoveries : "loan_recoveries.write_off_id (0030)"
+    loans ||--o{ loan_recoveries : "loan_recoveries.loan_id (0030)"
+    members ||--o{ loan_recoveries : "loan_recoveries.member_id (0030)"
+    recovery_cases |o--o{ loan_recoveries : "loan_recoveries.recovery_case_id, nullable (0030)"
+    transactions ||--o{ loan_recoveries : "loan_recoveries.transaction_id (0030)"
+    users ||--o{ loan_recoveries : "loan_recoveries.recorded_by (0030)"
+    loans ||--o{ recovery_cases : "recovery_cases.loan_id; one open case per loan (0026)"
+    users |o--o{ recovery_cases : "recovery_cases.assignee_id, nullable (0026)"
+    users ||--o{ recovery_cases : "recovery_cases.opened_by (0026)"
+    recovery_cases ||--o{ recovery_case_notes : "recovery_case_notes.case_id (0026)"
+    users ||--o{ recovery_case_notes : "recovery_case_notes.author_id (0026)"
+```
+
+### 2.G Portfolio snapshots & period rollups (P13.17a/b)
+
+```mermaid
+erDiagram
+    %% main @ 8f46aa54250ff1a066af423924f3eb54a9c72fb7 — alembic head 0032
+    portfolio_month_snapshots {
+        uuid id PK
+        uuid tenant_id FK "tenant spine (0027)"
+        date month_end UK "UNIQUE (tenant_id, month_end) atomic claim; month-END CHECK; write-once + no-future triggers (0027)"
+        text source "close_period|backfill CHECK (0027)"
+    }
+    account_period_balances {
+        uuid id PK
+        uuid tenant_id FK "tenant spine (0028)"
+        date period_start FK "composite FK (tenant_id, period_start) -> accounting_periods; UNIQUE (tenant_id, period_start, account); write-once + late-insert-fence triggers (0028)"
+        text account "CHECK length > 0 (0028)"
+    }
+    member_period_balances {
+        uuid id PK
+        uuid tenant_id FK "tenant spine (0028)"
+        date period_start FK "composite FK (tenant_id, period_start) -> accounting_periods; UNIQUE (tenant_id, period_start, member_id) (0028)"
+        uuid member_id FK "composite FK (tenant_id, member_id) -> members (tenant_id, id), backed by uq_members_tenant_id_id (0028)"
+    }
+    tenants
+    accounting_periods
+    members
+
+    tenants ||--o{ portfolio_month_snapshots : "portfolio_month_snapshots.tenant_id (0027)"
+    accounting_periods ||--o{ account_period_balances : "composite (tenant_id, period_start) FK (0028)"
+    accounting_periods ||--o{ member_period_balances : "composite (tenant_id, period_start) FK (0028)"
+    members ||--o{ member_period_balances : "composite (tenant_id, member_id) FK (0028)"
+```
+
 ## 3. Traceability: table → migrations → owning module
 
-Every table at head 0022, its creating migration, every later
+Every table at head 0032, its creating migration, every later
 migration that altered it (columns, CHECKs, triggers, indexes or data
-backfills), and the module that owns its writes on main @ `08541b8`.
+backfills), and the module that owns its writes on main @ `8f46aa5`.
 Both directions of the table↔migration mapping are machine-checked by
 [`erd-spot-check.py`](erd-spot-check.py) (§6).
 
@@ -406,7 +549,7 @@ Both directions of the table↔migration mapping are machine-checked by
 | `users` | 0001 | 0015 (`last_active_at`, keyset idx), 0016 (`branch_id`, idxs) | `application/users.py`, `application/auth.py` |
 | `otp_challenges` | 0001 | — | `application/auth.py` |
 | `refresh_tokens` | 0002 | — | `application/auth.py` |
-| `members` | 0001 | 0016 (`branch_id`), 0018 (`uq_members_id_type`), 0020 (dividend-scan idx), 0021 (`dormant` status, dormancy-scan idx), 0022 (scan predicate widened, exited-scan idx) | `application/members.py` (+ `dormancy.py` batch) |
+| `members` | 0001 | 0016 (`branch_id`), 0018 (`uq_members_id_type`), 0020 (dividend-scan idx), 0021 (`dormant` status, dormancy-scan idx), 0022 (scan predicate widened, exited-scan idx), 0023 (register keyset idx), 0028 (`uq_members_tenant_id_id` composite-FK anchor) | `application/members.py` (+ `dormancy.py` batch) |
 | `member_profiles` | 0018 | — | `application/member_kyc.py` |
 | `member_documents` | 0018 | — | `application/member_kyc.py` |
 | `branches` | 0016 | — | `application/branches.py` |
@@ -415,15 +558,15 @@ Both directions of the table↔migration mapping are machine-checked by
 | `loan_products` | 0001 | 0017 (`guarantors_required`) | `application/loan_products.py` |
 | `loan_applications` | 0001 | 0006 (keyset idx), 0014 (stage-keyset idx, drops 0001 stage idx) | `application/loan_applications.py` |
 | `committee_votes` | 0005 | — | `application/loan_applications.py` |
-| `loans` | 0001 | 0007 (`penalty_due`, `closed_at`, idxs), 0013 (disbursed idx) | `application/loans.py` (+ `ledger.py` disburse, `arrears.py` batch) |
+| `loans` | 0001 | 0007 (`penalty_due`, `closed_at`, idxs), 0013 (disbursed idx), 0026 (`idx_loans_dpd_worklist`) | `application/loans.py` (+ `ledger.py` disburse, `arrears.py` batch; terminal write-off transition by `corrections.py`) |
 | `loan_schedules` | 0001 | 0007 (unpaid partial idx) | `application/ledger.py` (creates), `application/loans.py` (allocates) |
-| `repayments` | 0001 | 0014 (transaction-FK idx) | `application/ledger.py` |
+| `repayments` | 0001 | 0014 (transaction-FK idx), 0025 (amount CHECK widened to `<> 0` for negative-linked correction rows), 0032 (append-only triggers `repayments_no_update`/`_no_delete` — issue #24 N4) | `application/ledger.py` (disburse-time rows), `application/loans.py` (repayment rows), `application/corrections.py` (negative correction rows) |
 | `guarantees` | 0001 | 0011 (loan-linkage data backfill) | `application/guarantees.py` |
 | `penalty_accruals` | 0019 | — | `application/arrears.py` |
-| `transactions` | 0001 | 0004 (`reversal_of_id`, append-only triggers, one-reversal partial UNIQUE), 0008 (keyset idxs), 0012 (closed-period trigger), 0013 (type idx), 0014 (tenant-safe reversal FK, `UNIQUE (tenant_id, id)`, advisory-locked trigger body), 0020 (type CHECK widened) | `application/ledger.py` (every posting) |
+| `transactions` | 0001 | 0004 (`reversal_of_id`, append-only triggers, one-reversal partial UNIQUE), 0008 (keyset idxs), 0012 (closed-period trigger), 0013 (type idx), 0014 (tenant-safe reversal FK, `UNIQUE (tenant_id, id)`, advisory-locked trigger body), 0020 (type CHECK widened), 0025 (type CHECK: `fee`, `loan_write_off`), 0030 (type CHECK: `loan_recovery`) | `application/ledger.py` (every posting) |
 | `ledger_entries` | 0001 | 0004 (append-only triggers, balanced deferred constraint trigger), 0014 (balance check also pins totals = `transactions.amount`) | `application/ledger.py` |
 | `txn_ref_sequences` | 0004 | — | `application/ledger.py` (`_next_ref`), `application/members.py` (member numbering) |
-| `accounting_periods` | 0012 | — | `application/accounting_periods.py` |
+| `accounting_periods` | 0012 | 0028 (`rollup_at` marker + write-once marker trigger, composite-FK target for the rollup tables) | `application/accounting_periods.py` (+ `period_rollups.py` marker) |
 | `deposit_interest_accruals` | 0008 | — | `application/deposit_interest.py` |
 | `tenant_settings` | 0009 | 0010 (`exit_fee`), 0017 (rate goes nullable + interest/parameters/approval-matrix columns), 0020 (`deposit_rebate_rate_pct`) | `application/tenant_settings.py` (single legitimate writer) |
 | `member_exits` | 0001 | 0010 (workflow columns, open-exit partial UNIQUE, idxs) | `application/member_exits.py` |
@@ -432,16 +575,26 @@ Both directions of the table↔migration mapping are machine-checked by
 | `dividend_declaration_votes` | 0020 | — | `application/dividends.py` |
 | `dividend_distributions` | 0020 | 0022 (`disposition`) | `application/dividends.py` |
 | `share_transfers` | 0020 | — | `application/dividends.py` |
-| `exports` | 0013 | 0020 (report CHECK widened) | `application/exports.py` |
+| `exports` | 0013 | 0020 (report CHECK widened), 0023 (report CHECK widened for the P13.10 registry) | `application/exports.py` |
 | `export_artifacts` | 0013 | — | `application/exports.py` |
-| `outbox_events` | 0001 | 0003 (`last_error`) | `application/outbox.py` (writer), `infrastructure/outbox_worker.py` (dispatcher) |
+| `outbox_events` | 0001 | 0003 (`last_error`), 0024 (`idx_outbox_dispatched_purge` + due/purgeable tenant-discovery `SECURITY DEFINER` fns — P13.17e) | `application/outbox.py` (writer), `infrastructure/outbox_worker.py` (dispatcher + retention purge) |
 | `audit_log` | 0001 (incl. append-only trigger) | 0015 (viewer keyset idxs, drops `idx_audit_time`) | `application/audit.py` (writer), `application/audit_log.py` (viewer) |
-| `idempotency_keys` | 0001 | — | `api/idempotency.py` (middleware) |
+| `idempotency_keys` | 0001 | 0029 (`expires_at` + expiry index — P13.17c/DSA-3) | `api/idempotency.py` (middleware), `application/idempotency_purge.py` (retention purge) |
+| `repayment_adjustments` | 0025 | 0031 (maker-checker columns: `status`/`checker_id`/`decided_at`/approval snapshot/`version`; `ck_repayment_adjustments_sod` + snapshot CHECKs; claim UNIQUE goes partial `WHERE status <> 'rejected'`; write-once trigger regenerated) | `application/corrections.py` |
+| `loan_write_offs` | 0025 (incl. write-once trigger, `uq_loan_write_offs_open`) | — | `application/corrections.py` |
+| `loan_write_off_votes` | 0025 | — | `application/corrections.py` |
+| `loan_recoveries` | 0030 (incl. append-only triggers + `loan_recoveries_within_claim` constraint trigger) | 0034 (`check_recovery_within_claim` regenerated: parent `loan_write_offs` lookup now `FOR UPDATE` — the !51-N1 locking probe; lock-order.md §3/§8 owns the analysis) | `application/corrections.py` (`record_recovery_receipt`) |
+| `recovery_cases` | 0026 (incl. `uq_recovery_cases_one_open`, `idx_recovery_cases_open_scan`) | 0033 (status CHECK widened to the six disposition states; `ck_recovery_cases_closed_at` regenerated as closed_at ⇔ terminal; both partial indexes regenerated under the SAME names over the live-status predicate) | `application/recovery.py` |
+| `recovery_case_notes` | 0026 | 0033 (`is_outcome` boolean + `uq_recovery_notes_one_outcome` partial UNIQUE — one outcome note per case) | `application/recovery.py` (append-only: no edit/delete route exists) |
+| `portfolio_month_snapshots` | 0027 (incl. write-once + no-future triggers) | — | `application/portfolio_snapshots.py` |
+| `account_period_balances` | 0028 (incl. write-once + late-insert-fence triggers) | — | `application/period_rollups.py` |
+| `member_period_balances` | 0028 (incl. write-once + late-insert-fence triggers) | — | `application/period_rollups.py` |
 
 Nothing in this file is `PLANNED`: every entity above exists at head
-0022. The !40 claim (0023, P13.10) adds a `members` keyset index and
-widens the `exports.report` CHECK — its MR updates §3 when it merges
-(v1.2 rule 11).
+0034. The formerly in-flight !53 claim (0033, issue #23 — the
+`recovery_cases` status widening and `recovery_case_notes.is_outcome`)
+and !54's 0034 (within-claim trigger regeneration) merged to main and
+are reconciled above by the !55 as-built flip (v1.2 rules 11/14).
 
 ## 4. Trust-relevant store properties (by reference — v1.2 rule 11)
 
@@ -452,18 +605,36 @@ Owned elsewhere; cited, never restated:
   `tenant_self`), per **ADR-0002** — see
   [`c4-container.md`](c4-container.md) **§3** (P-DIAG.1) for the
   boundary. Leakage-suite membership (`TENANT_TABLES`,
-  `backend/tests/test_tenancy_leakage.py`) covers 31 of the 36
-  tenant-owned tables plus `tenants`; `committee_votes`,
+  `backend/tests/test_tenancy_leakage.py`) covers 40 of the 45
+  tenant-owned tables plus `tenants` (the 0025/0026/0027/0028/0030
+  tables joined the suite in their own MRs); `committee_votes`,
   `txn_ref_sequences`, `accounting_periods`, `exports` and
   `export_artifacts` carry the same forced policies from their
   creating migrations (0005/0004/0012/0013) but are not enumerated in
   the suite list — recorded here as an observation, not a policy gap
   (their RLS is migration-enforced like every other table's).
 - **Append-only stores**: `ledger_entries` and `transactions`
-  (migration `0004` triggers), `audit_log` (migration `0001` trigger)
-  — see [`c4-container.md`](c4-container.md) **§3**.
-- **Write-once snapshot**: `dividend_declarations` (migration `0020`
-  trigger) — see [`c4-container.md`](c4-container.md) **§3**.
+  (migration `0004` triggers), `audit_log` (migration `0001` trigger),
+  `repayments` (migration `0032` triggers — issue #24 N4),
+  `loan_recoveries` (migration `0030` triggers, plus the
+  `loan_recoveries_within_claim` constraint trigger that makes
+  over-recovery and recovery-against-unposted-write-offs
+  unrepresentable; `0034` regenerates its function so the parent claim
+  lookup runs `FOR UPDATE` — the !51-N1 concurrency probe, analysed in
+  [`lock-order.md`](lock-order.md) §3/§8) — see
+  [`c4-container.md`](c4-container.md) **§3**.
+  `recovery_case_notes` is append-only by ROUTE design (no edit/delete
+  route exists anywhere, P13.16 addendum A2) — a convention, not a
+  trigger; recorded as such.
+- **Write-once snapshots**: `dividend_declarations` (migration `0020`
+  trigger), `loan_write_offs` (migration `0025` trigger),
+  `repayment_adjustments` (workflow write-once trigger, migrations
+  `0025`/`0031` — the 0031 regeneration permits ONLY the
+  pending→posted/rejected decision write; `ck_repayment_adjustments_sod`
+  enforces maker ≠ checker at the DB), `portfolio_month_snapshots`
+  (migration `0027` triggers) and the `0028` period-rollup tables
+  (write-once + late-insert fence) — see
+  [`c4-container.md`](c4-container.md) **§3**.
 - **Closed-period posting barrier**: the `transactions` INSERT trigger
   (migrations `0012`/`0014`) shares the advisory-lock key of the
   application guard — the advisory tier is owned by
@@ -506,12 +677,24 @@ constraint, v1.1 rule 5):
 | `(tenant_id, declaration_id, voter_id)` | `dividend_declaration_votes` | 0020 | one declaration vote per voter |
 | `(tenant_id, declaration_id, member_id)` | `dividend_distributions` | 0020 | one payout per member per declaration |
 | `(tenant_id, prefix)` PK | `txn_ref_sequences` | 0004 | counter row serialised by the advisory generator ([`lock-order.md`](lock-order.md) §6) |
+| `(tenant_id, repayment_id)` partial, non-rejected | `repayment_adjustments` | 0025/0031 | one LIVE adjustment per repayment (a rejection frees the slot) |
+| `(tenant_id, loan_id)` partial, non-rejected | `loan_write_offs` | 0025 | one live write-off workflow per loan |
+| `(tenant_id, write_off_id, voter_id)` | `loan_write_off_votes` | 0025 | one write-off vote per voter |
+| `(tenant_id, loan_id)` partial, live statuses | `recovery_cases` | 0026 (predicate widened 0033, same name) | one LIVE recovery case per loan (open or paused — a paused case still blocks a second) |
+| `(tenant_id, case_id)` partial, `is_outcome` | `recovery_case_notes` | 0033 | exactly one outcome note per case, claimed atomically |
+| `(tenant_id, month_end)` | `portfolio_month_snapshots` | 0027 | one write-once portfolio snapshot per month |
+| `(tenant_id, period_start, account)` | `account_period_balances` | 0028 | one rollup row per account per closed period |
+| `(tenant_id, period_start, member_id)` | `member_period_balances` | 0028 | one rollup row per member per closed period |
 
 ## 6. Derivation, regeneration & the falsifiable gate
 
 **Derivation**: hand-derived from `backend/migrations/versions/0001*`
 through `0022*` (SQL literals read in full, not summarised from MR
-prose), at main @ `08541b860f1445b16c342c39b6606d86b9dbeb17`.
+prose), at main @ `08541b860f1445b16c342c39b6606d86b9dbeb17`; extended
+the same way for `0023*` through `0032*` at main @
+`8f46aa54250ff1a066af423924f3eb54a9c72fb7` (P-DIAG drift MR), and for
+`0033*`/`0034*` at main @ `d517769d1fb5e414c99d2ccf8bcbadf23a3d5085`
+(the !55 as-built flip — both alter existing tables, no new table).
 
 **Regeneration procedure for 0023+ MRs (v1.2 rule 11)**: a migration
 that creates a table adds it to the matching §2 subject-area diagram

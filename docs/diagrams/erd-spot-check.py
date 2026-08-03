@@ -35,7 +35,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ERD_MD = REPO_ROOT / "docs/diagrams/erd.md"
 VERSIONS_DIR = REPO_ROOT / "backend/migrations/versions"
 
-CREATE_TABLE_RE = re.compile(r"\bCREATE TABLE (\w+)")
+# Requires the opening parenthesis of a column list so that PROSE in a
+# migration docstring (e.g. 0027's "CREATE TABLE takes no lock on ...")
+# is never miscounted as a created table.
+CREATE_TABLE_RE = re.compile(r"\bCREATE TABLE (\w+)\s*\(")
 MERMAID_FENCE_RE = re.compile(r"```mermaid\n(.*?)```", re.DOTALL)
 ENTITY_BLOCK_RE = re.compile(r"^\s*(\w+)\s*\{\s*$")
 RELATIONSHIP_RE = re.compile(r"^\s*(\w+)\s+[|}o]{2}--[|{o]{2}\s+(\w+)\s*:")
