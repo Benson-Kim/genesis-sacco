@@ -86,6 +86,8 @@ const MEMBER_OUT = {
 };
 
 interface ApiState {
+  /** Permissions served to /me/permissions (defaults to full). */
+  permissions?: unknown;
   /** Current application record served by GET (list + detail). */
   getApplication: () => Record<string, unknown>;
   /** Returns [status, body] for POST /applications. */
@@ -137,7 +139,7 @@ async function mockApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
     if (path === "/me/permissions" && method === "GET") {
-      await respond(200, FULL_PERMISSIONS);
+      await respond(200, state.permissions ?? FULL_PERMISSIONS);
       return;
     }
     if (path === "/products" && method === "GET") {
@@ -285,4 +287,73 @@ test("adversarial (separation of duties): the officer who recommends to committe
 
   // No vote request ever reached the wire.
   expect(state.voteBodies).toHaveLength(0);
+});
+
+test("adversarial: stale stage move → 409 conflict banner, EXACTLY ONE write, explicit reload never replays", async ({
+  page,
+}) => {
+  let version = 3;
+  const state: ApiState = {
+    getApplication: () => applicationOut({ stage: "submitted", version }),
+    postCreate: () => [409, { category: "conflict", correlation_id: "corr-unused" }],
+    postTransition: () => [409, { category: "conflict", correlation_id: "corr-e2e-stale" }],
+    createBodies: [],
+    createHeaders: [],
+    transitionBodies: [],
+    voteBodies: [],
+  };
+  await mockApi(page, state);
+  await login(page);
+
+  await page.getByRole("link", { name: "Applications" }).click();
+  await page.getByText("KES 250,000.10").click();
+  await page.getByRole("button", { name: "Move to appraisal" }).click();
+
+  // The conflict banner offers the explicit reload flow; the move was
+  // NOT applied and was attempted exactly once (no auto-retry).
+  await expect(page.getByText(/Your change was NOT applied/)).toBeVisible();
+  expect(state.transitionBodies).toHaveLength(1);
+  expect(state.transitionBodies[0]).toMatchObject({ target: "appraisal", version: 3 });
+
+  // Reload fetches the fresh record (moved server-side, v4) and NEVER
+  // replays the stale submission.
+  version = 4;
+  const detail = page.getByRole("dialog", { name: "Application detail" });
+  await detail.getByRole("button", { name: "Reload record" }).click();
+  await expect(detail.getByText("Record reloaded — re-check the stage before acting again.")).toBeVisible();
+  expect(state.transitionBodies).toHaveLength(1);
+});
+
+test("adversarial: deny-by-default — a role without applications:view gets no nav entries and an Access denied guard", async ({
+  page,
+}) => {
+  const state: ApiState = {
+    permissions: {
+      role_id: "66666666-6666-6666-6666-666666666666",
+      permissions: [
+        { module: "members", can_view: true, can_create: false, can_edit: false, can_approve: false },
+      ],
+    },
+    getApplication: () => applicationOut(),
+    postCreate: () => [403, { category: "forbidden", correlation_id: "corr-e2e-403" }],
+    postTransition: () => [403, { category: "forbidden", correlation_id: "corr-e2e-403" }],
+    createBodies: [],
+    createHeaders: [],
+    transitionBodies: [],
+    voteBodies: [],
+  };
+  await mockApi(page, state);
+  await login(page);
+
+  // Permission-filtered nav: neither entry mounts.
+  await expect(page.getByRole("link", { name: "Members" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Applications" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Credit committee" })).toHaveCount(0);
+
+  // Direct navigation hits the deny-by-default route guards.
+  await page.goto("/modules/applications");
+  await expect(page.getByText("Access denied")).toBeVisible();
+  await page.goto("/modules/applications/committee");
+  await expect(page.getByText("Access denied")).toBeVisible();
+  await expect(page.getByRole("button", { name: "+ New application" })).toHaveCount(0);
 });
