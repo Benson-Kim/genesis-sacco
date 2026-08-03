@@ -193,6 +193,7 @@ and stop, or never touch it):
 | Rollup backfill (P13.17b) | accounting_periods single row `FOR UPDATE SKIP LOCKED` (oldest closed-but-unrolled), one period per short transaction via the shared batch runner; the writer's fence `FOR SHARE` + marker UPDATE then hit the row the transaction already holds (self, no wait). Re-run path (§5): a fully rolled tenant matches zero rows, locks nothing, writes nothing | `period_rollups.py:ROLLUP_BACKFILL_SCAN_SQL` L239 |
 | Snapshot writer/backfill (P13.17a) | **no row locks** — ON CONFLICT claim + MVCC reconstruction reads only; divergence 409s loudly (FM1) | `portfolio_snapshots.py:write_month_snapshot` |
 | Late-insert fence (0028 trigger, P13.17b N3) | direct-SQL INSERT into either rollup table takes accounting_periods `FOR SHARE` (the fence's locking probe) and STOPS — a single-node locker for third parties; it conflicts with the marker UPDATE's `FOR NO KEY UPDATE` (deliberately NOT `FOR KEY SHARE`, which would not conflict), serialising fabricators against completion | migration `0028_period_rollups.py:forbid_late_period_rollup_insert` |
+| Claim-cap locking probe (0034 trigger, !51 review N1) | any INSERT into loan_recoveries takes the parent loan_write_offs row `FOR UPDATE` inside the constraint trigger and STOPS — a single-node locker for direct-SQL third parties (no advisory lock is held on that path), serialising them on the claim anchor so the cap SUM always sees every committed competitor. The SERVICE path re-acquires the exact WOFF lock its own anchor-first chain already holds (E22/E23) — a self-owned lock, no wait edge (§4 advisory-terminality qualifier) | migration `0034_recovery_claim_cap_lock.py:check_recovery_within_claim` |
 | RBAC permission edit | PERM alone | `rbac.py:update_permission` L227 |
 | Export claim | EXP single row SKIP LOCKED, then snapshot-consistent reads | `exports.py:CLAIM_SQL` L85 |
 | Outbox claim | OBX SKIP LOCKED + lease (ONE set-based UPDATE per batch since P13.17e), commit, dispatch **outside** any txn | `infrastructure/outbox_worker.py:dispatch_due` |
@@ -372,6 +373,14 @@ transaction can see or hold; a self-owned lock on an uncommitted row
 creates no wait edge, so terminality stands (the backfill path takes
 no advisory lock at all — its period row is claimed FOR UPDATE before
 the writers run).
+*0034 (!51 N1) qualifier, the same argument:* the claim-cap trigger's
+parent `FOR UPDATE` fires inside the service's receipt INSERT, which
+runs after the advisory posting tier — but the ONLY row it locks is
+the loan_write_offs anchor this same transaction locked FIRST
+(`record_recovery_receipt`, the E22/E23 chain head), so the
+re-acquisition is self-owned and creates no wait edge; a direct-SQL
+inserter holds no advisory lock when the probe fires (a §3
+single-node locker). Terminality stands.
 Shared/exclusive on the same barrier key serialise close-vs-postings by
 design (issue #12) without ordering violations.
 
@@ -631,6 +640,15 @@ comment, and this file's own quotes are outside `backend/src`). The
 and take only same-row/parent MVCC reads (no locking probes — unlike
 the 0028 fence, deliberately: the service serialises on the WOFF row
 it already holds, so a locking probe would add a redundant wait edge).
+*[The no-probe choice is deliberately REVERSED for the WOFF anchor by
+migration 0034 (!51 review N1) — see the !51-N1 delta below. The
+MVCC-only cap check left two concurrent direct-SQL inserts able to
+pass against snapshots excluding each other, and the probe costs the
+service path nothing: re-acquiring a lock the SAME transaction already
+holds is a self-owned lock, not a wait edge — the redundant-wait-edge
+worry recorded here was wrong for that path. The no-probe posture
+stands for the 0030 append-only triggers (and 0031/0032), which guard
+row shape, not a cross-row sum.]*
 **One new lock-graph edge (E23), landed first-class in this MR.**
 
 **Issue-#24 delta (maker-checker adjustments, authored on this
@@ -671,6 +689,28 @@ one-outcome partial UNIQUE live in migration DDL, not `src`, and take
 no locking probes. **Zero new lock-graph edges** — recovery_cases
 stays in the disjoint subgraph (§2), never held together with any
 other lock.
+
+**!51-N1 delta (review-follow-up micro-MR, migration 0034, authored on
+this branch):** the claim-cap hardening adds **zero new executable SQL
+lock sites in `backend/src`** — the executable-site count stays at
+**73** and the combined grep totals stay 136 / 31 / 36 / 2 / 40 =
+**215** (the !52-F2 / !53-F1-F2 service edits in the same MR add no
+line matching any lock keyword; re-derived on this branch). The ONE
+new DB-LEVEL lock acquisition lives in migration DDL, catalogued as a
+§3 prose row (the 0028-fence precedent): the 0034
+`check_recovery_within_claim` parent probe — every INSERT into
+loan_recoveries takes the loan_write_offs anchor `FOR UPDATE` inside
+the trigger. This deliberately REVERSES the issue-#21 no-locking-probe
+choice for the WOFF anchor (annotated in that delta above): the
+MVCC-only check could not stop two CONCURRENT direct-SQL inserts from
+passing the cap against snapshots excluding each other. **Zero new
+lock-graph edges**: the direct-SQL path takes the WOFF row ALONE and
+stops (a §3 single-node locker, no advisory lock held); the service
+path re-acquires the self-owned anchor its E22/E23 chain locked first
+(the §4 advisory-terminality qualifier — no wait edge). Falsifiable
+test: `tests/test_loan_recoveries.py::
+test_fm2_concurrent_direct_sql_inserts_serialise_on_the_claim_anchor`
+(fails with the FOR UPDATE removed).
 
 ## 9. Cross-check: MR prose vs code-derived DAG (P-DIAG.0 step 3)
 
