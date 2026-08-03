@@ -302,7 +302,7 @@ web:lockfile:
 # boundary inside the specs (page.route) — request counts/bodies are the
 # assertion surface for double-submit/409 single-attempt proofs.
 web:e2e:
-  image: mcr.microsoft.com/playwright:v1.49.1-noble
+  image: mcr.microsoft.com/playwright:v1.62.1-noble
   stage: test
   needs: []
   rules:
