@@ -11,7 +11,7 @@ import type { paths } from "./generated/schema";
 
 export type { paths, components } from "./generated/schema";
 export { ApiError, errorEnvelopeSchema, toApiError } from "./errors";
-export type { ErrorEnvelope } from "./errors";
+export type { ErrorEnvelope, FieldError } from "./errors";
 
 export interface GenesisClientOptions {
   baseUrl: string;
@@ -72,10 +72,15 @@ export interface IdempotencyKeySlot {
  * the key — the server's idempotency store replays the stored response
  * instead of re-executing. Changing the content is a NEW logical intent
  * and rotates the key. One key per intent, never per HTTP attempt.
+ * `fresh` is injectable so the contract has a falsifiable test.
  */
-export function idempotencyKeyFor(slot: IdempotencyKeySlot, body: string): string {
+export function idempotencyKeyFor(
+  slot: IdempotencyKeySlot,
+  body: string,
+  fresh: () => string = newIdempotencyKey,
+): string {
   if (slot.key === null || slot.body !== body) {
-    slot.key = newIdempotencyKey();
+    slot.key = fresh();
     slot.body = body;
   }
   return slot.key;
