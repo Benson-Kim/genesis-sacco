@@ -67,6 +67,16 @@ or test/artifact present on main).
 | P23 | ❌ TODO | — |
 | P24 | ❌ TODO | — |
 
+**P-DIAG drift flip (rule 11, 2026-08-02 — MR !55, docs-only):** the
+P-DIAG.1–.5 rows above remain ✅ with their diagrams reconciled to
+main @ `8f46aa5` (alembic head 0032): dfd.md/stride.md P13.15/P13.16
+PLANNED labels flipped as-built; the !46/!47/!51/!52 flows drawn
+first-class (dfd F10–F14, C4 routers 19/20, ERD subject areas 2.F/2.G,
+sequence + `flow-*` business diagrams); both spot-check scripts —
+which FAILED on pre-!55 main — extended and passing. The in-flight
+!53 (0033) / !54 (0034) claims are drawn `INCOMING`, never as-built;
+those MRs flip their own labels (rule 11).
+
 ### Review follow-ups (maintainer review of !44, 2026-08-01) — placement
 
 | # | Finding | Lands in |
