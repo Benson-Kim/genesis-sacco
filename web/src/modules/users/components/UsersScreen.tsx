@@ -20,19 +20,34 @@ import { Card, Pill } from "@genesis/design-system";
 import { KeysetTable, type Column } from "@/modules/table/KeysetTable";
 import { useKeysetList } from "@/modules/table/useKeysetList";
 import { fmtDateTime, initials, relTime } from "@/lib/format";
+import { STALE_TIME } from "@/lib/query";
+import dynamic from "next/dynamic";
 import { fetchRoles, fetchUsersPage } from "../api";
 import type { User } from "../schemas";
 import { statusPill } from "./StatusPill";
-import { UserCreateDrawer } from "./UserCreateDrawer";
-import { UserDetailDrawer } from "./UserDetailDrawer";
 import styles from "./Users.module.css";
+
+// Drawer-level code splitting (P15 Phase B speed): drawer chunks load on
+// first open, not with the list route.
+const UserCreateDrawer = dynamic(
+  () => import("./UserCreateDrawer").then((m) => m.UserCreateDrawer),
+  { ssr: false },
+);
+const UserDetailDrawer = dynamic(
+  () => import("./UserDetailDrawer").then((m) => m.UserDetailDrawer),
+  { ssr: false },
+);
 
 export const ROLES_QUERY_KEY = ["access", "roles"] as const;
 
 export function useRoles() {
   // Role names degrade gracefully on failure; the list still works and a
   // role change would 409/422 server-side regardless (!25 finding 6).
-  return useQuery({ queryKey: ROLES_QUERY_KEY, queryFn: fetchRoles });
+  return useQuery({
+    queryKey: ROLES_QUERY_KEY,
+    queryFn: fetchRoles,
+    staleTime: STALE_TIME.reference,
+  });
 }
 
 type DrawerState = null | { mode: "create" } | { mode: "detail"; userId: string };

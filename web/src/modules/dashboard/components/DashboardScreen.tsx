@@ -12,6 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, Stat } from "@genesis/design-system";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { fmtAmount, fmtDateTime, fmtKes } from "@/lib/format";
+import { STALE_TIME } from "@/lib/query";
 import { fetchDashboardSummary } from "../api";
 import type { DashboardSummary } from "../schemas";
 import styles from "./DashboardScreen.module.css";
@@ -166,6 +167,12 @@ export function DashboardScreen() {
             <PipelineCard pipeline={summary.data.pipeline} />
             <FlowsCard flows={summary.data.monthly_flows} />
             <ClassificationCard loanBook={summary.data.loan_book} />
+            <div className={styles.asOf}>As of {fmtDateTime(summary.data.as_of)}</div>
+        </div>
+    );
+}
+
+loanBook={summary.data.loan_book} />
             <div className={styles.asOf}>As of {fmtDateTime(summary.data.as_of)}</div>
         </div>
     );

@@ -6,6 +6,7 @@ import {
   type UseInfiniteQueryResult,
   type InfiniteData,
 } from "@tanstack/react-query";
+import { STALE_TIME } from "@/lib/query";
 import type { KeysetPage } from "./schemas";
 
 export type KeysetListResult<T> = UseInfiniteQueryResult<
@@ -27,5 +28,8 @@ export function useKeysetList<T>(options: {
     queryFn: ({ pageParam }) => options.fetchPage(pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
+    // Entity-class staleTime (lib/query.ts): fresh across tab switches
+    // without refetch-per-render.
+    staleTime: STALE_TIME.list,
   });
 }

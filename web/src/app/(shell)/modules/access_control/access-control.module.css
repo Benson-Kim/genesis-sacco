@@ -62,3 +62,11 @@
   outline: 2px solid var(--navy);
   outline-offset: -2px;
 }
+
+/* Lazy tab-panel loading state (tokens only). */
+.panelLoading {
+  padding: var(--space-xxl) var(--space-lg);
+  text-align: center;
+  color: var(--sub);
+  font-size: var(--fs-body);
+}

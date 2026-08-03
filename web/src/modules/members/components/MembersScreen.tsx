@@ -13,6 +13,7 @@
  *   data and renders exclusively through React text interpolation.
  */
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { Banner, Button, Card, Pill } from "@genesis/design-system";
 import { KeysetTable, type Column } from "@/modules/table/KeysetTable";
 import { useKeysetList } from "@/modules/table/useKeysetList";
@@ -29,8 +30,14 @@ import {
     type MemberStatus,
     type MemberType,
 } from "../schemas";
-import { MemberCreateDrawer } from "./MemberCreateDrawer";
 import styles from "./Members.module.css";
+
+// Drawer-level code splitting (P15 Phase B speed): the registration
+// drawer chunk loads on first open, not with the register route.
+const MemberCreateDrawer = dynamic(
+    () => import("./MemberCreateDrawer").then((m) => m.MemberCreateDrawer),
+    { ssr: false },
+);
 
 function statusPill(status: MemberStatus) {
     switch (status) {

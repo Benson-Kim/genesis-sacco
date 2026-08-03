@@ -113,3 +113,37 @@ eslint `no-console` fail the pipeline on console logging, localStorage,
 cookie fiddling, any third-party analytics/telemetry, or CDN script
 references. The dependency lockfile is produced by CI and committed —
 no scripts are pulled from CDNs at runtime.
+
+## Performance budget (P15 EXIT — Lighthouse)
+
+Budgets for the admin console on a mid-tier laptop / throttled 4G
+(Lighthouse desktop preset), per authenticated route:
+
+| Metric | Budget |
+|---|---|
+| Performance score | ≥ 90 |
+| LCP | < 2.5 s |
+| TBT | < 200 ms |
+| CLS | < 0.1 |
+| Initial route JS (gzip) | < 300 KB |
+| Third-party requests | **0** (no CDN scripts/fonts — hygiene-gate enforced) |
+
+How the budget is defended structurally:
+
+- **Route-level code splitting** is Next.js default; **tab panels and
+  drawers are additionally `next/dynamic` chunks** (access-control tabs,
+  create/detail drawers) so list routes ship without editor code.
+- **TanStack Query staleTime per entity class** (`src/lib/query.ts`):
+  reference 5 min, composite 60 s, lists 30 s, records 0 — avoids
+  refetch storms without ever serving a stale record into an
+  optimistic-locked edit.
+- **Keyset pages are 20 rows** with explicit *Load more* — no unbounded
+  DOM growth; virtualization is deliberately NOT needed at this page
+  size (revisit if a module ever demands larger pages).
+- **No CDN dependencies** anywhere (client-hygiene gate); fonts are the
+  system stack / self-hosted only.
+
+Measurement: Lighthouse runs are part of the P15 E2E stage (Playwright
++ LHCI against the review app) — until that stage lands, this budget is
+the documented target and the structural defences above are
+test-enforced; no numeric claim is made without an in-project run.

@@ -27,6 +27,7 @@ import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
 import { MODULES, MODULE_LABELS, type ModuleId } from "@/modules/authz/modules";
+import { STALE_TIME } from "@/lib/query";
 import { fetchRoles } from "@/modules/users/api";
 import { fetchRolePermissions, updateRolePermission, type Permission } from "./api";
 import styles from "./PermissionsScreen.module.css";
@@ -54,6 +55,7 @@ export function PermissionsScreen() {
   const rolesQuery = useQuery({
     queryKey: ["access", "roles"],
     queryFn: fetchRoles,
+    staleTime: STALE_TIME.reference,
   });
 
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);

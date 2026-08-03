@@ -1,12 +1,22 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { Button } from "@genesis/design-system";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
-import { UsersScreen } from "@/modules/users/components/UsersScreen";
-import { PermissionsScreen } from "@/modules/access/PermissionsScreen";
 import styles from "./access-control.module.css";
+
+// Tab-level code splitting (P15 Phase B speed): each panel is its own
+// chunk — the permissions matrix never loads unless its tab is opened.
+const UsersScreen = dynamic(
+  () => import("@/modules/users/components/UsersScreen").then((m) => m.UsersScreen),
+  { ssr: false, loading: () => <div className={styles.panelLoading}>Loading…</div> },
+);
+const PermissionsScreen = dynamic(
+  () => import("@/modules/access/PermissionsScreen").then((m) => m.PermissionsScreen),
+  { ssr: false, loading: () => <div className={styles.panelLoading}>Loading…</div> },
+);
 
 /**
  * Client shell for the access-control page (P15; salvaged from
