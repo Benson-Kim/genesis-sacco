@@ -137,7 +137,8 @@ export function LoanDetailDrawer({
       setClientErrors({});
       setNotice("");
       announce("Repayment recorded.");
-      // Balance/status/schedule/aggregates are server facts — refetch them.
+      // The balance, status, schedule and aggregates are server facts
+      // — refetch them.
       void queryClient.invalidateQueries({ queryKey: ["loans", "detail", loanId] });
       void queryClient.invalidateQueries({ queryKey: ["loans", "schedule", loanId] });
       void queryClient.invalidateQueries({ queryKey: ["loans", "settlement", loanId] });
