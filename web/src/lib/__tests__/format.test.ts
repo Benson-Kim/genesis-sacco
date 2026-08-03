@@ -1,4 +1,4 @@
-import { fmtAmount, fmtDateTime, fmtKes, initials } from "../format";
+import { fmtAmount, fmtDateTime, fmtKes, initials, isUuid, prettyJson, relTime } from "../format";
 
 /**
  * Hand-computed oracles (MASTER_PROMPT §4 — never captured from the
@@ -59,6 +59,56 @@ describe("initials", () => {
         expect(initials("Amina Odhiambo")).toBe("AO");
         expect(initials("brian")).toBe("B");
         expect(initials("")).toBe("·");
+    });
+});
+
+/**
+ * Salvaged suites (duo/feature/p13-5-frontend-followthrough @ 198a238) —
+ * hand-computed oracles, never captured from the implementation.
+ */
+describe("prettyJson — audit payloads as inert TEXT (the named XSS threat)", () => {
+    const HOSTILE = '<img src=x onerror=alert(1)>"?><script>x</script>';
+
+    it("emits exact JSON text; hostile strings survive as data", () => {
+        // Oracle: JSON.stringify semantics with 2-space indent, by hand.
+        expect(prettyJson({ a: 1 })).toBe('{\n  "a": 1\n}');
+        expect(prettyJson(HOSTILE)).toBe(JSON.stringify(HOSTILE));
+        expect(prettyJson(null)).toBe("null");
+        expect(prettyJson([1, "x"])).toBe('[\n  1,\n  "x"\n]');
+    });
+
+    it("never throws on unserializable input", () => {
+        const cyclic: Record<string, unknown> = {};
+        cyclic.self = cyclic;
+        expect(typeof prettyJson(cyclic)).toBe("string");
+        expect(prettyJson(undefined)).toBe("undefined");
+    });
+});
+
+describe("relTime — hand-computed buckets", () => {
+    it("falls back to 'never' for empty and verbatim for garbage", () => {
+        expect(relTime(null)).toBe("never");
+        expect(relTime("garbage")).toBe("garbage");
+    });
+
+    it("buckets seconds/minutes/hours/days and clamps clock skew", () => {
+        const now = new Date("2026-07-30T12:00:00Z");
+        expect(relTime("2026-07-30T11:59:31Z", now)).toBe("just now"); // 29s
+        expect(relTime("2026-07-30T11:58:00Z", now)).toBe("2m ago"); // 120s
+        expect(relTime("2026-07-30T09:00:00Z", now)).toBe("3h ago"); // 3h
+        expect(relTime("2026-07-25T12:00:00Z", now)).toBe("5d ago"); // 5d
+        // Clock skew (future timestamp) clamps to zero, never negative.
+        expect(relTime("2026-07-30T12:05:00Z", now)).toBe("just now");
+    });
+});
+
+describe("isUuid — accepts canonical UUIDs, rejects injection shapes", () => {
+    it("validates the canonical shape only", () => {
+        expect(isUuid("fbbc9b6e-5178-4a55-8dad-913f56a93e27")).toBe(true);
+        expect(isUuid("FBBC9B6E-5178-4A55-8DAD-913F56A93E27")).toBe(true);
+        expect(isUuid("1 OR 1=1")).toBe(false);
+        expect(isUuid("fbbc9b6e51784a558dad913f56a93e27")).toBe(false);
+        expect(isUuid("fbbc9b6e-5178-4a55-8dad-913f56a93e27; DROP TABLE users")).toBe(false);
     });
 });
 

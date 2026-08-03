@@ -60,3 +60,40 @@ export function initials(name: string): string {
         .toUpperCase();
     return chars === "" ? "·" : chars;
 }
+
+/**
+ * Pretty-print an API-provided JSON value as plain TEXT (audit payload
+ * handling — the named XSS threat): payloads render exactly as the API
+ * returned them, with no client-side reconstruction of redacted fields
+ * and no interpretation of payload contents.
+ * (Salvaged from duo/feature/p13-5-frontend-followthrough @ 198a238.)
+ */
+export function prettyJson(value: unknown): string {
+    try {
+        return JSON.stringify(value, null, 2) ?? String(value);
+    } catch {
+        return String(value);
+    }
+}
+
+/** Compact relative time ("2m ago") for last-active columns. */
+export function relTime(iso: string | null | undefined, now: Date = new Date()): string {
+    if (iso === null || iso === undefined || iso === "") return "never";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    const sec = Math.max(0, Math.floor((now.getTime() - d.getTime()) / 1000));
+    if (sec < 60) return "just now";
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hrs = Math.floor(min / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Client-side UUID shape check (the server validates regardless). */
+export function isUuid(value: string): boolean {
+    return UUID_RE.test(value);
+}
