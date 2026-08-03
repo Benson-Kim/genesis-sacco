@@ -19,10 +19,11 @@
 
 What exists on `main` at the reconciliation SHA: **one deployed
 FastAPI backend**, PostgreSQL 16 with **forced RLS**, Redis, and four
-worker loops sharing the backend codebase. Every client and every external
-provider is still `PLANNED (Pn)` — today the only principals are staff
-users calling the JSON API directly (there is no member principal
-until P14.5).
+worker loops sharing the backend codebase.  The **web admin scaffold** (P14,
+!13) is the first as-built client: staff reach the API through its
+GENERATED, drift-gated client; mobile clients and external providers
+remain `PLANNED (Pn)` — the only authenticated principals are staff
+(there is no member principal until P14.5).
 
 ```mermaid
 flowchart TB
@@ -42,7 +43,7 @@ flowchart TB
     PG[("PostgreSQL 16 — FORCED RLS on every tenant table<br/>ADR-0002; genesis/infrastructure/tenancy.py<br/>alembic head 0032")]
     RD[("Redis<br/>readiness probe + auth rate limiting<br/>genesis/infrastructure/redis_client.py<br/>genesis/infrastructure/rate_limit.py")]
 
-    WEB["Web admin — Next.js<br/>PLANNED (P14)"]
+    WEB["Web admin — Next.js + TS strict<br/>as-built (P14 scaffold): web/src<br/>feature screens PLANNED (P15)"]
     ADM["Admin mobile — Flutter<br/>PLANNED (P16/P18)"]
     MEM["Member mobile — Flutter<br/>PLANNED (P16/P17)"]
     MPR["Member principal — member-facing auth<br/>PLANNED (P14.5)"]
@@ -58,14 +59,15 @@ flowchart TB
     IDW -->|"batched purge of expired idempotency keys<br/>(lock-order.md §3, idempotency row)"| PG
     OBW -.->|"dispatch via idempotent adapters"| PROV
 
-    WEB -.-> API
+    STAFF -->|"browser"| WEB
+    WEB -->|"HTTPS JSON via GENERATED client<br/>web/packages/api-client (drift-gated in CI)"| API
     ADM -.-> API
     MEM -.-> API
     MPR -.-> API
     MPESA -.-> API
 
     classDef planned fill:#f8f9fa,stroke:#999,stroke-dasharray: 5 5;
-    class WEB,ADM,MEM,MPR,MPESA,PROV planned;
+    class ADM,MEM,MPR,MPESA,PROV planned;
     classDef store fill:#fff3cd,stroke:#b8860b;
     class PG,RD store;
 ```
@@ -82,7 +84,7 @@ flowchart TB
 | Idempotency purge worker | as-built (P13.17c !49) | `genesis/infrastructure/idempotency_worker.py` (`run_worker`) → `genesis/application/idempotency_purge.py` (`purge_expired_idempotency_keys`); expiry semantics never depend on it running (the `expires_at > now()` fence in `genesis/api/idempotency.py`) |
 | PostgreSQL 16, forced RLS | as-built | RLS enabled AND forced per ADR-0002 (`docs/adr/`), session scoping `genesis/infrastructure/tenancy.py` (`tenant_session` L12); migration head `0032` (`backend/migrations/versions/0032_repayments_append_only.py`) |
 | Redis | as-built | `genesis/infrastructure/redis_client.py` (readyz), `genesis/infrastructure/rate_limit.py` (auth rate limiting) |
-| Web admin | PLANNED (P14) | not on main (an open scaffold MR !13 exists but is unmerged — as-built means merged) |
+| Web admin | as-built with this MR (P14 scaffold, !13): app shell + OTP auth gate + deny-by-default route guards; feature screens PLANNED (P15) | `web/src` (modules `auth`/`authz`/`layout`/`table`), tokens `web/packages/design-system`, GENERATED client `web/packages/api-client` — freshness gated by the `web:spec-drift`/`web:client-drift` CI jobs against `backend/scripts/export_openapi.py` |
 | Admin mobile / Member mobile | PLANNED (P16/P17/P18) | not on main (draft !11 unmerged) |
 | Member principal | PLANNED (P14.5) | no member-facing auth exists; staff tokens are the only principal |
 | M-Pesa | PLANNED (P19) | no payment-intent tables, no callback routes on main |
