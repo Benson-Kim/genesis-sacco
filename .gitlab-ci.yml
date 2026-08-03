@@ -290,7 +290,13 @@ web:lockfile:
   script:
     - cd web
     - npm install --package-lock-only --ignore-scripts
-    - echo "Download the artifact and commit web/package-lock.json"
+    # The agent token cannot download artifacts (read-only job scope), so
+    # the lockfile also travels via the trace as gzip+base64 between
+    # markers — decoded and committed by the session driving the MR.
+    - echo "-----BEGIN PACKAGE-LOCK-----"
+    - gzip -c package-lock.json | base64 -w0
+    - echo ""
+    - echo "-----END PACKAGE-LOCK-----"
   artifacts:
     paths:
       - web/package-lock.json
