@@ -55,9 +55,9 @@ or test/artifact present on main).
 | P-DIAG.3 | ✅ DONE | dfd.md |
 | P-DIAG.4 | ✅ DONE | stride.md |
 | P-DIAG.5 | ✅ DONE | sequence-committee-voting / -outbox-dispatch / -snapshot-bind-reverify |
-| P14 | 🔄 IN PROGRESS | open MR !13 (refreshed onto current main 2026-08-02; the merging maintainer flips this row with the evidence) |
+| P14 | ✅ DONE | !13 merged 2026-08-03; web:* jobs green (incl. spec/client drift + permanent stale-client negative proof) |
 | P14.5 | ❌ TODO | member principal absent |
-| P15 | ❌ TODO | depends P14 |
+| P15 | 🔄 IN PROGRESS | batch 1 on MR !56 (Dashboard, Members, Access control + Phase B shared primitives incl. mandatory-usage blocker (f)); remaining 7 module batches + Playwright E2E follow one MR per batch |
 | P16 | ❌ TODO | no mobile/ tree |
 | P17 | ❌ TODO | depends P16, P14.5 |
 | P18 | ❌ TODO | depends P16 |
@@ -1100,6 +1100,65 @@ HARDENED (v1.2) — merge blockers:
 (e) Honest DoD per v1.2 rule 13: E2E evidence is in-project pipeline
     runs, not local screenshots; update P-DIAG diagrams if a flow's
     client interaction changes documented sequences (rule 11).
+(f) Phase B primitives — MANDATORY USAGE (binding on every remaining
+    module batch; delivered on !56 with falsifiable tests — one copy
+    each, gate 1.1; re-implementing any of them is a rejected MR):
+    - Shared page grids `@/modules/layout/grid.module.css`
+      (`grid.cards4` 4→2→1, `grid.half`/`grid.wide` spans,
+      `grid.sideMain` side+main stacking ≤960px; breakpoint convention
+      640/960px) — NO private page-grid CSS in module stylesheets
+      (`responsive.test.ts` asserts consumers).
+    - `KeysetTable` + `useKeysetList` (`@/modules/table/*`): keyset
+      `{items, next_cursor}` ONLY (gate 1.3 — no offset pagination),
+      keyboard-activatable row drill-down, focusable labelled scroll
+      region for narrow viewports; pages are 20 rows with explicit
+      Load more (no virtualization at this page size).
+    - `FormField` + `form-errors.ts` (`@/modules/forms/*`) for EVERY
+      form field: persistent label, aria-describedby/aria-invalid
+      wiring, inline errors merging client Zod issues with server 422
+      `ApiError.fields` (server verdict wins) — no hand-rolled
+      label/error wiring.
+    - `ConfirmDangerModal` (`@genesis/design-system`) for every
+      destructive/money-adjacent action: typed byte-identical
+      confirmation phrase; pending blocks all dismissal paths.
+    - `MakerCheckerPanel` (`@/modules/authz/components/…`) for EVERY
+      approval flow: checker affordances mount ONLY for a different,
+      known principal (`getOwnUserId`); self-approval is structurally
+      impossible — there is no override prop; the server enforces
+      regardless (gate 1.6).
+    - `ConflictBanner` (`@/modules/layout/ConflictBanner`) for every
+      409: explicit reload-and-re-enter, never a silent overwrite,
+      never an auto-retry; pair with `ErrorBanner` for non-409s.
+    - `downloadExport` (`@/lib/file-export`) for every file download:
+      Response comes from the GENERATED client; least-disclosure
+      failures; transient revoked object URL — no hand-written fetch.
+    - `ErrorBanner` + `ApiError.fields` for least-disclosure errors
+      ({category, correlation_id} only); `announce()`
+      (`@/modules/layout/announcer`) for async success/error AT
+      announcements (operator-facing copy only, never raw API data).
+    - Focus-trapped `Modal` (drawer/dialog variants, Escape + return
+      focus, full-screen ≤640px) — never a bespoke overlay.
+    - `idempotencyKeyFor` slot on EVERY mutation (stable across
+      identical retries, rotates on content change) + double-submit
+      disabled/short-circuited; mutations `retry: 0`.
+    - Generated client ONLY; Zod on every response/form; deny-by-
+      default `RequireModule`/`can()`; tokens-only styling; money as
+      API decimal STRINGS (no client math/balances — blocker (a));
+      TanStack Query keys/staleTime per `@/lib/query` entity classes.
+    - Per-module adversarial jest suite mirroring
+      `users-screen.test.tsx` (XSS inertness, 409 single-attempt +
+      reload-never-replays, double-submit single-effect, permission-
+      stripped affordances, least-disclosure, 401 teardown) — the
+      Playwright E2E per module remains the P15 exit criterion on top.
+(g) Process / anti-corruption (v1.2 rule 16, binding per module
+    session): commit+push per file-scale unit (never >15 min of work
+    unpushed); after ANY tool-assisted edit re-read the ENTIRE file
+    (corruption hides in tails, escape layers, dropped hunks); after
+    each commit re-fetch from remote and diff hunk-by-hunk against
+    intent — the REMOTE is the truth, not the sandbox working copy;
+    pair every new symbol with its import in the same edit; npm/PyPI
+    are proxy-blocked in the sandbox — CI is the arbiter; red-pipeline
+    fixes before any other work.
 EXIT: all ten modules E2E-green in-project incl. the per-module
 adversarial set; no-client-money-math gate active; Lighthouse perf
 budget documented.

@@ -1,0 +1,6 @@
+/* Conflict banner action row (P15 Phase B) — tokens only. */
+.actions {
+  display: flex;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}

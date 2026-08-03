@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { ApiError } from "@genesis/api-client";
 import { Button } from "@genesis/design-system";
 import type { KeysetListResult } from "./useKeysetList";
@@ -18,18 +18,23 @@ export interface KeysetTableProps<T> {
   query: KeysetListResult<T>;
   rowKey: (row: T) => string;
   emptyMessage?: string;
+  /** Row drill-down; rows become keyboard-activatable (Enter/Space). */
+  onRowClick?: (row: T) => void;
 }
 
 /**
  * Shared cursor-paginated table (prototype table styling). Used by the
- * members / loan book / ledger screens in P15.
+ * members / users / audit screens in P15.
+ * (onRowClick salvaged from duo/feature/p13-5-frontend-followthrough
+ * @ 198a238.)
  */
 export function KeysetTable<T>({
   columns,
   query,
   rowKey,
   emptyMessage = "Nothing to show yet.",
-}: KeysetTableProps<T>) {
+  onRowClick,
+}: Readonly<KeysetTableProps<T>>) {
   if (query.isPending) {
     return <div className={styles.note}>Loading…</div>;
   }
@@ -54,7 +59,11 @@ export function KeysetTable<T>({
 
   return (
     <div>
-      <table className={styles.table}>
+      {/* Focusable, labelled scroll region: on narrow viewports the table
+          scrolls horizontally (visible scroll-shadow affordance) and stays
+          keyboard-reachable (P15 Phase B; issue #8). */}
+      <div className={styles.scroller} tabIndex={0} role="region" aria-label="Table">
+        <table className={styles.table}>
         <thead>
           <tr className={styles.headRow}>
             {columns.map((column) => (
@@ -69,7 +78,21 @@ export function KeysetTable<T>({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={rowKey(row)} className={styles.row}>
+            <tr
+              key={rowKey(row)}
+              className={onRowClick ? `${styles.row} ${styles.rowClickable}` : styles.row}
+              onClick={onRowClick ? () => onRowClick(row) : undefined}
+              {...(onRowClick && {
+                role: "button",
+                tabIndex: 0,
+                onKeyDown: (event: KeyboardEvent<HTMLTableRowElement>) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onRowClick(row);
+                  }
+                },
+              })}
+            >
               {columns.map((column) => (
                 <td
                   key={column.key}
@@ -81,7 +104,8 @@ export function KeysetTable<T>({
             </tr>
           ))}
         </tbody>
-      </table>
+        </table>
+      </div>
       {query.hasNextPage && (
         <div className={styles.more}>
           <Button

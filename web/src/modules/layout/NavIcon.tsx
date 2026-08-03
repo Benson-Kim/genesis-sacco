@@ -13,7 +13,8 @@ export type NavIconShape =
   | "transactions"
   | "reports"
   | "settings"
-  | "access_control";
+  | "access_control"
+  | "audit_log";
 
 const ICON_PATHS: Record<NavIconShape, string> = {
   dashboard: "M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z",
@@ -26,6 +27,8 @@ const ICON_PATHS: Record<NavIconShape, string> = {
   settings:
     "M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM12 2l1 3h-2zM12 22l-1-3h2zM2 12l3-1v2zM22 12l-3 1v-2zM4.9 4.9l2.8 1.4-1.4 1.4zM19.1 19.1l-2.8-1.4 1.4-1.4zM19.1 4.9l-1.4 2.8-1.4-1.4zM4.9 19.1l1.4-2.8 1.4 1.4z",
   access_control: "M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5z",
+  // Ledger/journal sheet with entry lines — the audit-trail metaphor.
+  audit_log: "M6 3h12v18H6zM9 8h6M9 12h6M9 16h4",
 };
 
 export function NavIcon({ shape, active }: { shape: NavIconShape; active: boolean }) {

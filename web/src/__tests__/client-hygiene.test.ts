@@ -16,9 +16,23 @@ const EXTENSIONS = [".ts", ".tsx", ".css", ".mjs"];
 const SELF = join("src", "__tests__", "client-hygiene.test.ts");
 
 // Built by concatenation so this file never matches itself elsewhere.
-const FORBIDDEN: readonly { pattern: string; reason: string }[] = [
+const FORBIDDEN: readonly {
+  pattern: string;
+  reason: string;
+  /**
+   * Repo-relative paths where the pattern is deliberately allowed. Kept to
+   * the absolute minimum: only the negative-proof suite that ASSERTS the
+   * forbidden storage stays empty may name it (same allowlist mechanism as
+   * the no-sinks gate's single sessionStorage custody site).
+   */
+  allow?: readonly string[];
+}[] = [
   { pattern: "console" + ".", reason: "console logging can leak PII/token material" },
-  { pattern: "local" + "Storage", reason: "tokens/state must not persist beyond the tab" },
+  {
+    pattern: "local" + "Storage",
+    reason: "tokens/state must not persist beyond the tab",
+    allow: ["src/modules/auth/__tests__/token-custody.test.ts"],
+  },
   { pattern: "document" + ".cookie", reason: "no cookie-based token handling" },
   { pattern: "gtag", reason: "third-party analytics forbidden" },
   { pattern: "googletagmanager", reason: "third-party analytics forbidden" },
@@ -58,11 +72,22 @@ describe("client hygiene (FM3)", () => {
     expect(files.length).toBeGreaterThan(30);
   });
 
-  it.each(FORBIDDEN)("no source file contains '$pattern' ($reason)", ({ pattern }) => {
-    const offenders = files.filter((path) =>
-      readFileSync(path, "utf8").includes(pattern),
-    );
+  it.each(FORBIDDEN)("no source file contains '$pattern' ($reason)", ({ pattern, allow }) => {
+    const offenders = files.filter((path) => {
+      const rel = relative(WEB_ROOT, path).split(sep).join("/");
+      if (allow?.includes(rel)) return false;
+      return readFileSync(path, "utf8").includes(pattern);
+    });
     expect(offenders.map((path) => relative(WEB_ROOT, path))).toEqual([]);
+  });
+
+  it("the allowlist names only files that actually exist (no stale exemptions)", () => {
+    const known = new Set(files.map((path) => relative(WEB_ROOT, path).split(sep).join("/")));
+    for (const { allow } of FORBIDDEN) {
+      for (const rel of allow ?? []) {
+        expect(known.has(rel)).toBe(true);
+      }
+    }
   });
 
   it("package.json pulls no analytics/telemetry dependencies", () => {

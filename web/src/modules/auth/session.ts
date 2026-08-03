@@ -16,6 +16,7 @@ const REFRESH_TOKEN_KEY = "gp.refresh_token";
 const EXPIRY_MARGIN_SECONDS = 30;
 
 let accessToken: string | null = null;
+let ownUserId: string | null = null;
 let refreshInFlight: Promise<string | null> | null = null;
 const listeners = new Set<() => void>();
 
@@ -40,6 +41,8 @@ export function getRefreshToken(): string | null {
 
 export function setSession(tokens: { accessToken: string; refreshToken: string }): void {
   accessToken = tokens.accessToken;
+  const payload = decodeJwtPayload(tokens.accessToken);
+  ownUserId = payload !== null && typeof payload.sub === "string" ? payload.sub : null;
   if (isBrowser()) {
     window.sessionStorage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken);
   }
@@ -48,10 +51,38 @@ export function setSession(tokens: { accessToken: string; refreshToken: string }
 
 export function clearSession(): void {
   accessToken = null;
+  ownUserId = null;
   if (isBrowser()) {
     window.sessionStorage.removeItem(REFRESH_TOKEN_KEY);
   }
   notify();
+}
+
+/**
+ * Decode a JWT payload WITHOUT verifying it. Used solely to read our own
+ * `sub` claim for UX (disabling self-role/self-status buttons — the
+ * separation-of-duties affordances); the server is the only verifier and
+ * enforcer (gate 1.6). Salvaged from
+ * duo/feature/p13-5-frontend-followthrough @ 198a238.
+ */
+export function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  const parts = token.split(".");
+  if (parts.length !== 3 || parts[1] === undefined || parts[1] === "") return null;
+  try {
+    const normalized = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    const decoded: unknown = JSON.parse(atob(padded));
+    return typeof decoded === "object" && decoded !== null
+      ? (decoded as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The signed-in user's own id (unverified `sub` claim — UX gating only). */
+export function getOwnUserId(): string | null {
+  return ownUserId;
 }
 
 export function hasSession(): boolean {
