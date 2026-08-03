@@ -27,6 +27,21 @@
   border-bottom: 1px solid var(--panel);
 }
 
+.rowClickable {
+  cursor: pointer;
+}
+
+.rowClickable:hover {
+  background: var(--bg);
+}
+
+/* Focus ring replaced, never removed (issue #8) — inset so the ring
+   stays visible inside the table's clipping box. */
+.rowClickable:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: -2px;
+}
+
 .td,
 .tdRight {
   padding: 11px 16px;

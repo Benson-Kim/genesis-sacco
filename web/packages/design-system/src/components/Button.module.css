@@ -32,3 +32,10 @@
   background: var(--emerald);
   color: #fff;
 }
+
+/* Destructive actions (suspend, force re-enrolment) — brick tokens. */
+.danger {
+  border: none;
+  background: var(--brick);
+  color: #fff;
+}

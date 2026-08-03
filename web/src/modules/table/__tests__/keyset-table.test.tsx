@@ -39,18 +39,20 @@ const columns: Column<Row>[] = [
   { key: "name", header: "Name", render: (row) => row.name },
 ];
 
-function Harness() {
+function Harness({ onRowClick }: Readonly<{ onRowClick?: (row: Row) => void }>) {
   const query = useKeysetList<Row>({ queryKey: ["test-rows"], fetchPage });
-  return <KeysetTable columns={columns} query={query} rowKey={(row) => row.id} />;
+  return (
+    <KeysetTable columns={columns} query={query} rowKey={(row) => row.id} onRowClick={onRowClick} />
+  );
 }
 
-function renderHarness() {
+function renderHarness(onRowClick?: (row: Row) => void) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <Harness />
+      <Harness onRowClick={onRowClick} />
     </QueryClientProvider>,
   );
 }
@@ -70,6 +72,27 @@ describe("KeysetTable + useKeysetList", () => {
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument(),
     );
+  });
+
+  it("row drill-down works by mouse AND keyboard (issue #8 a11y)", async () => {
+    const clicks: string[] = [];
+    renderHarness((row) => clicks.push(row.id));
+
+    const row = (await screen.findByText("Amina Odhiambo")).closest("tr");
+    expect(row).not.toBeNull();
+    await userEvent.click(row as HTMLElement);
+    // Keyboard activation: rows are focusable buttons for drill-down.
+    (row as HTMLElement).focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard(" ");
+    expect(clicks).toEqual(["GP-0001", "GP-0001", "GP-0001"]);
+  });
+
+  it("rows without onRowClick stay inert (no phantom button semantics)", async () => {
+    renderHarness();
+    const row = (await screen.findByText("Amina Odhiambo")).closest("tr");
+    expect(row).not.toHaveAttribute("role");
+    expect(row).not.toHaveAttribute("tabindex");
   });
 
   it("validates the page contract with zod", () => {
