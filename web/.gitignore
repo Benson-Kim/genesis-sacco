@@ -7,6 +7,8 @@ out/
 
 # testing
 coverage/
+playwright-report/
+test-results/
 
 # misc
 *.tsbuildinfo
