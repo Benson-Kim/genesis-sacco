@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RequireModule } from "@/modules/authz/components/RequireModule";
 import { api } from "@/lib/api";
@@ -131,8 +131,11 @@ describe("MembersScreen", () => {
         const user = userEvent.setup();
         renderScreen(<MembersScreen />);
         await user.click(await screen.findByRole("button", { name: "Register member" }));
-        await user.type(screen.getByLabelText("Full name"), "Brian Mwangi");
-        const submit = screen.getByRole("button", { name: "Register member" });
+        // Once the drawer is open, the toolbar trigger and the form submit
+        // share an accessible name — scope to the dialog to hit the submit.
+        const dialog = await screen.findByRole("dialog");
+        await user.type(within(dialog).getByLabelText("Full name"), "Brian Mwangi");
+        const submit = within(dialog).getByRole("button", { name: "Register member" });
         await user.click(submit);
         // Second click while pending: button is disabled AND the handler
         // short-circuits — exactly one POST.
@@ -158,8 +161,9 @@ describe("MembersScreen", () => {
         const user = userEvent.setup();
         renderScreen(<MembersScreen />);
         await user.click(await screen.findByRole("button", { name: "Register member" }));
-        await user.type(screen.getByLabelText("Full name"), "Cynthia Wairimu");
-        const submit = screen.getByRole("button", { name: "Register member" });
+        const dialog = await screen.findByRole("dialog");
+        await user.type(within(dialog).getByLabelText("Full name"), "Cynthia Wairimu");
+        const submit = within(dialog).getByRole("button", { name: "Register member" });
         await user.click(submit);
         await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
         await user.click(submit);
@@ -184,8 +188,9 @@ describe("MembersScreen", () => {
         const user = userEvent.setup();
         renderScreen(<MembersScreen />);
         await user.click(await screen.findByRole("button", { name: "Register member" }));
-        await user.type(screen.getByLabelText("Full name"), "Duplicate Person");
-        await user.click(screen.getByRole("button", { name: "Register member" }));
+        const dialog = await screen.findByRole("dialog");
+        await user.type(within(dialog).getByLabelText("Full name"), "Duplicate Person");
+        await user.click(within(dialog).getByRole("button", { name: "Register member" }));
         const alert = await screen.findByRole("alert");
         expect(alert).toHaveTextContent("changed or conflicts");
         expect(alert).toHaveTextContent("corr-409");
