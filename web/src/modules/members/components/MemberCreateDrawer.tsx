@@ -116,7 +116,7 @@ export function MemberCreateDrawer({
                 {formError !== null && <div role="alert">{formError}</div>}
                 {create.isError && <ErrorBanner error={create.error} />}
                 <div className={styles.actions}>
-                    <Button type="button" onClick={onClose} disabled={create.isPending}>\
+                    <Button type="button" onClick={onClose} disabled={create.isPending}>
                         Cancel
                     </Button>
                     <Button type="submit" variant="primary" disabled={create.isPending}>
