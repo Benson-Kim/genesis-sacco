@@ -54,7 +54,7 @@ or test/artifact present on main).
 | P-DIAG.3 | ✅ DONE | dfd.md |
 | P-DIAG.4 | ✅ DONE | stride.md |
 | P-DIAG.5 | ✅ DONE | sequence-committee-voting / -outbox-dispatch / -snapshot-bind-reverify |
-| P14 | ❌ TODO | no web/ tree |
+| P14 | 🔄 IN PROGRESS | open MR !13 (refreshed onto current main 2026-08-02; the merging maintainer flips this row with the evidence) |
 | P14.5 | ❌ TODO | member principal absent |
 | P15 | ❌ TODO | depends P14 |
 | P16 | ❌ TODO | no mobile/ tree |
