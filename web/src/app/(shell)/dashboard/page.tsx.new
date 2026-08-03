@@ -1,0 +1,10 @@
+import { DashboardScreen } from "@/modules/dashboard/components/DashboardScreen";
+  
+  /**
+   * Dashboard — live figures from GET /dashboard/summary (P15). Every
+   * amount is the API's decimal string; the client computes nothing
+   * (P15 blocker (a)).
+   */
+  export default function DashboardPage() {
+    return <DashboardScreen />;
+  }
