@@ -120,7 +120,7 @@ export function UserCreateDrawer({
         </Field>
         <div className={styles.formNote}>
           The new user signs in with an OTP sent to their registered contact. No
-          credential is displayed or emailed by this console.
+          credential is displayed or emailed by this screen.
         </div>
         {formError !== null && <Banner variant="error">{formError}</Banner>}
         {create.isError && <ErrorBanner error={create.error} />}

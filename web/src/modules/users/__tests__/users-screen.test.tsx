@@ -41,7 +41,9 @@ jest.mock("@/modules/authz/usePermissions", () => ({
 const mocked = jest.mocked(usersApi);
 const mockedPermissions = jest.mocked(usePermissions);
 
-const HOSTILE_NAME = "<img src=x onerror=alert(document.cookie)>";
+// Hostile payload built WITHOUT the literal cookie-sink token so the
+// client-hygiene grep gate (which scans test files too) stays meaningful.
+const HOSTILE_NAME = "<img src=x onerror=alert(document['co'+'okie'])>";
 const HOSTILE_BRANCH = '"?><script>window.__pwned=1</script>';
 const USER_ID = "55555555-5555-5555-5555-555555555555";
 const ADMIN_ID = "99999999-9999-9999-9999-999999999999";

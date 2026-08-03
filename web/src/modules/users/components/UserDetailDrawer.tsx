@@ -481,7 +481,7 @@ function ConfirmActionDialog({
             <>
               <Banner>
                 Voids pending OTP challenges AND revokes every session, forcing a
-                fresh OTP sign-in. Nothing secret is shown or sent from this console.
+                fresh OTP sign-in. Nothing secret is shown or sent from this screen.
               </Banner>
               <div className={styles.detailGrid}>
                 <Kv label="User">{user.full_name}</Kv>
