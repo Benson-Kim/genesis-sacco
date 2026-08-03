@@ -47,6 +47,20 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    label: "Governance",
+    items: [
+      // Prototype Governance ▸ Credit committee; lives under the
+      // applications RBAC module (P15 module 3). Member exit joins this
+      // section when its module batch lands.
+      {
+        label: "Credit committee",
+        href: "/modules/applications/committee",
+        module: "applications",
+        icon: "committee",
+      },
+    ],
+  },
+  {
     label: "Insights",
     items: [{ label: "Reports", href: "/modules/reports", module: "reports", icon: "reports" }],
   },
