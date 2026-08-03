@@ -180,7 +180,9 @@ export const repaymentCreateSchema = z.object({
     .refine((value) => !ALL_ZERO_RE.test(value), {
       message: "Enter an amount greater than zero.",
     }),
-  channel: cashChannelSchema,
+  channel: z.enum(CASH_CHANNELS, {
+    errorMap: () => ({ message: "Select a channel." }),
+  }),
 });
 
 export type RepaymentCreateInput = z.infer<typeof repaymentCreateSchema>;

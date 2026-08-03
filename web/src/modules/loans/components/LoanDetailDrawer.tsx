@@ -51,9 +51,9 @@ import {
   repaymentCreateSchema,
   type RepaymentCreateInput,
   type RepaymentResult,
-  type ScheduleRow,
 } from "../schemas";
 import { loanClassPill, loanStatusPill } from "./pills";
+import { ScheduleTable } from "./ScheduleTable";
 import styles from "./Loans.module.css";
 
 function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
@@ -61,49 +61,6 @@ function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }
     <div className={styles.kvRow}>
       <span className={styles.kvKey}>{label}</span>
       <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
-
-/** Server-computed installment schedule, rendered verbatim. */
-function ScheduleTable({ rows }: Readonly<{ rows: ScheduleRow[] }>) {
-  if (rows.length === 0) {
-    return <div className={styles.formNote}>No schedule rows returned for this loan.</div>;
-  }
-  return (
-    <div className={styles.miniTableWrap}>
-      <table className={styles.miniTable}>
-        <thead>
-          <tr>
-            <th scope="col">#</th>
-            <th scope="col">Due date</th>
-            <th scope="col" className={styles.num}>
-              Principal due
-            </th>
-            <th scope="col" className={styles.num}>
-              Interest due
-            </th>
-            <th scope="col" className={styles.num}>
-              Total due
-            </th>
-            <th scope="col" className={styles.num}>
-              Paid
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.installment_no}>
-              <td>{row.installment_no}</td>
-              <td>{row.due_date}</td>
-              <td className={styles.num}>{fmtKes(row.principal_due)}</td>
-              <td className={styles.num}>{fmtKes(row.interest_due)}</td>
-              <td className={styles.num}>{fmtKes(row.total_due)}</td>
-              <td className={styles.num}>{fmtKes(row.paid_amount)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }
