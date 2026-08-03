@@ -11,7 +11,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, Stat } from "@genesis/design-system";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
-import { fmtAmount, fmtDateTime } from "@/lib/format";
+import { fmtAmount, fmtDateTime, fmtKes } from "@/lib/format";
 import { fetchDashboardSummary } from "../api";
 import type { DashboardSummary } from "../schemas";
 import styles from "./DashboardScreen.module.css";
@@ -22,8 +22,9 @@ export function useDashboardSummary() {
     return useQuery({ queryKey: DASHBOARD_QUERY_KEY, queryFn: fetchDashboardSummary });
 }
 
+// Single copy of the KES label lives in fmtKes (gate 1.1; finding F-A7).
 function kes(value: string | undefined): string {
-    return value === undefined ? "—" : `KES ${fmtAmount(value)}`;
+    return value === undefined ? "—" : fmtKes(value);
 }
 
 function StatCards({ summary }: Readonly<{ summary: DashboardSummary }>) {

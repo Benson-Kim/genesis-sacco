@@ -29,7 +29,7 @@ import {
   type UpdateUserInput,
 } from "../api";
 import type { OtpReenrolResult, Role, User, UserStatus } from "../schemas";
-import { statusPill } from "./UsersScreen";
+import { statusPill } from "./StatusPill";
 import styles from "./Users.module.css";
 
 function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {

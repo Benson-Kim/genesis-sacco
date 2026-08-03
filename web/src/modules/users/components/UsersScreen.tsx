@@ -22,6 +22,7 @@ import { useKeysetList } from "@/modules/table/useKeysetList";
 import { fmtDateTime, initials, relTime } from "@/lib/format";
 import { fetchRoles, fetchUsersPage } from "../api";
 import type { User } from "../schemas";
+import { statusPill } from "./StatusPill";
 import { UserCreateDrawer } from "./UserCreateDrawer";
 import { UserDetailDrawer } from "./UserDetailDrawer";
 import styles from "./Users.module.css";
@@ -32,24 +33,6 @@ export function useRoles() {
   // Role names degrade gracefully on failure; the list still works and a
   // role change would 409/422 server-side regardless (!25 finding 6).
   return useQuery({ queryKey: ROLES_QUERY_KEY, queryFn: fetchRoles });
-}
-
-export function statusPill(status: string) {
-  if (status === "active") {
-    return (
-      <Pill bg="emeraldSoft" color="emerald">
-        Active
-      </Pill>
-    );
-  }
-  if (status === "suspended") {
-    return (
-      <Pill bg="brickSoft" color="brick">
-        Suspended
-      </Pill>
-    );
-  }
-  return <Pill>{status}</Pill>;
 }
 
 type DrawerState = null | { mode: "create" } | { mode: "detail"; userId: string };

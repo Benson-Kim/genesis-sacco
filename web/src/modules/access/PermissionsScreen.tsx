@@ -177,7 +177,10 @@ export function PermissionsScreen() {
     <div className={styles.layout}>
       {/* Role sidebar */}
       <Card padded={false}>
-        <ul className={styles.roleList} role="listbox" aria-label="Roles">
+        {/* Toggle buttons with aria-pressed — conforming semantics for a
+            single-select side list (review finding F-A6: role=listbox with
+            interposed <li> broke the required owned relationship). */}
+        <ul className={styles.roleList} aria-label="Roles">
           {rolesQuery.isPending &&
             Array.from({ length: 5 }).map((_, i) => (
               <li key={i} className={`${styles.roleItem} ${styles.roleSkeleton}`}>
@@ -194,8 +197,7 @@ export function PermissionsScreen() {
             <li key={role.id}>
               <button
                 type="button"
-                role="option"
-                aria-selected={role.id === selectedRoleId}
+                aria-pressed={role.id === selectedRoleId}
                 className={`${styles.roleItem}${role.id === selectedRoleId ? ` ${styles.active}` : ""}`}
                 onClick={() => {
                   if (role.id !== selectedRoleId) {
