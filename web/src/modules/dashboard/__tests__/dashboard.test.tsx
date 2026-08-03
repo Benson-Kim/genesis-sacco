@@ -12,6 +12,14 @@ jest.mock("@/lib/api", () => ({
 
 const mockGet = api.GET as unknown as jest.Mock;
 
+/**
+ * Minimal Response stand-in: toApiError reads ONLY `.status` and jsdom has
+ * no fetch globals (same pattern as contract-helpers.test.ts).
+ */
+function res(status: number): Response {
+  return { status } as Response;
+}
+
 /** Full-grant payload — every figure is a decimal STRING (hand-written). */
 const FULL_SUMMARY = {
   as_of: "2026-08-03T08:00:00Z",
@@ -71,7 +79,7 @@ describe("dashboard contract (Zod — FM: contract-violation response)", () => {
     mockGet.mockResolvedValue({
       data: { as_of: "2026-08-03", loan_book: { active_loans: "eighty-seven" } },
       error: undefined,
-      response: new Response(null, { status: 200 }),
+      response: res(200),
     });
     await expect(fetchDashboardSummary()).rejects.toThrow();
   });
@@ -82,7 +90,7 @@ describe("DashboardScreen", () => {
     mockGet.mockResolvedValue({
       data: FULL_SUMMARY,
       error: undefined,
-      response: new Response(null, { status: 200 }),
+      response: res(200),
     });
     renderScreen();
     // Oracle: fmtAmount("1234567.89") = "1,234,567.89" (hand-grouped).
@@ -97,7 +105,7 @@ describe("DashboardScreen", () => {
     mockGet.mockResolvedValue({
       data: { as_of: "2026-08-03T08:00:00Z" },
       error: undefined,
-      response: new Response(null, { status: 200 }),
+      response: res(200),
     });
     renderScreen();
     const dashes = await screen.findAllByText("—");
@@ -110,7 +118,7 @@ describe("DashboardScreen", () => {
     mockGet.mockResolvedValue({
       data: undefined,
       error: { category: "forbidden", correlation_id: "corr-7" },
-      response: new Response(null, { status: 403 }),
+      response: res(403),
     });
     renderScreen();
     expect(await screen.findByRole("alert")).toHaveTextContent("Not permitted.");
@@ -123,7 +131,7 @@ describe("DashboardScreen", () => {
     mockGet.mockResolvedValue({
       data: undefined,
       error: { detail: "TraceBack: secret internals" },
-      response: new Response(null, { status: 500 }),
+      response: res(500),
     });
     renderScreen();
     const alert = await screen.findByRole("alert");

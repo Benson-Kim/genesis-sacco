@@ -38,8 +38,16 @@ const MEMBER = {
     version: 1,
 };
 
+/**
+ * Minimal Response stand-in: toApiError reads ONLY `.status` and jsdom has
+ * no fetch globals (same pattern as contract-helpers.test.ts).
+ */
+function res(status: number): Response {
+    return { status } as Response;
+}
+
 function ok(data: unknown) {
-    return { data, error: undefined, response: new Response(null, { status: 200 }) };
+    return { data, error: undefined, response: res(200) };
 }
 
 function wirePermissions(payload: unknown) {
@@ -76,7 +84,7 @@ describe("route guard (FM: deny-by-default)", () => {
                 return Promise.resolve({
                     data: undefined,
                     error: { category: "forbidden", correlation_id: "c-9" },
-                    response: new Response(null, { status: 403 }),
+                    response: res(403),
                 });
             return Promise.resolve(ok({ items: [MEMBER], next_cursor: null }));
         });
@@ -145,7 +153,7 @@ describe("MembersScreen", () => {
         mockPost.mockResolvedValue({
             data: undefined,
             error: { category: "internal_error", correlation_id: "c-1" },
-            response: new Response(null, { status: 500 }),
+            response: res(500),
         });
         const user = userEvent.setup();
         renderScreen(<MembersScreen />);
@@ -171,7 +179,7 @@ describe("MembersScreen", () => {
         mockPost.mockResolvedValue({
             data: undefined,
             error: { category: "conflict", correlation_id: "corr-409" },
-            response: new Response(null, { status: 409 }),
+            response: res(409),
         });
         const user = userEvent.setup();
         renderScreen(<MembersScreen />);
