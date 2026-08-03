@@ -4,6 +4,11 @@
  * — no private page grid lives here.
  */
 
+/* Vertical rhythm between the summary strip, queue and register. */
+.section {
+    margin-bottom: 16px;
+}
+
 .toolbar {
     display: flex;
     align-items: flex-end;
