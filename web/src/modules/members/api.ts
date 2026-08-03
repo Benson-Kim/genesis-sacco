@@ -46,6 +46,16 @@ export async function fetchMembersPage(
     return memberPageSchema.parse(data);
 }
 
+/** Single member record (used by the applications detail drawer to
+ *  resolve the applicant — the P9 list carries member_id only). */
+export async function fetchMember(memberId: string): Promise<Member> {
+    const { data, error, response } = await api.GET("/members/{member_id}", {
+        params: { path: { member_id: memberId } },
+    });
+    if (error !== undefined || data === undefined) throw toApiError(error, response);
+    return memberSchema.parse(data);
+}
+
 export async function createMember(
     input: MemberCreateInput,
     idempotencyKey: string,

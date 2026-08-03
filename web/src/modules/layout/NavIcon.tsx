@@ -14,7 +14,8 @@ export type NavIconShape =
   | "reports"
   | "settings"
   | "access_control"
-  | "audit_log";
+  | "audit_log"
+  | "committee";
 
 const ICON_PATHS: Record<NavIconShape, string> = {
   dashboard: "M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z",
@@ -29,6 +30,8 @@ const ICON_PATHS: Record<NavIconShape, string> = {
   access_control: "M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5z",
   // Ledger/journal sheet with entry lines — the audit-trail metaphor.
   audit_log: "M6 3h12v18H6zM9 8h6M9 12h6M9 16h4",
+  // Ballot box with a cast slip — the committee-vote metaphor.
+  committee: "M4 11h16v9H4zM8 11V8h8v3M10 4h4v4h-4zM4 15h16",
 };
 
 export function NavIcon({ shape, active }: { shape: NavIconShape; active: boolean }) {
