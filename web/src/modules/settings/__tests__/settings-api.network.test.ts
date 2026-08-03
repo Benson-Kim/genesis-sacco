@@ -13,6 +13,10 @@
  *   ApiError from ONE request (no transport-level retry).
  */
 
+// Module scope (the users reference harness stays a global script; two
+// scripts would collide on shared global declarations under tsc).
+export {};
+
 type FetchCall = { url: string; method: string; headers: Headers; body: string | null };
 
 const TENANT = "22222222-2222-2222-2222-222222222222";
