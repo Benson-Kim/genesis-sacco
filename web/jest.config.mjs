@@ -11,7 +11,8 @@ const config = {
     "^@genesis/api-client$": "<rootDir>/packages/api-client/src",
     "^@/(.*)$": "<rootDir>/src/$1",
   },
-  testPathIgnorePatterns: ["<rootDir>/node_modules/", "<rootDir>/.next/"],
+  // e2e/ is Playwright's tree (web:e2e job) — jest must not collect it.
+  testPathIgnorePatterns: ["<rootDir>/node_modules/", "<rootDir>/.next/", "<rootDir>/e2e/"],
 };
 
 export default createJestConfig(config);
