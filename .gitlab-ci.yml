@@ -271,6 +271,44 @@ web:build:
       - web/.next
     expire_in: 1 week
 
+# Contract drift-checks (P14): the web client is GENERATED from the backend
+# OpenAPI contract and may never silently drift from it.
+#   spec-drift   — backend code vs committed openapi.json snapshot
+#   client-drift — committed openapi.json vs committed generated client
+web:spec-drift:
+  image: python:3.12-slim
+  stage: test
+  needs: []
+  rules:
+    - exists: ["web/packages/api-client/openapi.json"]
+  cache:
+    key:
+      files:
+        - backend/pyproject.toml
+    paths:
+      - .cache/pip
+  script:
+    - pip install --upgrade pip
+    - pip install ./backend
+    - python backend/scripts/export_openapi.py /tmp/openapi.json
+    - |
+      if ! diff -u web/packages/api-client/openapi.json /tmp/openapi.json; then
+        echo "ERROR: web/packages/api-client/openapi.json is STALE relative to the backend."
+        echo "Regenerate: (cd backend && python scripts/export_openapi.py ../web/packages/api-client/openapi.json)"
+        echo "then (cd web && npm run generate:api) and commit both."
+        exit 1
+      fi
+    - echo "OK - committed OpenAPI snapshot matches the backend contract."
+
+web:client-drift:
+  extends: .web
+  stage: test
+  needs: []
+  rules:
+    - exists: ["web/packages/api-client/openapi.json"]
+  script:
+    - npm run check:client-drift
+
 # -----------------------------------------------------------------------------
 # Mobile — Flutter (member_app, admin_app, shared packages)
 # -----------------------------------------------------------------------------
@@ -303,3 +341,63 @@ mobile:test:
           (cd "$app" && flutter pub get && flutter test)
         fi
       done
+
+# -----------------------------------------------------------------------------
+# TEMPORARY — P14 bootstrap (duo/chore/p14-bootstrap only). Generates the npm
+# lockfile, OpenAPI snapshot and TS client in CI (sandbox has no registry
+# access), runs the full web verification suite, and proves the drift check
+# fails on a stale client. Removed on the real feature branch.
+# -----------------------------------------------------------------------------
+bootstrap:openapi:
+  image: python:3.12-slim
+  stage: lint
+  needs: []
+  rules:
+    - if: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "duo/chore/p14-bootstrap"
+  script:
+    - pip install --upgrade pip
+    - pip install ./backend
+    - python backend/scripts/export_openapi.py web/packages/api-client/openapi.json
+  artifacts:
+    paths:
+      - web/packages/api-client/openapi.json
+    expire_in: 1 day
+
+bootstrap:web:
+  image: node:22-alpine
+  stage: test
+  needs: ["bootstrap:openapi"]
+  rules:
+    - if: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "duo/chore/p14-bootstrap"
+  variables:
+    npm_config_cache: "$CI_PROJECT_DIR/.cache/npm"
+  script:
+    - cd web
+    - npm install
+    - npm run generate:api
+    - npm run lint
+    - npx tsc --noEmit
+    - npm test -- --ci
+    - npm run build
+    - npm run check:client-drift
+    - cp packages/api-client/openapi.json /tmp/openapi.orig.json
+    - node -e "const fs=require('fs');const p='packages/api-client/openapi.json';const s=JSON.parse(fs.readFileSync(p,'utf8'));if(!s.components.schemas.TokenResponse)throw new Error('TokenResponse missing');s.components.schemas.TokenResponse.properties.stale_marker={type:'string'};fs.writeFileSync(p,JSON.stringify(s,null,2)+'\n')"
+    - if npm run check:client-drift; then echo "FATAL - drift check did NOT fail on a stale client"; exit 1; else echo "OK - drift check fails on a stale client"; fi
+    - cp /tmp/openapi.orig.json packages/api-client/openapi.json
+    # Artifact download is blocked for the agent token; dump the generated
+    # files into the trace (gzip+base64) for retrieval.
+    - echo "=====BEGIN package-lock.json====="
+    - gzip -c package-lock.json | base64
+    - echo "=====END package-lock.json====="
+    - echo "=====BEGIN openapi.json====="
+    - gzip -c packages/api-client/openapi.json | base64
+    - echo "=====END openapi.json====="
+    - echo "=====BEGIN schema.d.ts====="
+    - gzip -c packages/api-client/src/generated/schema.d.ts | base64
+    - echo "=====END schema.d.ts====="
+  artifacts:
+    paths:
+      - web/package-lock.json
+      - web/packages/api-client/openapi.json
+      - web/packages/api-client/src/generated/schema.d.ts
+    expire_in: 1 day
