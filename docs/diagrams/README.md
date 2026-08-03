@@ -52,11 +52,11 @@ inline/in companion tables.
 
 | Diagram | Audience | Prompt / origin | Status |
 |---|---|---|---|
-| [`lock-order.md`](lock-order.md) — **authoritative lock-ordering DAG** (the single authority for every lock-order statement; v1.2 rule 11) | engineering | P-DIAG.0 | as-built (E1–E24; §8 owned next by the 0034 track) |
+| [`lock-order.md`](lock-order.md) — **authoritative lock-ordering DAG** (the single authority for every lock-order statement; v1.2 rule 11) | engineering | P-DIAG.0 | as-built (E1–E24; §8 incl. the 0034/!51-N1 delta, landed by !54) |
 | [`c4-context.md`](c4-context.md) — C4 L1 system context (clients/providers marked PLANNED) | engineering | P-DIAG.1 | as-built @ head 0032 |
 | [`c4-container.md`](c4-container.md) — C4 L2 containers (layers, four workers, migration runner, store properties) | engineering | P-DIAG.1 | as-built @ head 0032 |
 | [`c4-component.md`](c4-component.md) — C4 L3, one diagram per API router group (20); spot-check: [`c4-spot-check.py`](c4-spot-check.py) | engineering | P-DIAG.1 | as-built (incl. corrections/recovery routers) |
-| [`erd.md`](erd.md) — ERD, all 46 tables at alembic head 0032 (seven subject-area diagrams); spot-check: [`erd-spot-check.py`](erd-spot-check.py) | engineering | P-DIAG.2 | as-built @ head 0032 (!53 claims 0033 next) |
+| [`erd.md`](erd.md) — ERD, all 46 tables at alembic head 0034 (seven subject-area diagrams); spot-check: [`erd-spot-check.py`](erd-spot-check.py) | engineering | P-DIAG.2 | as-built @ head 0034 (0033/0034 reconciled by the !55 flip) |
 | [`dfd.md`](dfd.md) — **data-flow diagrams**: L0 context + L1 money flows F1–F14, trust boundaries TB1–TB4, source-of-truth footers | business (footers for engineers/auditors) | P-DIAG.3 | as-built incl. corrections/write-off/recovery (!46/!47/!51/!52) |
 | [`stride.md`](stride.md) — **STRIDE-per-element threat model** over the dfd.md elements; residuals with named owners or UNOWNED | engineering | P-DIAG.4 | as-built incl. F10–F14 rows |
 | [`sequence-committee-voting.md`](sequence-committee-voting.md) — committee voting (4 consumers: loans, exits, dividends, write-offs) | business | P-DIAG.5 | as-built |
@@ -64,9 +64,9 @@ inline/in companion tables.
 | [`sequence-outbox-dispatch.md`](sequence-outbox-dispatch.md) — the notification promise (P5 worker + P13.17e hardening) | business | P-DIAG.5 | as-built |
 | [`sequence-recovery-receipt.md`](sequence-recovery-receipt.md) — bad-debt recovery receipt: partial/full recovery, over-recovery refusal, guarantee discharge | business | P-DIAG drift MR (issue #21/!51) | as-built |
 | [`sequence-repayment-adjustment.md`](sequence-repayment-adjustment.md) — maker-checker adjustment: request → approve-with-reverify → post; reject frees the slot | business | P-DIAG drift MR (!46/!52) | as-built |
-| [`sequence-recovery-case-lifecycle.md`](sequence-recovery-case-lifecycle.md) — case open → work → job-only closes | business | P-DIAG drift MR (P13.16/!47) | as-built; !53 dispositions drawn INCOMING |
+| [`sequence-recovery-case-lifecycle.md`](sequence-recovery-case-lifecycle.md) — case open → work → job-only closes + staff dispositions | business | P-DIAG drift MR (P13.16/!47) | as-built incl. !53 dispositions + !54 hardening (flipped by !55) |
 | [`sequence-member-exit-claim-guard.md`](sequence-member-exit-claim-guard.md) — member exit and the debts that block the door | business | P-DIAG drift MR (P12 + !51) | as-built |
 | [`flow-teller-money-in.md`](flow-teller-money-in.md) — teller deposits & repayments incl. every visible refusal | business | P-DIAG drift MR | as-built |
 | [`flow-loan-lifecycle.md`](flow-loan-lifecycle.md) — the life of a loan: application → committee → payout → arrears → write-off → recovery | business | P-DIAG drift MR | as-built |
 | [`flow-checker-approvals.md`](flow-checker-approvals.md) — the checker's four-eyes queue | business | P-DIAG drift MR | as-built |
-| [`flow-recovery-officer.md`](flow-recovery-officer.md) — the recovery officer's worklist day | business | P-DIAG drift MR | as-built; !53 dispositions drawn INCOMING |
+| [`flow-recovery-officer.md`](flow-recovery-officer.md) — the recovery officer's worklist day | business | P-DIAG drift MR | as-built incl. !53 dispositions + !54 hardening (flipped by !55) |

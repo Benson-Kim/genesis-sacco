@@ -9,9 +9,14 @@
   P-DIAG drift MR: alembic head 0032 (0032_repayments_append_only.py,
   down_revision = "0031"), verified linear 0001..0032 at branch time.
   Nine tables from 0025-0031 join as subject areas 2.F/2.G; the §3/§4/
-  §5 registers are extended. The in-flight !53 claim (0033, issue #23)
-  had NOT merged at reconciliation; its MR updates this file when it
-  lands (v1.2 rules 11/14).
+  §5 registers are extended.
+  Re-reconciled to main @ d517769d1fb5e414c99d2ccf8bcbadf23a3d5085 by
+  the !55 as-built flip: alembic head 0034
+  (0034_recovery_claim_cap_lock.py, down_revision = "0033"), verified
+  linear 0001..0034. 0033 (!53, issue #23) alters recovery_cases /
+  recovery_case_notes (no new table); 0034 (!54) regenerates the 0030
+  within-claim constraint-trigger function (no table change) — §2.F,
+  §3, §4 and §5 updated accordingly (v1.2 rules 11/14).
   Derived exclusively from backend/migrations/versions/*.py — every
   entity is a real table from a migration; every edge cites the FK
   that implements it. Falsifiable gate: erd-spot-check.py (§6).
@@ -22,7 +27,8 @@
 
 # Entity-relationship diagram — as-built (P-DIAG.2)
 
-The entire schema at alembic head **0032**: **46 tables**, drawn as
+The entire schema at alembic head **0034**: **46 tables** (0033/0034
+alter existing tables and create none), drawn as
 seven subject-area `erDiagram`s (one diagram would not render readably;
 the split follows the module boundaries in the §3 traceability table).
 An entity appearing in more than one diagram (e.g. `members`,
@@ -397,11 +403,13 @@ erDiagram
     exports ||--o| export_artifacts : "export_artifacts.export_id UNIQUE (0013)"
 ```
 
-### 2.F Corrections, write-off & recovery (P13.15/P13.16, issues #21/#24)
+### 2.F Corrections, write-off & recovery (P13.15/P13.16, issues #21/#24/#23)
 
 ```mermaid
 erDiagram
     %% main @ 8f46aa54250ff1a066af423924f3eb54a9c72fb7 — alembic head 0032
+    %% !55 flip: 0033 (issue #23) widens recovery_cases.status and adds
+    %% recovery_case_notes.is_outcome — re-verified at main @ d517769, head 0034
     repayment_adjustments {
         uuid id PK
         uuid tenant_id FK "tenant spine (0025)"
@@ -446,8 +454,8 @@ erDiagram
     recovery_cases {
         uuid id PK
         uuid tenant_id FK "tenant spine (0026)"
-        uuid loan_id FK "partial UNIQUE uq_recovery_cases_one_open (tenant_id, loan_id) WHERE status = open (0026)"
-        text status "open|closed_cured|closed_written_off CHECK; closed_at consistency CHECK (0026)"
+        uuid loan_id FK "partial UNIQUE uq_recovery_cases_one_open (tenant_id, loan_id) WHERE status IN live set (0026, regenerated 0033)"
+        text status "open|irrecoverable_pending_write_off|disputed|closed_cured|closed_written_off|closed_restructured CHECK (0026, widened 0033); closed_at set iff terminal CHECK (0033)"
         uuid assignee_id FK "nullable -> users.id (0026)"
         uuid opened_by FK "-> users.id (0026)"
         text classification_at_open "CHECK substandard|doubtful|loss (0026)"
@@ -459,6 +467,7 @@ erDiagram
         uuid case_id FK "-> recovery_cases.id (0026)"
         uuid author_id FK "-> users.id (0026)"
         text note "CHECK length 1..2000; append-only by route design (0026)"
+        boolean is_outcome "partial UNIQUE uq_recovery_notes_one_outcome (tenant_id, case_id) WHERE is_outcome — one outcome note per case (0033)"
     }
     loans
     repayments
@@ -574,18 +583,18 @@ Both directions of the table↔migration mapping are machine-checked by
 | `repayment_adjustments` | 0025 | 0031 (maker-checker columns: `status`/`checker_id`/`decided_at`/approval snapshot/`version`; `ck_repayment_adjustments_sod` + snapshot CHECKs; claim UNIQUE goes partial `WHERE status <> 'rejected'`; write-once trigger regenerated) | `application/corrections.py` |
 | `loan_write_offs` | 0025 (incl. write-once trigger, `uq_loan_write_offs_open`) | — | `application/corrections.py` |
 | `loan_write_off_votes` | 0025 | — | `application/corrections.py` |
-| `loan_recoveries` | 0030 (incl. append-only triggers + `loan_recoveries_within_claim` constraint trigger) | — | `application/corrections.py` (`record_recovery_receipt`) |
-| `recovery_cases` | 0026 (incl. `uq_recovery_cases_one_open`, `idx_recovery_cases_open_scan`) | — | `application/recovery.py` |
-| `recovery_case_notes` | 0026 | — | `application/recovery.py` (append-only: no edit/delete route exists) |
+| `loan_recoveries` | 0030 (incl. append-only triggers + `loan_recoveries_within_claim` constraint trigger) | 0034 (`check_recovery_within_claim` regenerated: parent `loan_write_offs` lookup now `FOR UPDATE` — the !51-N1 locking probe; lock-order.md §3/§8 owns the analysis) | `application/corrections.py` (`record_recovery_receipt`) |
+| `recovery_cases` | 0026 (incl. `uq_recovery_cases_one_open`, `idx_recovery_cases_open_scan`) | 0033 (status CHECK widened to the six disposition states; `ck_recovery_cases_closed_at` regenerated as closed_at ⇔ terminal; both partial indexes regenerated under the SAME names over the live-status predicate) | `application/recovery.py` |
+| `recovery_case_notes` | 0026 | 0033 (`is_outcome` boolean + `uq_recovery_notes_one_outcome` partial UNIQUE — one outcome note per case) | `application/recovery.py` (append-only: no edit/delete route exists) |
 | `portfolio_month_snapshots` | 0027 (incl. write-once + no-future triggers) | — | `application/portfolio_snapshots.py` |
 | `account_period_balances` | 0028 (incl. write-once + late-insert-fence triggers) | — | `application/period_rollups.py` |
 | `member_period_balances` | 0028 (incl. write-once + late-insert-fence triggers) | — | `application/period_rollups.py` |
 
 Nothing in this file is `PLANNED`: every entity above exists at head
-0032. The in-flight !53 claim (0033, issue #23) widens the
-`recovery_cases` status CHECK (dispositions) and adds
-`recovery_case_notes.is_outcome` with a partial UNIQUE — its MR
-updates §2.F/§3/§5 when it merges (v1.2 rules 11/14).
+0034. The formerly in-flight !53 claim (0033, issue #23 — the
+`recovery_cases` status widening and `recovery_case_notes.is_outcome`)
+and !54's 0034 (within-claim trigger regeneration) merged to main and
+are reconciled above by the !55 as-built flip (v1.2 rules 11/14).
 
 ## 4. Trust-relevant store properties (by reference — v1.2 rule 11)
 
@@ -610,7 +619,10 @@ Owned elsewhere; cited, never restated:
   `loan_recoveries` (migration `0030` triggers, plus the
   `loan_recoveries_within_claim` constraint trigger that makes
   over-recovery and recovery-against-unposted-write-offs
-  unrepresentable) — see [`c4-container.md`](c4-container.md) **§3**.
+  unrepresentable; `0034` regenerates its function so the parent claim
+  lookup runs `FOR UPDATE` — the !51-N1 concurrency probe, analysed in
+  [`lock-order.md`](lock-order.md) §3/§8) — see
+  [`c4-container.md`](c4-container.md) **§3**.
   `recovery_case_notes` is append-only by ROUTE design (no edit/delete
   route exists anywhere, P13.16 addendum A2) — a convention, not a
   trigger; recorded as such.
@@ -668,7 +680,8 @@ constraint, v1.1 rule 5):
 | `(tenant_id, repayment_id)` partial, non-rejected | `repayment_adjustments` | 0025/0031 | one LIVE adjustment per repayment (a rejection frees the slot) |
 | `(tenant_id, loan_id)` partial, non-rejected | `loan_write_offs` | 0025 | one live write-off workflow per loan |
 | `(tenant_id, write_off_id, voter_id)` | `loan_write_off_votes` | 0025 | one write-off vote per voter |
-| `(tenant_id, loan_id)` partial, open | `recovery_cases` | 0026 | one open recovery case per loan |
+| `(tenant_id, loan_id)` partial, live statuses | `recovery_cases` | 0026 (predicate widened 0033, same name) | one LIVE recovery case per loan (open or paused — a paused case still blocks a second) |
+| `(tenant_id, case_id)` partial, `is_outcome` | `recovery_case_notes` | 0033 | exactly one outcome note per case, claimed atomically |
 | `(tenant_id, month_end)` | `portfolio_month_snapshots` | 0027 | one write-once portfolio snapshot per month |
 | `(tenant_id, period_start, account)` | `account_period_balances` | 0028 | one rollup row per account per closed period |
 | `(tenant_id, period_start, member_id)` | `member_period_balances` | 0028 | one rollup row per member per closed period |
@@ -679,7 +692,9 @@ constraint, v1.1 rule 5):
 through `0022*` (SQL literals read in full, not summarised from MR
 prose), at main @ `08541b860f1445b16c342c39b6606d86b9dbeb17`; extended
 the same way for `0023*` through `0032*` at main @
-`8f46aa54250ff1a066af423924f3eb54a9c72fb7` (P-DIAG drift MR).
+`8f46aa54250ff1a066af423924f3eb54a9c72fb7` (P-DIAG drift MR), and for
+`0033*`/`0034*` at main @ `d517769d1fb5e414c99d2ccf8bcbadf23a3d5085`
+(the !55 as-built flip — both alter existing tables, no new table).
 
 **Regeneration procedure for 0023+ MRs (v1.2 rule 11)**: a migration
 that creates a table adds it to the matching §2 subject-area diagram

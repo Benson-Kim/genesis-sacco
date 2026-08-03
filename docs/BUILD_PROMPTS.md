@@ -12,9 +12,9 @@ Prompt format: ROLE / DEPENDS / PROMPT (give verbatim to the executor) / EXIT.
 
 ## STATUS REGISTER (authoritative — update in the same MR as the work)
 
-Evidence-based as of main @ 2026-08-02, post-!51/!52 merges (alembic
-head on main 0032; in-flight claims: 0033 = !53, 0034 = !54 — see the
-registry delta below). Legend: ✅ DONE (merged to main, EXIT met) · 🔄 IN PROGRESS
+Evidence-based as of main @ 2026-08-03, post-!51/!52/!53/!54 merges
+(alembic head on main 0034; no in-flight migration claims — next free
+0035; see the registry deltas below). Legend: ✅ DONE (merged to main, EXIT met) · 🔄 IN PROGRESS
 (open MR cited) · ❌ TODO (no evidence on main). A prompt may not be
 marked ✅ without citing its evidence (migration number, merged MR,
 or test/artifact present on main).
@@ -74,9 +74,14 @@ main @ `8f46aa5` (alembic head 0032): dfd.md/stride.md P13.15/P13.16
 PLANNED labels flipped as-built; the !46/!47/!51/!52 flows drawn
 first-class (dfd F10–F14, C4 routers 19/20, ERD subject areas 2.F/2.G,
 sequence + `flow-*` business diagrams); both spot-check scripts —
-which FAILED on pre-!55 main — extended and passing. The in-flight
-!53 (0033) / !54 (0034) claims are drawn `INCOMING`, never as-built;
-those MRs flip their own labels (rule 11).
+which FAILED on pre-!55 main — extended and passing. At authoring the
+in-flight !53 (0033) / !54 (0034) claims were drawn `INCOMING`, never
+as-built. *Flip addendum (2026-08-03):* !53 (merge `60dc280`) and !54
+(merge `d517769`, squash `cd85309`) landed on main BEFORE this MR, so
+!55 itself flips those markers as-built — sequence-recovery-case-
+lifecycle.md, flow-recovery-officer.md, dfd.md F14, the stride.md F14
+rows and the erd.md head note (→ 0034) — each statement verified
+against merged main code at `d517769` (rule 11).
 
 ### Review follow-ups (maintainer review of !44, 2026-08-01) — placement
 
@@ -104,14 +109,21 @@ follow-up micro-MR: `0034_recovery_claim_cap_lock`,
 `down_revision = '0033'`, declared in the MR description at branch
 time; merges AFTER !53). The next free number is **0035**.
 
+Registry delta update (2026-08-03, the !55 sync): **0033 and 0034 are
+on main** — !53 merged as merge commit `60dc280` (no squash, ancestry
+preserved; combined-state pipeline 2726361694 green) and !54 merged
+2026-08-03 (merge `d517769`, squash `cd85309`; combined-state pipeline
+2726403180 green on head `75e7c94`). Alembic head on main is **0034**;
+the next free number stays **0035**.
+
 ### Post-P13 hardening follow-up batch (issues #21/#24/#23) — status
 
 | Issue | Scope | Status |
 |---|---|---|
 | #21 | bad-debt recovery receipts for written-off loans (P13.15 A4) | ✅ DONE — 0030 merged to main 2026-08-02 (!51, squash `7da3ed7` / merge `7ec83ad`) |
 | #24 | P13.15 N1 maker-checker for adjustments + N4 repayments append-only trigger | ✅ DONE — 0031–0032 merged to main 2026-08-02 (!52, squash `c866f5a` / merge `8f46aa5`); branch pipeline 2725596935 + rule-12 combined-state pipeline 2725604737 green (row flipped additively by the !54 sync — the flip instruction recorded on the !51/!52 reviews) |
-| #23 | P13.16 N2 richer case dispositions + N3 post-closure outcome notes | 🔄 IN PROGRESS — !53 claims 0033 (`down_revision = '0032'`); branch cut FROM #24's `duo/feature/24-p1315-maker-checker` @ `0e77383`; merges LAST, AFTER #24's MR (!52); branch pipeline 2725635455 green @ `bf0d508`, the rule-12 post-!52 combined-state run is still owed; the merging maintainer flips this row with the evidence |
-| — | Review follow-ups !51 N1 (0034 claim-cap FOR UPDATE) + !52 F2 (rejection rationale) + !53 F1/F2 (atomic restructure-close note + pause reason) | 🔄 IN PROGRESS — !54, ONE hardening micro-MR; claims 0034 (`down_revision = '0033'`); branch cut FROM !53's `duo/feature/23-recovery-dispositions` @ `bf0d508`; merges AFTER !53; the merging maintainer flips this row with the evidence |
+| #23 | P13.16 N2 richer case dispositions + N3 post-closure outcome notes | ✅ DONE — 0033 merged to main 2026-08-03 (!53, merge commit `60dc280`, NO squash — ancestry preserved for the stacked !54); branch pipeline 2725635455 green @ `bf0d508` + rule-12 combined-state pipeline 2726361694 green @ `433cfec` (row flipped additively by the !55 sync) |
+| — | Review follow-ups !51 N1 (0034 claim-cap FOR UPDATE) + !52 F2 (rejection rationale) + !53 F1/F2 (atomic restructure-close note + pause reason) | ✅ DONE — 0034 merged to main 2026-08-03 (!54, merge `d517769`, squash `cd85309`); rule-12 combined-state pipeline 2726403180 green on head `75e7c94` (row flipped additively by the !55 sync) |
 
 ---
 
