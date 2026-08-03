@@ -57,7 +57,7 @@ function StatCards({ summary }: Readonly<{ summary: DashboardSummary }>) {
 function PipelineCard({ pipeline }: Readonly<{ pipeline: DashboardSummary["pipeline"] }>) {
     if (pipeline === null || pipeline === undefined) return null;
     return (
-        <Card className={styles.half}>
+        <Card className={grid.half}>
             <h2 className={styles.title}>Application pipeline</h2>
             <ul className={styles.pipeline}>
                 {pipeline.map((stage) => (
@@ -75,7 +75,7 @@ function PipelineCard({ pipeline }: Readonly<{ pipeline: DashboardSummary["pipel
 function FlowsCard({ flows }: Readonly<{ flows: DashboardSummary["monthly_flows"] }>) {
     if (flows === null || flows === undefined) return null;
     return (
-        <Card className={styles.half}>
+        <Card className={grid.half}>
             <h2 className={styles.title}>Monthly flows</h2>
             <table className={styles.flows}>
                 <thead>
@@ -117,7 +117,7 @@ function ClassificationCard({
 }: Readonly<{ loanBook: DashboardSummary["loan_book"] }>) {
     if (loanBook === null || loanBook === undefined) return null;
     return (
-        <Card className={styles.wide}>
+        <Card className={grid.wide}>
             <h2 className={styles.title}>Portfolio classification</h2>
             <table className={styles.flows}>
                 <thead>
@@ -173,10 +173,3 @@ export function DashboardScreen() {
         </div>
     );
 }
-
-loanBook={summary.data.loan_book} />
-            <div className={styles.asOf}>As of {fmtDateTime(summary.data.as_of)}</div>
-        </div>
-    );
-}
-
