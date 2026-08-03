@@ -12,8 +12,8 @@
  *   one-vote-per-voter constraint makes double voting impossible.
  * - Ids travel as path parameters serialized by the generated client;
  *   tokens/PII never enter URLs (gate 1.6, tested).
- * - Pricing is server-resolved from the product: create sends ONLY
- *   member/product/amount/term/purpose (v1.1 rule 1).
+ * - Pricing is server-resolved from the product: create sends only the
+ *   member, product, amount, term and purpose (v1.1 rule 1).
  */
 import { toApiError } from "@genesis/api-client";
 import { keysetPageSchema, type KeysetPage } from "@/modules/table/schemas";

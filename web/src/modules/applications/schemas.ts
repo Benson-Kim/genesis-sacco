@@ -7,10 +7,10 @@ import { z } from "zod";
  * drift-checked OpenAPI snapshot remains the contract; these schemas
  * only assert it at runtime.
  *
- * MONEY RULE (P15 blocker (a)): amount / rate_pct / cover_pct /
- * max_eligible are decimal STRINGS end-to-end. They are rendered via
- * fmtKes / verbatim text and never coerced or combined arithmetically —
- * the server computes every derived figure (cover%, eligibility).
+ * MONEY RULE (P15 blocker (a)): every monetary field (amount, rate_pct,
+ * cover_pct, max_eligible) is a decimal STRING end-to-end. They are
+ * rendered via fmtKes or verbatim text and never coerced or combined
+ * arithmetically — the server computes every derived figure.
  */
 
 /** Mirrors the backend ApplicationStage enum; the stage drives filters
@@ -49,7 +49,7 @@ export const applicationSchema = z.object({
   rate_pct: z.string(),
   purpose: z.string().nullable(),
   stage: applicationStageSchema,
-  /** Decimal string — server-computed (deposits + guarantees vs amount). */
+  /** Decimal string — the server-computed security-cover ratio. */
   cover_pct: z.string(),
   max_eligible: z.string().nullable().optional(),
   version: z.number().int(),
