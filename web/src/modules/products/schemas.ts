@@ -33,12 +33,26 @@ export type Product = z.infer<typeof productSchema>;
  */
 const DECIMAL_5_2 = /^\d{1,3}(\.\d{1,2})?$/;
 
-export const productFormSchema = z.object({
-  name: z.string().min(1, "Enter a product name").max(100, "At most 100 characters"),
+/** The mutable rule set (ProductUpdateBody minus version/active). */
+export const productRulesFormSchema = z.object({
   rate_pct: z.string().regex(DECIMAL_5_2, "Enter a decimal like 12 or 12.5 (max 2dp)"),
   deposit_multiplier: z.string().regex(DECIMAL_5_2, "Enter a decimal like 3 or 3.5 (max 2dp)"),
-  max_term_months: z.coerce.number().int("Whole months only").min(1, "At least 1").max(120, "At most 120"),
-  guarantors_required: z.coerce.number().int("Whole number only").min(0, "At least 0").max(10, "At most 10"),
+  max_term_months: z.coerce
+    .number()
+    .int("Whole months only")
+    .min(1, "At least 1")
+    .max(120, "At most 120"),
+  guarantors_required: z.coerce
+    .number()
+    .int("Whole number only")
+    .min(0, "At least 0")
+    .max(10, "At most 10"),
 });
 
-export type ProductFormValues = z.infer<typeof productFormSchema>;
+/** Create adds the immutable name (ProductCreateBody). */
+export const productCreateFormSchema = productRulesFormSchema.extend({
+  name: z.string().min(1, "Enter a product name").max(100, "At most 100 characters"),
+});
+
+export type ProductRulesFormValues = z.infer<typeof productRulesFormSchema>;
+export type ProductCreateFormValues = z.infer<typeof productCreateFormSchema>;
