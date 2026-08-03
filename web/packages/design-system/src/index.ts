@@ -23,6 +23,7 @@ export type { FontSizeToken, RadiusToken, SpacingToken } from "./scale";
 export { Banner } from "./components/Banner";
 export { Button } from "./components/Button";
 export { Card } from "./components/Card";
+export { ConfirmDangerModal } from "./components/ConfirmDangerModal";
 export { Field } from "./components/Field";
 export { Modal } from "./components/Modal";
 export { Pill } from "./components/Pill";
