@@ -20,7 +20,10 @@ const AMOUNT_RE = /^(-?)(\d+)(?:\.(\d+))?$/;
 export function fmtAmount(value: string): string {
     const match = AMOUNT_RE.exec(value.trim());
     if (match === null) return value;
-    const [, sign, integer, fraction] = match;
+    const sign = match[1] ?? "";
+    const integer = match[2];
+    const fraction = match[3];
+    if (integer === undefined) return value;
     const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     return `${sign}${grouped}${fraction !== undefined ? `.${fraction}` : ""}`;
 }

@@ -90,12 +90,19 @@ describe("no client-side money math (P15 blocker (a))", () => {
     });
 
     it("flags synthetic offenders (the gate itself is falsifiable)", () => {
-        const coercion = 'const x = parseFloat(row.balance);';
-        const unary = "const y = +row.amount;";
-        const arithmetic = "const z = account.balance - txn.amount;";
-        expect(GATES[0].regex.test(coercion)).toBe(true);
-        expect(GATES[1].regex.test(unary)).toBe(true);
-        expect(GATES[2].regex.test(arithmetic)).toBe(true);
+        const samples: Readonly<Record<string, string>> = {
+            "numeric coercion of a money field": "const x = parseFloat(row.balance);",
+            "unary-plus coercion of a money field": "const y = +row.amount;",
+            "arithmetic on a money field": "const z = account.balance - txn.amount;",
+        };
+        // Every gate must catch its synthetic offender — removing a gate
+        // regex (or renaming a gate away from its sample) fails here.
+        expect(GATES).toHaveLength(Object.keys(samples).length);
+        for (const gate of GATES) {
+            const sample = samples[gate.name];
+            expect(sample).toBeDefined();
+            expect(gate.regex.test(sample ?? "")).toBe(true);
+        }
     });
 
     it.each(GATES)("no source file performs $name", ({ regex }) => {
