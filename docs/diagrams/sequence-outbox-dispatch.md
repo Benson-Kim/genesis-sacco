@@ -36,21 +36,21 @@ can never delay or block a deposit.
 sequenceDiagram
     autonumber
     participant SVC as Any money/workflow change
-    participant BOX as Notification outbox<br/>(permanent record)
+    participant OBOX as Notification outbox<br/>(permanent record)
     participant W as Background dispatcher
     participant P as Courier (SMS/email/push —<br/>practice courier until P20)
 
     rect rgb(240,248,255)
-    Note over SVC,BOX: Phase 0 — the notice is part of the change itself
-    SVC->>BOX: change + its notice, written together
-    Note over SVC,BOX: change rolled back ⇒ notice vanishes too —<br/>staff screens can never send directly
+    Note over SVC,OBOX: Phase 0 — the notice is part of the change itself
+    SVC->>OBOX: change + its notice, written together
+    Note over SVC,OBOX: change rolled back ⇒ notice vanishes too —<br/>staff screens can never send directly
     end
 
     loop periodically, only for SACCOs with notices due
         rect rgb(255,250,240)
-        Note over W,BOX: Phase 1 — claim a batch, briefly
-        W->>BOX: take the next due notices,<br/>mark them "being handled" for 5 minutes
-        Note over W,BOX: two dispatchers can never grab the same notice —<br/>if one crashes, its claim expires and<br/>another picks the notices up
+        Note over W,OBOX: Phase 1 — claim a batch, briefly
+        W->>OBOX: take the next due notices,<br/>mark them "being handled" for 5 minutes
+        Note over W,OBOX: two dispatchers can never grab the same notice —<br/>if one crashes, its claim expires and<br/>another picks the notices up
         end
         rect rgb(240,255,240)
         Note over W,P: Phase 2 — hand to the courier, records released
@@ -58,13 +58,13 @@ sequenceDiagram
         Note over W,P: no money record is held while the courier works —<br/>a slow courier delays nothing, a repeated<br/>hand-over of the same id sends only once
         end
         rect rgb(255,240,240)
-        Note over W,BOX: Phase 3 — record the outcome
+        Note over W,OBOX: Phase 3 — record the outcome
         alt delivered
-            W->>BOX: marked delivered (kept 30 days, then tidied)
+            W->>OBOX: marked delivered (kept 30 days, then tidied)
         else courier failed
-            W->>BOX: attempt counted, retry after a growing pause
+            W->>OBOX: attempt counted, retry after a growing pause
             opt 8 attempts exhausted
-                W->>BOX: parked on the dead-letter list —<br/>visible to staff, never silently dropped
+                W->>OBOX: parked on the dead-letter list —<br/>visible to staff, never silently dropped
             end
         end
         end
