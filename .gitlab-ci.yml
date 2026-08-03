@@ -321,6 +321,74 @@ web:client-drift:
       cp /tmp/schema.orig.d.ts packages/api-client/src/generated/schema.d.ts
       echo "OK - drift check fails on a stale client"
 
+# TEMPORARY (P14 !13 final regen — removed before merge, the proven !13
+# bootstrap precedent): the agent sandbox has no PyPI/npm registry access,
+# so the regenerated OpenAPI snapshot + generated client are produced HERE,
+# in CI, emitted via the job log (artifact API is 403 for the agent token)
+# and committed verbatim.
+bootstrap:openapi:
+  image: python:3.12-slim
+  stage: lint
+  needs: []
+  rules:
+    - exists: ["web/packages/api-client/openapi.json"]
+  script:
+    - pip install --upgrade pip
+    - pip install ./backend
+    - python backend/scripts/export_openapi.py web/packages/api-client/openapi.json
+  artifacts:
+    paths:
+      - web/packages/api-client/openapi.json
+    expire_in: 1 week
+
+bootstrap:client:
+  image: node:22-alpine
+  stage: test
+  needs: ["bootstrap:openapi"]
+  rules:
+    - exists: ["web/packages/api-client/openapi.json"]
+  cache:
+    key:
+      files:
+        - web/package-lock.json
+    paths:
+      - .cache/npm
+  script:
+    - cd web
+    - npm ci
+    - npm run generate:api
+    # Positive check: freshly generated client matches the fresh snapshot.
+    - sh scripts/check-client-drift.sh
+    # Negative proof: a deliberately staled generated client must FAIL.
+    - |
+      echo "// deliberately staled for the drift-check negative proof" >> packages/api-client/src/generated/schema.d.ts
+      if npm run check:client-drift; then
+        echo "ERROR: drift check passed against a staled client" >&2
+        exit 1
+      fi
+      echo "OK - drift check fails on a stale client"
+    - npm run generate:api
+    # Emit the generated files into the job log, gzip+base64, to be
+    # reconstructed and committed verbatim.
+    - |
+      node -e '
+        const fs = require("fs"), z = require("zlib");
+        const files = {};
+        for (const p of [
+          "packages/api-client/openapi.json",
+          "packages/api-client/src/generated/schema.d.ts",
+        ]) files[p] = fs.readFileSync(p).toString("base64");
+        const blob = z.gzipSync(JSON.stringify(files)).toString("base64");
+        console.log("===BEGIN_ARTIFACTS_B64===");
+        for (let i = 0; i < blob.length; i += 120) console.log(blob.slice(i, i + 120));
+        console.log("===END_ARTIFACTS_B64===");
+      '
+  artifacts:
+    paths:
+      - web/packages/api-client/openapi.json
+      - web/packages/api-client/src/generated/schema.d.ts
+    expire_in: 1 week
+
 # -----------------------------------------------------------------------------
 # Mobile — Flutter (member_app, admin_app, shared packages)
 # -----------------------------------------------------------------------------
