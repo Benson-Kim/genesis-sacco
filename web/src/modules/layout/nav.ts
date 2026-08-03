@@ -61,6 +61,12 @@ export const NAV_SECTIONS: NavSection[] = [
         module: "access_control",
         icon: "access_control",
       },
+      {
+        label: "Audit log",
+        href: "/modules/access_control/audit-log",
+        module: "access_control",
+        icon: "audit_log",
+      },
     ],
   },
 ];
