@@ -21,7 +21,11 @@ its guard removed (MASTER_PROMPT §4):
   FM4 double pend           — a second request while one is live is
                               blocked by the 0031 partial-unique claim
                               (service AND direct SQL); a REJECTED
-                              request frees the slot.
+                              request frees the slot. !52 review F2:
+                              the rejection carries a REQUIRED checker
+                              rationale into the audit `after` payload;
+                              a missing/empty reason is a 422 with
+                              zero side effects.
   FM5 repayments mutation   — direct-SQL UPDATE/DELETE of repayments
                               rows raise via the 0032 triggers (N4:
                               the sign-flip forensic hole is closed).
@@ -71,7 +75,7 @@ from genesis.application.ledger import disburse_loan
 from genesis.application.rbac import seed_permissions
 from genesis.domain.ledger import Channel
 from genesis.domain.rbac import ROLE_NAMES, Action, Module, seed_matrix
-from genesis.errors import ConflictError
+from genesis.errors import ConflictError, InvalidInputError
 from genesis.infrastructure.tenancy import tenant_session
 
 pytestmark = pytest.mark.skipif(
@@ -228,11 +232,15 @@ async def _approve(
 
 
 async def _reject(
-    tid: uuid.UUID, checker: uuid.UUID, adjustment_id: uuid.UUID, version: int
+    tid: uuid.UUID,
+    checker: uuid.UUID,
+    adjustment_id: uuid.UUID,
+    version: int,
+    reason: str = "not warranted",
 ) -> corrections_service.AdjustmentRecord:
     async with tenant_session(factory(), tid) as session:
         return await corrections_service.reject_repayment_adjustment(
-            session, tid, checker, adjustment_id, version=version
+            session, tid, checker, adjustment_id, version=version, reason=reason
         )
 
 
@@ -525,13 +533,29 @@ def test_fm4_double_pend_blocked_and_rejected_frees_the_slot() -> None:
                     {"id": str(pending.id)},
                 )
 
-        # Stale version -> 409; current version -> rejected.
+        # Stale version -> 409; current version -> rejected, with the
+        # checker's rationale on the audit record (!52 F2).
         with pytest.raises(ConflictError, match="stale version"):
             await _reject(tid, checker, pending.id, pending.version + 7)
-        rejected = await _reject(tid, checker, pending.id, pending.version)
+        rejected = await _reject(
+            tid, checker, pending.id, pending.version, reason="duplicate of an earlier request"
+        )
         assert rejected.status is AdjustmentStatus.REJECTED
         assert rejected.checker_id == checker
         assert rejected.decided_at is not None
+        async with tenant_session(factory(), tid) as session:
+            audit_reason = (
+                await session.execute(
+                    text(
+                        "SELECT after->>'reason' FROM audit_log "
+                        "WHERE tenant_id = CAST(:tid AS uuid) "
+                        "AND action = 'correction.adjustment_rejected' "
+                        "AND entity_id = :eid"
+                    ),
+                    {"tid": str(tid), "eid": str(pending.id)},
+                )
+            ).scalar_one()
+        assert audit_reason == "duplicate of an earlier request"
 
         # The slot is free: a fresh request lands; history keeps both.
         fresh = await _request(tid, maker, repayment_id)
@@ -547,6 +571,62 @@ def test_fm4_double_pend_blocked_and_rejected_frees_the_slot() -> None:
                 )
             ).scalar_one()
         assert int(rows) == 2
+
+    asyncio.run(run())
+
+
+def test_fm4_reject_without_a_reason_is_refused_with_zero_side_effects() -> None:
+    """!52 review F2: the checker's rejection rationale is REQUIRED —
+    a reject with the reason missing or empty is a 422 at the boundary
+    (extra fields stay refused too) and the pending row is untouched:
+    still pending_approval, no checker attribution, zero
+    adjustment_rejected audit rows. The service backstop refuses a
+    whitespace-only reason for direct callers. Falsifiable: make
+    `reason` optional on AdjustmentRejectBody (or drop it from the
+    audit payload — the FM4 audit assertion above) and this fails."""
+
+    async def run() -> None:
+        tid, maker, _ = await _seed_actor()
+        checker, checker_token = await _seed_extra_user(tid, "System Admin")
+        _, pending = await _pending_for_new_repayment(tid, maker)
+
+        async with api_client() as client:
+            for body in (
+                {"version": pending.version},  # reason missing
+                {"version": pending.version, "reason": ""},  # below min_length
+                {  # unknown field still refused (extra="forbid" intact)
+                    "version": pending.version,
+                    "reason": "ok",
+                    "unexpected": "x",
+                },
+            ):
+                res = await client.post(
+                    f"/corrections/repayment-adjustments/{pending.id}/reject",
+                    json=body,
+                    headers=_headers(checker_token, idem=f"nr-{uuid.uuid4().hex[:8]}"),
+                )
+                assert res.status_code == 422, (body, res.status_code)
+
+        # Whitespace-only: the service's own defence-in-depth check.
+        with pytest.raises(InvalidInputError, match="reason is required"):
+            await _reject(tid, checker, pending.id, pending.version, reason="   ")
+
+        # Zero side effects across all refusals.
+        record = await _get(tid, pending.id)
+        assert record.status is AdjustmentStatus.PENDING_APPROVAL
+        assert record.checker_id is None
+        async with tenant_session(factory(), tid) as session:
+            audits = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM audit_log "
+                        "WHERE tenant_id = CAST(:tid AS uuid) "
+                        "AND action = 'correction.adjustment_rejected'"
+                    ),
+                    {"tid": str(tid)},
+                )
+            ).scalar_one()
+        assert int(audits) == 0
 
     asyncio.run(run())
 
@@ -696,7 +776,7 @@ def test_fm8_adjustment_routes_enforce_the_corrections_matrix_per_role() -> None
 
                 res = await client.post(
                     f"/corrections/repayment-adjustments/{probe}/reject",
-                    json={"version": 1},
+                    json={"version": 1, "reason": "matrix probe"},
                     headers=_headers(token, idem=f"rj-{uuid.uuid4().hex[:8]}"),
                 )
                 expected = 404 if grants[Action.APPROVE] else 403
@@ -734,7 +814,7 @@ def test_fm9_cross_tenant_adjustments_are_invisible() -> None:
             assert res.status_code == 404
             res = await client.post(
                 f"/corrections/repayment-adjustments/{pending.id}/reject",
-                json={"version": 1},
+                json={"version": 1, "reason": "foreign probe"},
                 headers=_headers(token_b, idem=f"xr-{uuid.uuid4().hex[:8]}"),
             )
             assert res.status_code == 404

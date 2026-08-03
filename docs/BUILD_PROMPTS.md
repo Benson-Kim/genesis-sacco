@@ -12,8 +12,9 @@ Prompt format: ROLE / DEPENDS / PROMPT (give verbatim to the executor) / EXIT.
 
 ## STATUS REGISTER (authoritative — update in the same MR as the work)
 
-Evidence-based as of main @ 2026-08-02 (alembic head 0029; no
-migration claim in flight). Legend: ✅ DONE (merged to main, EXIT met) · 🔄 IN PROGRESS
+Evidence-based as of main @ 2026-08-02, post-!51/!52 merges (alembic
+head on main 0032; in-flight claims: 0033 = !53, 0034 = !54 — see the
+registry delta below). Legend: ✅ DONE (merged to main, EXIT met) · 🔄 IN PROGRESS
 (open MR cited) · ❌ TODO (no evidence on main). A prompt may not be
 marked ✅ without citing its evidence (migration number, merged MR,
 or test/artifact present on main).
@@ -95,13 +96,22 @@ order per rule 12 — each later MR chains on the earlier one's claim):
 issue #24's MR claims 0031–0032 next; issue #23's MR claims 0033 after
 that. The next free number after the batch is 0034.
 
+Registry delta update (2026-08-02, the !54 sync): **0030–0032 are on
+main** (!51 merged `7ec83ad`; !52 merged `8f46aa5`). **0033 stays
+!53's in-flight claim** (`down_revision = '0032'`, merges last in the
+batch). **0034 is !54's** (the !51-N1/!52-F2/!53-F1-F2 review
+follow-up micro-MR: `0034_recovery_claim_cap_lock`,
+`down_revision = '0033'`, declared in the MR description at branch
+time; merges AFTER !53). The next free number is **0035**.
+
 ### Post-P13 hardening follow-up batch (issues #21/#24/#23) — status
 
 | Issue | Scope | Status |
 |---|---|---|
-| #21 | bad-debt recovery receipts for written-off loans (P13.15 A4) | 🔄 IN PROGRESS — claims 0030; merges FIRST in the batch; the merging maintainer flips this row with the evidence |
-| #24 | P13.15 N1 maker-checker for adjustments + N4 repayments append-only trigger | 🔄 IN PROGRESS — claims 0031 (`down_revision = '0030'`) + 0032 (`down_revision = '0031'`); branch cut FROM #21's `duo/feature/21-bad-debt-recovery`; merges AFTER #21's MR (!51); the merging maintainer flips this row with the evidence |
-| #23 | P13.16 N2 richer case dispositions + N3 post-closure outcome notes | ❌ TODO — claims 0033; merges AFTER #24's MR |
+| #21 | bad-debt recovery receipts for written-off loans (P13.15 A4) | ✅ DONE — 0030 merged to main 2026-08-02 (!51, squash `7da3ed7` / merge `7ec83ad`) |
+| #24 | P13.15 N1 maker-checker for adjustments + N4 repayments append-only trigger | ✅ DONE — 0031–0032 merged to main 2026-08-02 (!52, squash `c866f5a` / merge `8f46aa5`); branch pipeline 2725596935 + rule-12 combined-state pipeline 2725604737 green (row flipped additively by the !54 sync — the flip instruction recorded on the !51/!52 reviews) |
+| #23 | P13.16 N2 richer case dispositions + N3 post-closure outcome notes | 🔄 IN PROGRESS — !53 claims 0033 (`down_revision = '0032'`); branch cut FROM #24's `duo/feature/24-p1315-maker-checker` @ `0e77383`; merges LAST, AFTER #24's MR (!52); branch pipeline 2725635455 green @ `bf0d508`, the rule-12 post-!52 combined-state run is still owed; the merging maintainer flips this row with the evidence |
+| — | Review follow-ups !51 N1 (0034 claim-cap FOR UPDATE) + !52 F2 (rejection rationale) + !53 F1/F2 (atomic restructure-close note + pause reason) | 🔄 IN PROGRESS — !54, ONE hardening micro-MR; claims 0034 (`down_revision = '0033'`); branch cut FROM !53's `duo/feature/23-recovery-dispositions` @ `bf0d508`; merges AFTER !53; the merging maintainer flips this row with the evidence |
 
 ---
 

@@ -455,6 +455,93 @@ def test_fm2_over_recovery_refused_partials_tracked_to_the_cent() -> None:
     asyncio.run(run())
 
 
+def test_fm2_concurrent_direct_sql_inserts_serialise_on_the_claim_anchor() -> None:
+    """!51 review N1, landed as migration 0034: two CONCURRENT
+    direct-SQL receipt inserts that TOGETHER exceed the outstanding
+    claim land exactly ONE row. HAND-COMPUTED: claim 24,150.00; a
+    10,000.00 service receipt leaves outstanding 24,150.00 - 10,000.00
+    = 14,150.00. Session A inserts 10,000.00 (total 20,000.00 <=
+    24,150.00 — passes) and HOLDS its transaction open; session B
+    inserts 10,000.00 concurrently. Under the 0034 parent FOR UPDATE,
+    B blocks on A's claim-anchor lock; after A commits, B's SUM runs
+    as a fresh statement (READ COMMITTED plpgsql: one snapshot per
+    statement) seeing 10,000 + 10,000 + its own 10,000 = 30,000.00 >
+    24,150.00 -> raises. Falsifiable: restore the 0030 body (FOR
+    UPDATE removed) and B never blocks — each cap check runs on a
+    snapshot excluding the other insert (20,000.00 <= 24,150.00 each),
+    BOTH land, and the blocked/row-count/SUM assertions fail. The
+    function-definition pin makes a database missing 0034 fail loudly
+    here instead of passing vacuously."""
+
+    async def run() -> None:
+        tid, actor, _ = await _seed_actor()
+        record, loan_id, mid = await _written_off_claim(tid, actor)
+        await _receipt(tid, actor, record.id, "10000.00")  # outstanding 14,150.00
+
+        # Pin: the live trigger function carries the 0034 locking probe.
+        async with tenant_session(factory(), tid) as session:
+            definition = (
+                await session.execute(
+                    text("SELECT pg_get_functiondef('check_recovery_within_claim()'::regprocedure)")
+                )
+            ).scalar_one()
+        assert "FOR UPDATE OF w" in str(definition)
+
+        insert_sql = text(
+            "INSERT INTO loan_recoveries "
+            "(id, tenant_id, write_off_id, loan_id, member_id, "
+            " transaction_id, amount, recorded_by) "
+            "SELECT gen_random_uuid(), CAST(:tid AS uuid), "
+            "CAST(:wid AS uuid), CAST(:lid AS uuid), CAST(:mid AS uuid), "
+            "t.id, '10000.00', CAST(:actor AS uuid) "
+            "FROM transactions t LIMIT 1"
+        )
+        params = {
+            "tid": str(tid),
+            "wid": str(record.id),
+            "lid": str(loan_id),
+            "mid": str(mid),
+            "actor": str(actor),
+        }
+
+        async def loser() -> None:
+            async with tenant_session(factory(), tid) as session_b:
+                await session_b.execute(insert_sql, params)
+
+        holder_a = tenant_session(factory(), tid)
+        session_a = await holder_a.__aenter__()
+        try:
+            # A's insert passes its own cap check and holds the claim
+            # anchor (the 0034 FOR UPDATE) until commit.
+            await session_a.execute(insert_sql, params)
+            task = asyncio.create_task(loser())
+            await asyncio.sleep(0.5)
+            blocked = not task.done()
+        finally:
+            await holder_a.__aexit__(None, None, None)  # commit A
+        assert blocked, "the second insert did not serialise on the claim anchor"
+        with pytest.raises(DBAPIError, match="exceed the written-off claim"):
+            await asyncio.wait_for(task, timeout=10)
+
+        # Exactly one of the two concurrent inserts landed: the
+        # service receipt + A = 2 rows, SUM 20,000.00 <= 24,150.00.
+        async with tenant_session(factory(), tid) as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT count(*), COALESCE(SUM(amount), 0) FROM loan_recoveries "
+                        "WHERE write_off_id = CAST(:wid AS uuid) "
+                        "AND tenant_id = CAST(:tid AS uuid)"
+                    ),
+                    {"wid": str(record.id), "tid": str(tid)},
+                )
+            ).one()
+        assert int(row[0]) == 2
+        assert Decimal(str(row[1])) == Decimal("20000.00")
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # FM3 — a receipt never resurrects the loan
 # ---------------------------------------------------------------------------
