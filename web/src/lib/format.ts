@@ -10,7 +10,7 @@
   * grep gate (src/__tests__/no-money-math.test.ts) enforces this.
   */
 
-const AMOUNT_RE = /^(-?)(\\d+)(?:\\.(\\d+))?$/;
+const AMOUNT_RE = /^(-?)(\d+)(?:\.(\d+))?$/;
 
 /**
  * Group an API decimal string with thousands separators — pure string
@@ -21,7 +21,7 @@ export function fmtAmount(value: string): string {
     const match = AMOUNT_RE.exec(value.trim());
     if (match === null) return value;
     const [, sign, integer, fraction] = match;
-    const grouped = integer.replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",");
+    const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     return `${sign}${grouped}${fraction !== undefined ? `.${fraction}` : ""}`;
 }
 

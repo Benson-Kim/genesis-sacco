@@ -16,9 +16,8 @@ export function ErrorBanner({ error }: Readonly<{ error: unknown }>) {
         <Banner variant="error">
             {title}
             {correlationId !== null && correlationId !== "" && (
-                < span className={styles.cid}>ref: {correlationId}</span>
-            )
-            }
-        </Banner >
+                <span className={styles.cid}>ref: {correlationId}</span>
+            )}
+        </Banner>
     );
 }

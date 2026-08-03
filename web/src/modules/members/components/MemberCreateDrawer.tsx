@@ -124,6 +124,6 @@ export function MemberCreateDrawer({
                     </Button>
                 </div>
             </form>
-        </Modal >
+        </Modal>
     );
 }

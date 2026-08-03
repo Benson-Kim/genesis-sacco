@@ -56,3 +56,27 @@ export function createGenesisClient(options: GenesisClientOptions): GenesisClien
 export function newIdempotencyKey(): string {
   return crypto.randomUUID();
 }
+
+/**
+ * Per-form key slot backing `idempotencyKeyFor` — hold one in a ref for
+ * the lifetime of a form/drawer instance.
+ */
+export interface IdempotencyKeySlot {
+  key: string | null;
+  body: string | null;
+}
+
+/**
+ * Stability/rotation contract for Idempotency-Keys (gate 1.4):
+ * retrying the IDENTICAL logical submission (same canonical body) REUSES
+ * the key — the server's idempotency store replays the stored response
+ * instead of re-executing. Changing the content is a NEW logical intent
+ * and rotates the key. One key per intent, never per HTTP attempt.
+ */
+export function idempotencyKeyFor(slot: IdempotencyKeySlot, body: string): string {
+  if (slot.key === null || slot.body !== body) {
+    slot.key = newIdempotencyKey();
+    slot.body = body;
+  }
+  return slot.key;
+}

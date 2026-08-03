@@ -6,7 +6,7 @@ import { z } from "zod";
  * numbers in the client (P15 blocker (a)).
  *
  * The endpoint omits (nulls) every slice the caller's role is not
- * granted — the UI renders \"—\" for missing slices and never fabricates
+ * granted — the UI renders "—" for missing slices and never fabricates
  * figures (deny-by-default, gate 1.6).
  */
 export const memberTypeCountSchema = z.object({

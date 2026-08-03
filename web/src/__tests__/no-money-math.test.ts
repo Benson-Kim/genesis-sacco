@@ -1,14 +1,14 @@
 /**
-    * P15 merge blocker(a) — NO client - side money math EVER: installment
-        * previews, cover %, capacities, balances and settlement figures come
-            * from the API as decimal strings; a locally computed money figure is a
-                * rejected MR.This grep gate scans every web source file for numeric
-                    * coercion or arithmetic applied to money - named identifiers.
-   *
-   * Falsifiability: the gate is proven non - vacuous below by asserting it
-    * flags synthetic offending samples(removing the guard regexes fails
-        * that assertion).
-   */
+ * P15 merge blocker (a) — NO client-side money math EVER: installment
+ * previews, cover %, capacities, balances and settlement figures come
+ * from the API as decimal strings; a locally computed money figure is a
+ * rejected MR. This grep gate scans every web source file for numeric
+ * coercion or arithmetic applied to money-named identifiers.
+ *
+ * Falsifiability: the gate is proven non-vacuous below by asserting it
+ * flags synthetic offending samples (removing the guard regexes fails
+ * that assertion).
+ */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
@@ -102,8 +102,7 @@ describe("no client-side money math (P15 blocker (a))", () => {
         const offenders: string[] = [];
         for (const path of files) {
             const source = readFileSync(path, "utf8");
-            for (const line of source.split("\
-  ")) {
+            for (const line of source.split("\n")) {
                 if (regex.test(line)) {
                     offenders.push(`${relative(WEB_ROOT, path)}: ${line.trim()}`);
                 }

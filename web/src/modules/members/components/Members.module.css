@@ -52,7 +52,7 @@
     border-left: 1px solid var(--line);
 }
 
-.segmentButton[aria-pressed=\"true\"] {
+.segmentButton[aria-pressed="true"] {
     background: var(--navySoft);
     color: var(--navy);
     font-weight: 800;
