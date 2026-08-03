@@ -44,7 +44,7 @@ sequenceDiagram
     rect rgb(240,248,255)
     Note over O,CASE: Open — only the loan's facts qualify it
     O->>SYS: open a recovery case for this loan
-    SYS->>SYS: hold the loan; is it active AND classified<br/>non-performing by the arrears process?
+    SYS->>SYS: hold the loan, is it active AND classified<br/>non-performing by the arrears process?
     alt loan is performing (or not active)
         SYS-->>O: refused — recovery cannot be initiated<br/>(no figures disclosed in the refusal)
     else loan qualifies
@@ -52,7 +52,7 @@ sequenceDiagram
         alt an open case already exists
             SYS-->>O: refused — work the existing case
         else case opened
-            SYS->>REC: opening classification + days overdue recorded;<br/>staff notified
+            SYS->>REC: opening classification + days overdue recorded —<br/>staff notified
             SYS-->>O: case opened
         end
     end

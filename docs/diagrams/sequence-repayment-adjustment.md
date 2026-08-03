@@ -47,15 +47,15 @@ sequenceDiagram
     autonumber
     participant M as Maker (staff)
     participant SYS as SACCO system
-    participant C as Checker (different staff;<br/>auditors excluded)
+    participant C as Checker (different staff —<br/>auditors excluded)
     participant REC as Permanent records<br/>(ledger, history, audit trail)
 
     rect rgb(240,248,255)
-    Note over M,REC: Phase 1 — the maker requests; nothing moves
+    Note over M,REC: Phase 1 — the maker requests, nothing moves
     M->>SYS: adjust this repayment (with a reason)
-    SYS->>REC: hold the original entry, the member and the loan;<br/>rebuild what the repayment actually paid<br/>from the permanent ledger entries
+    SYS->>REC: hold the original entry, the member and the loan —<br/>rebuild what the repayment actually paid<br/>from the permanent ledger entries
     alt undoing would re-open a loan whose guarantors were discharged
-        SYS-->>M: refused — a freed surety is never silently re-bound;<br/>re-pledge security first
+        SYS-->>M: refused — a freed surety is never silently re-bound —<br/>re-pledge security first
     else request can stand
         SYS->>SYS: maker's authority band covers the amount?
         SYS->>REC: FREEZE the loan's position (balance, penalties, status)<br/>and claim the one live-request slot for this repayment
@@ -70,10 +70,10 @@ sequenceDiagram
     rect rgb(240,255,240)
     Note over C,REC: Phase 2a — the checker approves
     C->>SYS: approve this adjustment
-    SYS->>SYS: four-eyes: checker is not the maker (the database<br/>itself refuses otherwise) and not an auditor;<br/>checker's authority band covers the amount
-    SYS->>REC: re-hold the same records; compare the FROZEN<br/>position with the live loan, item by item
+    SYS->>SYS: four-eyes: checker is not the maker (the database<br/>itself refuses otherwise) and not an auditor —<br/>checker's authority band covers the amount
+    SYS->>REC: re-hold the same records, compare the FROZEN<br/>position with the live loan, item by item
     alt anything moved since the request
-        SYS-->>C: refused — NOTHING posts;<br/>reject the stale request and raise a fresh one
+        SYS-->>C: refused — NOTHING posts —<br/>reject the stale request and raise a fresh one
     else still matches
         SYS->>REC: one atomic step: mirror-image correction posted<br/>(original never edited), negative twin written into<br/>the repayment history, balance/penalties/schedule<br/>RECOMPUTED from surviving history,<br/>closed loan re-opened only via the documented branch
         SYS->>SYS: self-check before finishing: restored balance<br/>reconciles to the ledger to the cent — or everything aborts
@@ -85,7 +85,7 @@ sequenceDiagram
     rect rgb(255,240,240)
     Note over C,REC: Phase 2b — or the checker rejects
     C->>SYS: reject this adjustment
-    SYS->>REC: rejection recorded (same four-eyes rule);<br/>the slot is freed for a corrected request;<br/>the rejected request stays on file forever
+    SYS->>REC: rejection recorded (same four-eyes rule) —<br/>the slot is freed for a corrected request —<br/>the rejected request stays on file forever
     SYS-->>C: rejected
     end
 ```

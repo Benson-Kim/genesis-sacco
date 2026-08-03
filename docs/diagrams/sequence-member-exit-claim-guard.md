@@ -53,7 +53,7 @@ sequenceDiagram
     else member has open loan applications
         SYS-->>M: blocked — resolve the applications first
     else a written-off claim is not fully recovered (!51)
-        SYS-->>M: blocked — write-off is not forgiveness;<br/>the claim must be recovered before exit<br/>(a committee waiver does not exist yet)
+        SYS-->>M: blocked — write-off is not forgiveness —<br/>the claim must be recovered before exit<br/>(a committee waiver does not exist yet)
     else loan payoff exceeds the member's assets
         SYS-->>M: refused — reduce the loan first<br/>(the SACCO never auto-seizes a shortfall)
     else eligible
@@ -64,16 +64,16 @@ sequenceDiagram
 
     rect rgb(255,250,240)
     Note over CMT,REC: Approve — the committee votes on the frozen quote
-    CMT->>SYS: votes (one each; the requester cannot vote)
+    CMT->>SYS: votes (one each, the requester cannot vote)
     SYS->>REC: quorum decision recorded<br/>(voting pattern: its own diagram)
     end
 
     rect rgb(240,255,240)
     Note over SYS,REC: Pay — re-check everything, then one atomic step
     CMT->>SYS: execute the settlement (a different person)
-    SYS->>SYS: re-hold everything; recompute every component<br/>(the SAME computation as the quote — including<br/>the three blocks above, so a claim that appeared<br/>since approval still blocks)
+    SYS->>SYS: re-hold everything, recompute every component<br/>(the SAME computation as the quote — including<br/>the three blocks above, so a claim that appeared<br/>since approval still blocks)
     alt anything moved since approval
-        SYS-->>CMT: refused — nothing paid; re-quote afresh
+        SYS-->>CMT: refused — nothing paid, re-quote afresh
     else still matches, to the cent
         SYS->>REC: one atomic step: settlement paid, accounts zeroed,<br/>received guarantees swept, member marked EXITED (final),<br/>exact figures audited, member notified
     end

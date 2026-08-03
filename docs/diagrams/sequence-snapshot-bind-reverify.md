@@ -75,7 +75,7 @@ sequenceDiagram
     APPR->>SYS: execute (a DIFFERENT person than the requester)
     SYS->>REC: hold the same records again and re-check<br/>EVERY frozen figure against live reality
     alt anything moved since the request
-        SYS-->>APPR: refused — NOTHING is paid or posted;<br/>retire the stale request, raise a fresh one
+        SYS-->>APPR: refused — NOTHING is paid or posted —<br/>retire the stale request, raise a fresh one
     else everything still matches, to the cent
         SYS->>REC: post the money movement, finalise the state,<br/>audit trail + notices — all in ONE step<br/>(no partial success possible)
     end

@@ -46,7 +46,7 @@ sequenceDiagram
     alt the write-off was never actually posted
         SYS-->>O: refused — there is no claim to recover against
     else claim exists
-        SYS->>SYS: member still transactable?<br/>(an exited member is refused; a leaving member<br/>must wait — this receipt and the exit take turns)
+        SYS->>SYS: member still transactable?<br/>(an exited member is refused, a leaving member<br/>must wait — this receipt and the exit take turns)
         SYS->>SYS: loan really written off?<br/>(the loan is NEVER brought back to life)
         SYS->>CLM: outstanding = frozen total − all receipts so far<br/>(recomputed, never a stored running total)
         alt receipt exceeds the outstanding claim
@@ -55,9 +55,9 @@ sequenceDiagram
             SYS->>REC: recovery income posted to the ledger
             SYS->>CLM: receipt appended (permanent, tied to the<br/>recovery case file where one exists)
             alt the claim is now recovered IN FULL
-                SYS->>REC: guarantors discharged — same breath,<br/>same record; the member's exit is unblocked
+                SYS->>REC: guarantors discharged — same breath,<br/>same record, the member's exit is unblocked
             else partial recovery
-                Note over SYS,REC: guarantors stay bound;<br/>the member still cannot exit
+                Note over SYS,REC: guarantors stay bound —<br/>the member still cannot exit
             end
             SYS->>REC: exact figures to the audit trail + notice queued
             SYS-->>O: receipt recorded — outstanding claim updated

@@ -43,26 +43,26 @@ sequenceDiagram
     rect rgb(240,248,255)
     Note over SVC,BOX: Phase 0 — the notice is part of the change itself
     SVC->>BOX: change + its notice, written together
-    Note over SVC,BOX: change rolled back ⇒ notice vanishes too;<br/>staff screens can never send directly
+    Note over SVC,BOX: change rolled back ⇒ notice vanishes too —<br/>staff screens can never send directly
     end
 
     loop periodically, only for SACCOs with notices due
         rect rgb(255,250,240)
         Note over W,BOX: Phase 1 — claim a batch, briefly
         W->>BOX: take the next due notices,<br/>mark them "being handled" for 5 minutes
-        Note over W,BOX: two dispatchers can never grab the same notice;<br/>if one crashes, its claim expires and<br/>another picks the notices up
+        Note over W,BOX: two dispatchers can never grab the same notice —<br/>if one crashes, its claim expires and<br/>another picks the notices up
         end
         rect rgb(240,255,240)
         Note over W,P: Phase 2 — hand to the courier, records released
         W->>P: deliver this notice (by its unique id)
-        Note over W,P: no money record is held while the courier works —<br/>a slow courier delays nothing; a repeated<br/>hand-over of the same id sends only once
+        Note over W,P: no money record is held while the courier works —<br/>a slow courier delays nothing, a repeated<br/>hand-over of the same id sends only once
         end
         rect rgb(255,240,240)
         Note over W,BOX: Phase 3 — record the outcome
         alt delivered
             W->>BOX: marked delivered (kept 30 days, then tidied)
         else courier failed
-            W->>BOX: attempt counted; retry after a growing pause
+            W->>BOX: attempt counted, retry after a growing pause
             opt 8 attempts exhausted
                 W->>BOX: parked on the dead-letter list —<br/>visible to staff, never silently dropped
             end
