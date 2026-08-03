@@ -353,5 +353,7 @@ test("client Zod verdicts render inline through FormField before any write", asy
   // No confirmation opens and no write happens on a client-invalid form.
   expect(screen.queryByRole("dialog", { name: "Apply product rules" })).toBeNull();
   expect(mocked.updateProduct).not.toHaveBeenCalled();
-  expect(await screen.findByText("Decimal like 12 or 12.5 (max 2dp)")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Enter a decimal like 12 or 12.5 (max 2dp)"),
+  ).toBeInTheDocument();
 });
