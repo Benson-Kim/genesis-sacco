@@ -455,7 +455,9 @@ export interface paths {
         /**
          * Reject Repayment Adjustment
          * @description Reject a pending adjustment (checker decision, optimistic-locked)
-         *     — frees the one-live-adjustment slot for a fresh request.
+         *     — frees the one-live-adjustment slot for a fresh request. The
+         *     checker's rationale is REQUIRED (!52 F2) and recorded in the audit
+         *     row.
          */
         post: operations["reject_repayment_adjustment_corrections_repayment_adjustments__adjustment_id__reject_post"];
         delete?: never;
@@ -1647,6 +1649,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/recovery-cases/{case_id}/disposition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Disposition
+         * @description Record a staff disposition (issue #23 N2; !53 F1/F2): pause a
+         *     case as disputed or irrecoverable_pending_write_off (required
+         *     `reason` -> audit payload), resume it to open, or close it as
+         *     restructured (required `note` -> THE outcome note, written
+         *     atomically in this same transaction) — through the single domain
+         *     gatekeeper; cure/write-off closes stay job-only (FM2).
+         */
+        post: operations["set_disposition_recovery_cases__case_id__disposition_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/recovery-cases/{case_id}/notes": {
         parameters: {
             query?: never;
@@ -1662,6 +1689,28 @@ export interface paths {
          * @description Append a note (addendum A2: append-only, no edit route exists).
          */
         post: operations["add_note_recovery_cases__case_id__notes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recovery-cases/{case_id}/outcome-note": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add Case Outcome Note
+         * @description Record THE post-closure outcome note (issue #23 N3): exactly one
+         *     per case, at/after closure only, still append-only — no edit or
+         *     delete route exists.
+         */
+        post: operations["add_case_outcome_note_recovery_cases__case_id__outcome_note_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1929,8 +1978,18 @@ export interface components {
             /** Would Reopen Loan */
             would_reopen_loan: boolean;
         };
-        /** AdjustmentRejectBody */
+        /**
+         * AdjustmentRejectBody
+         * @description The checker's decision: the optimistic version plus the REQUIRED
+         *     rejection rationale (!52 review F2 — four-eyes practice puts the
+         *     checker's reason on the record, especially since a rejected slot
+         *     frees for a fresh request). The reason is workflow metadata, never
+         *     a money parameter (v1.1 rule 1 is not implicated); it lands in the
+         *     audit `after` payload, never in error envelopes (rule 7).
+         */
         AdjustmentRejectBody: {
+            /** Reason */
+            reason: string;
             /** Version */
             version: number;
         };
@@ -2159,7 +2218,35 @@ export interface components {
             /** Version */
             version: number;
         };
-        /** CaseNoteBody */
+        /**
+         * CaseDispositionBody
+         * @description extra="forbid": the caller supplies the optimistic version, the
+         *     target status and the target-paired rationale fields (!53 F1/F2).
+         *     The enum rejects unknown statuses at the boundary (422); job-only
+         *     targets (closed_cured/closed_written_off) are refused by the
+         *     service (409, FM2); the single domain gatekeeper owns the legality
+         *     of the move (issue #23 N2). `reason` is REQUIRED by the service
+         *     for the two pause targets (audit-payload workflow metadata, !53
+         *     F2); `note` is REQUIRED for closed_restructured — THE outcome
+         *     note, written atomically in the same transaction (!53 F1). A
+         *     mismatched field-target pairing is a 422. Neither field is a money
+         *     parameter (v1.1 rule 1 not implicated).
+         */
+        CaseDispositionBody: {
+            /** Note */
+            note?: string | null;
+            /** Reason */
+            reason?: string | null;
+            status: components["schemas"]["RecoveryCaseStatus"];
+            /** Version */
+            version: number;
+        };
+        /**
+         * CaseNoteBody
+         * @description Shared by the regular-note and outcome-note routes (issue #23):
+         *     both carry exactly one text field, so one body model serves both
+         *     (reuse-first, 1.1).
+         */
         CaseNoteBody: {
             /** Note */
             note: string;
@@ -2989,6 +3076,8 @@ export interface components {
             created_at: string;
             /** Id */
             id: string;
+            /** Is Outcome */
+            is_outcome: boolean;
             /** Note */
             note: string;
         };
@@ -3219,6 +3308,11 @@ export interface components {
             /** Version */
             version: number;
         };
+        /**
+         * RecoveryCaseStatus
+         * @enum {string}
+         */
+        RecoveryCaseStatus: "open" | "irrecoverable_pending_write_off" | "disputed" | "closed_cured" | "closed_written_off" | "closed_restructured";
         /**
          * RecoveryReceiptBody
          * @description The cash actually received and its channel (issue #21). The
@@ -6933,6 +7027,41 @@ export interface operations {
             };
         };
     };
+    set_disposition_recovery_cases__case_id__disposition_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaseDispositionBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_notes_recovery_cases__case_id__notes_get: {
         parameters: {
             query?: {
@@ -6968,6 +7097,41 @@ export interface operations {
         };
     };
     add_note_recovery_cases__case_id__notes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaseNoteBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_case_outcome_note_recovery_cases__case_id__outcome_note_post: {
         parameters: {
             query?: never;
             header?: never;

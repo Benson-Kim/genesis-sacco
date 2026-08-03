@@ -275,7 +275,14 @@
       },
       "AdjustmentRejectBody": {
         "additionalProperties": false,
+        "description": "The checker's decision: the optimistic version plus the REQUIRED\nrejection rationale (!52 review F2 \u2014 four-eyes practice puts the\nchecker's reason on the record, especially since a rejected slot\nfrees for a fresh request). The reason is workflow metadata, never\na money parameter (v1.1 rule 1 is not implicated); it lands in the\naudit `after` payload, never in error envelopes (rule 7).",
         "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
           "version": {
             "minimum": 1.0,
             "title": "Version",
@@ -283,7 +290,8 @@
           }
         },
         "required": [
-          "version"
+          "version",
+          "reason"
         ],
         "title": "AdjustmentRejectBody",
         "type": "object"
@@ -883,8 +891,55 @@
         "title": "CaseAssignBody",
         "type": "object"
       },
+      "CaseDispositionBody": {
+        "additionalProperties": false,
+        "description": "extra=\"forbid\": the caller supplies the optimistic version, the\ntarget status and the target-paired rationale fields (!53 F1/F2).\nThe enum rejects unknown statuses at the boundary (422); job-only\ntargets (closed_cured/closed_written_off) are refused by the\nservice (409, FM2); the single domain gatekeeper owns the legality\nof the move (issue #23 N2). `reason` is REQUIRED by the service\nfor the two pause targets (audit-payload workflow metadata, !53\nF2); `note` is REQUIRED for closed_restructured \u2014 THE outcome\nnote, written atomically in the same transaction (!53 F1). A\nmismatched field-target pairing is a 422. Neither field is a money\nparameter (v1.1 rule 1 not implicated).",
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RecoveryCaseStatus"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "status"
+        ],
+        "title": "CaseDispositionBody",
+        "type": "object"
+      },
       "CaseNoteBody": {
         "additionalProperties": false,
+        "description": "Shared by the regular-note and outcome-note routes (issue #23):\nboth carry exactly one text field, so one body model serves both\n(reuse-first, 1.1).",
         "properties": {
           "note": {
             "maxLength": 2000,
@@ -3195,6 +3250,10 @@
             "title": "Id",
             "type": "string"
           },
+          "is_outcome": {
+            "title": "Is Outcome",
+            "type": "boolean"
+          },
           "note": {
             "title": "Note",
             "type": "string"
@@ -3204,7 +3263,8 @@
           "id",
           "author_id",
           "note",
-          "created_at"
+          "created_at",
+          "is_outcome"
         ],
         "title": "NoteOut",
         "type": "object"
@@ -3851,6 +3911,18 @@
         ],
         "title": "ProfileUpdateBody",
         "type": "object"
+      },
+      "RecoveryCaseStatus": {
+        "enum": [
+          "open",
+          "irrecoverable_pending_write_off",
+          "disputed",
+          "closed_cured",
+          "closed_written_off",
+          "closed_restructured"
+        ],
+        "title": "RecoveryCaseStatus",
+        "type": "string"
       },
       "RecoveryReceiptBody": {
         "additionalProperties": false,
@@ -7409,7 +7481,7 @@
     },
     "/corrections/repayment-adjustments/{adjustment_id}/reject": {
       "post": {
-        "description": "Reject a pending adjustment (checker decision, optimistic-locked)\n\u2014 frees the one-live-adjustment slot for a fresh request.",
+        "description": "Reject a pending adjustment (checker decision, optimistic-locked)\n\u2014 frees the one-live-adjustment slot for a fresh request. The\nchecker's rationale is REQUIRED (!52 F2) and recorded in the audit\nrow.",
         "operationId": "reject_repayment_adjustment_corrections_repayment_adjustments__adjustment_id__reject_post",
         "parameters": [
           {
@@ -10688,6 +10760,60 @@
         ]
       }
     },
+    "/recovery-cases/{case_id}/disposition": {
+      "post": {
+        "description": "Record a staff disposition (issue #23 N2; !53 F1/F2): pause a\ncase as disputed or irrecoverable_pending_write_off (required\n`reason` -> audit payload), resume it to open, or close it as\nrestructured (required `note` -> THE outcome note, written\natomically in this same transaction) \u2014 through the single domain\ngatekeeper; cure/write-off closes stay job-only (FM2).",
+        "operationId": "set_disposition_recovery_cases__case_id__disposition_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseDispositionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Disposition",
+        "tags": [
+          "recovery"
+        ]
+      }
+    },
     "/recovery-cases/{case_id}/notes": {
       "get": {
         "operationId": "list_notes_recovery_cases__case_id__notes_get",
@@ -10806,6 +10932,60 @@
           }
         },
         "summary": "Add Note",
+        "tags": [
+          "recovery"
+        ]
+      }
+    },
+    "/recovery-cases/{case_id}/outcome-note": {
+      "post": {
+        "description": "Record THE post-closure outcome note (issue #23 N3): exactly one\nper case, at/after closure only, still append-only \u2014 no edit or\ndelete route exists.",
+        "operationId": "add_case_outcome_note_recovery_cases__case_id__outcome_note_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseNoteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Case Outcome Note",
         "tags": [
           "recovery"
         ]
