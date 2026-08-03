@@ -59,7 +59,11 @@ export function KeysetTable<T>({
 
   return (
     <div>
-      <table className={styles.table}>
+      {/* Focusable, labelled scroll region: on narrow viewports the table
+          scrolls horizontally (visible scroll-shadow affordance) and stays
+          keyboard-reachable (P15 Phase B; issue #8). */}
+      <div className={styles.scroller} tabIndex={0} role="region" aria-label="Table">
+        <table className={styles.table}>
         <thead>
           <tr className={styles.headRow}>
             {columns.map((column) => (
@@ -100,7 +104,8 @@ export function KeysetTable<T>({
             </tr>
           ))}
         </tbody>
-      </table>
+        </table>
+      </div>
       {query.hasNextPage && (
         <div className={styles.more}>
           <Button

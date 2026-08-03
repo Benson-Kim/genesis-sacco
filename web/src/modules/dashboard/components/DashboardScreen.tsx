@@ -15,6 +15,7 @@ import { fmtAmount, fmtDateTime, fmtKes } from "@/lib/format";
 import { STALE_TIME } from "@/lib/query";
 import { fetchDashboardSummary } from "../api";
 import type { DashboardSummary } from "../schemas";
+import grid from "@/modules/layout/grid.module.css";
 import styles from "./DashboardScreen.module.css";
 
 export const DASHBOARD_QUERY_KEY = ["dashboard", "summary"] as const;
@@ -162,7 +163,8 @@ export function DashboardScreen() {
     }
 
     return (
-        <div className={styles.grid}>
+        // Shared responsive grid (grid.module.css): 4 -> 2 -> 1 columns.
+        <div className={grid.cards4}>
             <StatCards summary={summary.data} />
             <PipelineCard pipeline={summary.data.pipeline} />
             <FlowsCard flows={summary.data.monthly_flows} />

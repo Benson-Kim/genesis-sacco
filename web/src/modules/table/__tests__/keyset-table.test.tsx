@@ -95,6 +95,14 @@ describe("KeysetTable + useKeysetList", () => {
     expect(row).not.toHaveAttribute("tabindex");
   });
 
+  it("the table sits in a keyboard-focusable labelled scroll region (P15 Phase B)", async () => {
+    renderHarness();
+    await screen.findByText("Amina Odhiambo");
+    const region = screen.getByRole("region", { name: "Table" });
+    expect(region).toHaveAttribute("tabindex", "0");
+    expect(region.querySelector("table")).not.toBeNull();
+  });
+
   it("validates the page contract with zod", () => {
     expect(() =>
       pageSchema.parse({ items: [{ id: 1, name: "bad" }], next_cursor: null }),

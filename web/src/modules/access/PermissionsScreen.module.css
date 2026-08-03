@@ -7,12 +7,8 @@
  * rings and a >=44px checkbox hit target (.checkTarget wrapper).
  */
 
-.layout {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 16px;
-  align-items: start;
-}
+/* Page layout comes from the shared responsive module
+   (src/modules/layout/grid.module.css .sideMain) — one copy, gate 1.1. */
 
 /* Role sidebar */
 .roleList {

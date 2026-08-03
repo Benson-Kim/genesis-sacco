@@ -30,6 +30,7 @@ import { MODULES, MODULE_LABELS, type ModuleId } from "@/modules/authz/modules";
 import { STALE_TIME } from "@/lib/query";
 import { fetchRoles } from "@/modules/users/api";
 import { fetchRolePermissions, updateRolePermission, type Permission } from "./api";
+import grid from "@/modules/layout/grid.module.css";
 import styles from "./PermissionsScreen.module.css";
 
 /**
@@ -176,7 +177,8 @@ export function PermissionsScreen() {
             : "";
 
   return (
-    <div className={styles.layout}>
+    // Shared responsive side+main grid (grid.module.css): stacks <=960px.
+    <div className={grid.sideMain}>
       {/* Role sidebar */}
       <Card padded={false}>
         {/* Toggle buttons with aria-pressed — conforming semantics for a

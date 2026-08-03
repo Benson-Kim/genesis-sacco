@@ -1,16 +1,5 @@
-.grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-}
-
-.half {
-    grid-column: span 2;
-}
-
-.wide {
-    grid-column: 1 / -1;
-}
+/* Page grid comes from the shared responsive module
+   (src/modules/layout/grid.module.css) — one copy, gate 1.1. */
 
 .title {
     font-size: 15px;

@@ -1,7 +1,42 @@
 /* Mirrors prototype table / thead / th / td */
+
+/* Small-viewport strategy (P15 Phase B): the table keeps its column
+   layout and the CONTAINER scrolls horizontally, with pure-CSS scroll
+   shadows as the visible affordance and keyboard focusability so the
+   region scrolls without a pointer (issue #8). */
+.scroller {
+  overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--card) 30%, transparent),
+    linear-gradient(to left, var(--card) 30%, transparent) 100% 0,
+    radial-gradient(farthest-side at 0 50%, rgba(15, 25, 45, 0.16), transparent),
+    radial-gradient(farthest-side at 100% 50%, rgba(15, 25, 45, 0.16), transparent) 100% 0;
+  background-repeat: no-repeat;
+  background-size:
+    40px 100%,
+    40px 100%,
+    14px 100%,
+    14px 100%;
+  background-attachment: local, local, scroll, scroll;
+}
+
+/* Focus ring replaced, never removed (issue #8). */
+.scroller:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: -2px;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
+}
+
+@media (max-width: 640px) {
+  /* Below the narrow breakpoint the table scrolls instead of cramming;
+     cells keep their 44px-friendly padding. */
+  .table {
+    min-width: 560px;
+  }
 }
 
 .headRow {
