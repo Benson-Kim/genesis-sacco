@@ -281,9 +281,11 @@ web:lockfile:
   needs: []
   cache: []
   rules:
+    # Auto-runs when web/package.json changes on an MR (the agent token
+    # cannot play manual jobs); allow_failure keeps it non-gating.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      exists: ["web/package.json"]
-      when: manual
+      changes:
+        - web/package.json
       allow_failure: true
   script:
     - cd web
