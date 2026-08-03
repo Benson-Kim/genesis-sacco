@@ -1,8 +1,8 @@
 /*
  * Permissions matrix — role sidebar + permission table (P15).
  * Salvaged from duo/feature/p13-5-frontend-followthrough @ 198a238;
- * adapted to this branch's token set (scale.css --fs-*/--duration-*;
- * the salvage source's --font-size-*/--ease-standard/--focus-ring do
+ * adapted to this branch's token set (scale.css --fs-* and --duration-*;
+ * the salvage source's --font-size-*, --ease-standard, --focus-ring do
  * not exist here) and issue-#8 conventions: visible outline focus
  * rings and a >=44px checkbox hit target (.checkTarget wrapper).
  */

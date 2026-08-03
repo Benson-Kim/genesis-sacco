@@ -1,8 +1,8 @@
 /*
  * Access control page — tab row + panel layout (P15).
  * Salvaged from duo/feature/p13-5-frontend-followthrough @ 198a238;
- * adapted to this branch's token set (--fs-*/--duration-*/--touch-target;
- * the salvage --font-sans/--font-size-*/--ease-standard/--focus-ring
+ * adapted to this branch's token set (--fs-*, --duration-*, --touch-target;
+ * the salvage --font-sans, --font-size-*, --ease-standard, --focus-ring
  * tokens do not exist here) with issue-#8 focus rings and targets.
  */
 
