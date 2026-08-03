@@ -8,7 +8,7 @@
  * dangerouslySetInnerHTML, or persist a token outside the single custody
  * site) and this suite FAILS — falsifiability per MASTER_PROMPT §4.
  *
- * localStorage / console / analytics / CDN hygiene is owned by the
+ * Local-storage / console / analytics / CDN hygiene is owned by the
  * client-hygiene gate (src/__tests__/client-hygiene.test.ts) — one copy
  * of each gate (gate 1.1); this suite owns the PARSER/CODE-EXECUTION
  * sinks and the sessionStorage custody allowlist.
