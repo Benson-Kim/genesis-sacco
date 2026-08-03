@@ -21,7 +21,13 @@ import styles from "./DashboardScreen.module.css";
 export const DASHBOARD_QUERY_KEY = ["dashboard", "summary"] as const;
 
 export function useDashboardSummary() {
-    return useQuery({ queryKey: DASHBOARD_QUERY_KEY, queryFn: fetchDashboardSummary });
+    // Composite read model: a server-computed snapshot with a rendered
+    // as_of stamp — entity-class staleTime from lib/query.ts.
+    return useQuery({
+        queryKey: DASHBOARD_QUERY_KEY,
+        queryFn: fetchDashboardSummary,
+        staleTime: STALE_TIME.composite,
+    });
 }
 
 // Single copy of the KES label lives in fmtKes (gate 1.1; finding F-A7).
