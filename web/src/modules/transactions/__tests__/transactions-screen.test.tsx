@@ -614,6 +614,95 @@ test("interest run 409 (unconfigured rate / no elapsed quarter): sanitized banne
   expect(mocked.runDepositInterest).toHaveBeenCalledTimes(1);
 });
 
+test("IDENTICAL re-entry after 'Post another' is a NEW intent: the key ROTATES and a SECOND wire write happens — no silent ledger omission (review T2)", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+
+  // First posting succeeds.
+  const drawer = await fillEntry(user);
+  await user.click(await confirmEntry(user, drawer));
+  expect(await screen.findByText(/Deposit posted · ref MP-1099/)).toBeInTheDocument();
+  expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(1);
+  const firstKey = mocked.postMoneyWrite.mock.calls[0]?.[3];
+
+  // "Post another" + the byte-identical entry (two equal cash deposits
+  // the same day — a routine SACCO flow): the intent counter rotates
+  // the key, so the server can NEVER dedup the second posting into the
+  // first response while the operator sees success.
+  await user.click(within(drawer).getByRole("button", { name: "Post another" }));
+  await user.type(within(drawer).getByLabelText("Amount (KES)"), "5000.10");
+  await user.selectOptions(within(drawer).getByLabelText("Channel"), "mpesa");
+  await user.click(await confirmEntry(user, drawer));
+
+  expect(await screen.findByText(/Deposit posted · ref MP-1099/)).toBeInTheDocument();
+  expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(2);
+  expect(mocked.postMoneyWrite.mock.calls[1]?.[2]).toEqual({
+    amount: "5000.10",
+    channel: "mpesa",
+  });
+  expect(mocked.postMoneyWrite.mock.calls[1]?.[3]).not.toBe(firstKey);
+});
+
+test("interest-run key custody: STABLE across pure retries (5xx then 409 reuse one key), ROTATED after the acknowledged conflict (review T3)", async () => {
+  const user = userEvent.setup();
+  mocked.runDepositInterest
+    .mockRejectedValueOnce(new ApiError(503, "unavailable", "corr-1"))
+    .mockRejectedValueOnce(new ApiError(409, "conflict", "corr-2"))
+    .mockResolvedValue(INTEREST_RUN);
+  mountScreen();
+
+  await user.click(await screen.findByRole("button", { name: "Run deposit interest" }));
+  const dialog = await screen.findByRole("dialog", { name: "Run deposit interest" });
+
+  async function attempt() {
+    await user.click(within(dialog).getByRole("button", { name: "Run accrual…" }));
+    const confirm = await screen.findByRole("dialog", { name: "Accrue deposit interest" });
+    await user.type(
+      within(confirm).getByLabelText('Type "accrue interest" to confirm'),
+      "accrue interest",
+    );
+    await user.click(within(confirm).getByRole("button", { name: "Accrue deposit interest" }));
+  }
+
+  // 5xx, then the conflict attempt: both are retries of ONE intent —
+  // the key stays STABLE.
+  await attempt();
+  await waitFor(() => expect(mocked.runDepositInterest).toHaveBeenCalledTimes(1));
+  await attempt();
+  await waitFor(() => expect(mocked.runDepositInterest).toHaveBeenCalledTimes(2));
+  const key1 = mocked.runDepositInterest.mock.calls[0]?.[0];
+  expect(mocked.runDepositInterest.mock.calls[1]?.[0]).toBe(key1);
+
+  // The operator fixes the cause (e.g. configures the rate) and retries
+  // in the SAME dialog: a NEW intent — the key ROTATES, so a backend
+  // idempotency store pinned to the 409 can never replay it.
+  await attempt();
+  await waitFor(() => expect(mocked.runDepositInterest).toHaveBeenCalledTimes(3));
+  expect(mocked.runDepositInterest.mock.calls[2]?.[0]).not.toBe(key1);
+  expect(await screen.findByText(/Interest accrued · 2026-04-01 → 2026-06-30/)).toBeInTheDocument();
+});
+
+test("malformed manual date drafts never become server query params (review T4)", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+
+  await screen.findByText("KES 8,000.10");
+  const callsBefore = mocked.fetchTransactionsPage.mock.calls.length;
+  // type="date" can be bypassed by manual entry in some browsers — the
+  // ISO shape is validated before it reaches the query.
+  const fromField = screen.getByLabelText("From date");
+  fromField.removeAttribute("type"); // simulate a browser without date support
+  await user.type(fromField, "18/07/2026");
+  await user.click(screen.getByRole("button", { name: "Apply" }));
+
+  expect(await screen.findByText("Enter dates as YYYY-MM-DD.")).toBeInTheDocument();
+  // No new list fetch with the malformed value.
+  expect(mocked.fetchTransactionsPage.mock.calls.length).toBe(callsBefore);
+  for (const call of mocked.fetchTransactionsPage.mock.calls) {
+    expect((call[0] as { date_from: string }).date_from).toBe("");
+  }
+});
+
 test("Zod boundary rejects money as NUMBERS, unknown enums and leading-zero inputs; the account-txn boundary STRIPS extra keys", () => {
   expect(transactionSchema.safeParse(debitTxn()).success).toBe(true);
   expect(transactionSchema.safeParse({ ...debitTxn(), amount: 8000.1 }).success).toBe(false);

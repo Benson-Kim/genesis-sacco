@@ -93,6 +93,12 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
   // entry after a 409 is a NEW intent with a NEW key — never a replay
   // served from the backend idempotency store's pinned first outcome.
   const [reloadEpoch, setReloadEpoch] = useState(0);
+  // Per-posting intent counter (review T2): bumped on every SUCCESS, so
+  // a teller re-entering an IDENTICAL entry after "Post another" (two
+  // equal cash deposits the same day — a routine SACCO flow) is a NEW
+  // intent with a NEW key. Without it the server would dedup the second
+  // posting and silently omit it from the ledger while showing success.
+  const [intentSeq, setIntentSeq] = useState(0);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
 
   // Member picker: the keyset contract (gate 1.3) — pages of 20 with an
@@ -129,6 +135,7 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
             input,
             member_version: freshMember?.version ?? null,
             reload_epoch: reloadEpoch,
+            intent_seq: intentSeq,
           }),
         ),
       ),
@@ -140,6 +147,8 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
       // be deduplicated server-side rather than double-posting).
       setResult(recorded);
       setResultKind(input.kind);
+      // The NEXT posting is a new intent even if byte-identical (T2).
+      setIntentSeq((seq) => seq + 1);
       setNotice("");
       announce(`${TXN_WRITE_KIND_LABELS[input.kind]} posted to the ledger.`);
       // The register and the member's balances are server facts — refetch.

@@ -50,12 +50,22 @@ export function InterestRunDialog({ onClose }: Readonly<{ onClose: () => void }>
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
   const [result, setResult] = useState<InterestRun | null>(null);
+  // Freshness component (review T3, the !60 F3 class): a 409 here means
+  // the run was structurally rejected (rate unconfigured / quarter not
+  // elapsed) — once the operator fixes the cause and retries in the
+  // SAME dialog, that retry is a NEW intent and must not be served a
+  // pinned stale 409 from the backend idempotency store. The epoch
+  // bumps on conflict only: pure 5xx retries keep the SAME key.
+  const [conflictEpoch, setConflictEpoch] = useState(0);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
 
   const run = useMutation({
     mutationFn: () =>
       runDepositInterest(
-        idempotencyKeyFor(keySlot.current, JSON.stringify({ op: "deposit-interest-run" })),
+        idempotencyKeyFor(
+          keySlot.current,
+          JSON.stringify({ op: "deposit-interest-run", conflict_epoch: conflictEpoch }),
+        ),
       ),
     onSuccess: (recorded) => {
       setConfirming(false);
@@ -64,8 +74,11 @@ export function InterestRunDialog({ onClose }: Readonly<{ onClose: () => void }>
       announce("Deposit-interest run completed.");
       void queryClient.invalidateQueries({ queryKey: ["transactions", "list"] });
     },
-    onError: () => {
+    onError: (error) => {
       setConfirming(false);
+      // Rotate ONLY on the acknowledged conflict (T3); identical 5xx
+      // retries stay on the same key.
+      if (isConflict(error)) setConflictEpoch((epoch) => epoch + 1);
       announce("The deposit-interest run was NOT started.");
     },
   });

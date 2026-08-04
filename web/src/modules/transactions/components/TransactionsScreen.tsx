@@ -38,6 +38,7 @@ import { EMPTY_TXN_FILTERS, fetchTransactionsPage, type TxnListFilters } from ".
 import {
   CHANNELS,
   CHANNEL_LABELS,
+  DATE_RE,
   SIDES,
   SIDE_LABELS,
   TXN_TYPES,
@@ -124,6 +125,7 @@ export function TransactionsScreen() {
   const [refDraft, setRefDraft] = useState("");
   const [fromDraft, setFromDraft] = useState("");
   const [toDraft, setToDraft] = useState("");
+  const [draftError, setDraftError] = useState("");
   const [drawer, setDrawer] = useState<DrawerState>(null);
 
   const list = useKeysetList<Transaction>({
@@ -140,11 +142,23 @@ export function TransactionsScreen() {
 
   function applyDrafts(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // Manual entry can bypass type="date" in some browsers (review T4)
+    // — validate the ISO shape before it becomes a server query param.
+    const fromValue = fromDraft.trim();
+    const toValue = toDraft.trim();
+    if (
+      (fromValue !== "" && !DATE_RE.test(fromValue)) ||
+      (toValue !== "" && !DATE_RE.test(toValue))
+    ) {
+      setDraftError("Enter dates as YYYY-MM-DD.");
+      return;
+    }
+    setDraftError("");
     setFilters((current) => ({
       ...current,
       ref: refDraft.trim(),
-      date_from: fromDraft,
-      date_to: toDraft,
+      date_from: fromValue,
+      date_to: toValue,
     }));
   }
 
@@ -333,6 +347,11 @@ export function TransactionsScreen() {
               />
             </div>
             <Button type="submit">Apply</Button>
+            {draftError !== "" && (
+              <span className={styles.formNote} role="alert">
+                {draftError}
+              </span>
+            )}
           </form>
         </div>
         <div className={styles.toolbarActions}>
