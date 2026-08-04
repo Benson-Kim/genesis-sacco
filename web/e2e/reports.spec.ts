@@ -190,11 +190,10 @@ test("happy path: OTP login → catalogue → ONE wire POST requests the export 
   await expect(page.getByText("Exports requested this session")).toBeVisible();
 
   // Request the export (no filters — the whole-tenant snapshot). The
-  // innermost div CONTAINING the title element is the catalogue card.
-  const trialCard = page
-    .locator("div")
-    .filter({ has: page.getByText("Trial balance", { exact: true }) })
-    .last();
+  // catalogue card is the PARENT of its title element (the jsdom suite
+  // anchors the card the same way; a div :has(title) chain resolves to
+  // the deepest match — the title div itself — which holds no button).
+  const trialCard = page.getByText("Trial balance", { exact: true }).locator("..");
   await trialCard.getByRole("button", { name: "Request export…" }).click();
   const drawer = page.getByRole("dialog", { name: "Request export" });
   await drawer.getByRole("button", { name: "Request export" }).click();
@@ -208,7 +207,9 @@ test("happy path: OTP login → catalogue → ONE wire POST requests the export 
   expect(state.exportBodies[0]).toEqual({ report: "trial_balance" });
   expect(state.exportHeaders[0]?.["idempotency-key"]).toBeTruthy();
   expect(state.exportHeaders[0]?.["authorization"]).toMatch(/^Bearer /);
-  await drawer.getByRole("button", { name: "Close" }).click();
+  // The header ✕ shares the accessible name "Close" with the result
+  // panel's action — scope to the result panel (role=status).
+  await drawer.getByRole("status").getByRole("button", { name: "Close" }).click();
 
   // The witnessed row appeared, still queued.
   await expect(page.getByText("Queued")).toBeVisible();
@@ -220,7 +221,7 @@ test("happy path: OTP login → catalogue → ONE wire POST requests the export 
   await expect(page.getByText("Export queue drained")).toBeVisible();
   expect(state.queueHeaders).toHaveLength(1);
   expect(state.queueHeaders[0]?.["idempotency-key"]).toBeTruthy();
-  await dialog.getByRole("button", { name: "Close" }).click();
+  await dialog.getByRole("status").getByRole("button", { name: "Close" }).click();
 
   // Refresh the requester-only record: completed + server metadata.
   await page.getByRole("button", { name: "Refresh" }).click();
@@ -260,10 +261,8 @@ test("adversarial: a 409 on the request is ONE attempt with a sanitized banner; 
   await login(page);
 
   await page.getByRole("link", { name: "Reports" }).click();
-  const trialCard = page
-    .locator("div")
-    .filter({ has: page.getByText("Trial balance", { exact: true }) })
-    .last();
+  // The card is the title's parent element (see the happy-path note).
+  const trialCard = page.getByText("Trial balance", { exact: true }).locator("..");
   await trialCard.getByRole("button", { name: "Request export…" }).click();
   const drawer = page.getByRole("dialog", { name: "Request export" });
   await drawer.getByRole("button", { name: "Request export" }).click();
