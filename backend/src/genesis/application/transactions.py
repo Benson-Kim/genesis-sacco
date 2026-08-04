@@ -35,9 +35,7 @@ from genesis.errors import ConflictError, InvalidInputError, NotFoundError
 #: taken from this mapping (never from user input) before interpolation.
 _ACCOUNT_TABLES = {"deposit": "deposit_accounts", "share": "share_accounts"}
 
-_TXN_COLS = (
-    "id, txn_ref, member_id, type, amount, channel, occurred_at, reversal_of_id, created_by"
-)
+_TXN_COLS = "id, txn_ref, member_id, type, amount, channel, occurred_at, reversal_of_id, created_by"
 
 
 @dataclass(frozen=True)
