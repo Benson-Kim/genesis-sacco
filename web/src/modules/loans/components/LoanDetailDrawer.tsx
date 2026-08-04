@@ -210,7 +210,14 @@ export function LoanDetailDrawer({
     Object.keys(serverErrors).length > 0;
 
   return (
-    <Modal title="Loan detail" onClose={onClose} closeDisabled={repay.isPending}>
+    // W56-3: the drawer hosts the repayment entry form — a stray overlay
+    // click must never discard operator input; dismissal is ✕ or Escape.
+    <Modal
+      title="Loan detail"
+      onClose={onClose}
+      closeDisabled={repay.isPending}
+      dismissOnOverlay={false}
+    >
       {notice !== "" && <Banner variant="ok">{notice}</Banner>}
       <div className={styles.detailGrid}>
         <Kv label="Member">

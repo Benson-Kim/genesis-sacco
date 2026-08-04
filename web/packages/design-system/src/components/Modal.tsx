@@ -9,6 +9,14 @@ export interface ModalProps {
     onClose: () => void;
     /** Block overlay/✕/Escape dismissal while a mutation is in flight. */
     closeDisabled?: boolean;
+    /**
+     * Opt-out of click-on-overlay dismissal (W56-3): form-bearing
+     * drawers set this false so a stray click outside a half-completed
+     * form never silently discards operator input — closing then
+     * requires the explicit ✕ button or Escape. Read-only surfaces
+     * keep the default overlay dismissal.
+     */
+    dismissOnOverlay?: boolean;
     /** drawer = right-hand panel (prototype drawer); dialog = centered box. */
     variant?: "drawer" | "dialog";
 }
@@ -35,6 +43,7 @@ export function Modal({
     children,
     onClose,
     closeDisabled = false,
+    dismissOnOverlay = true,
     variant = "drawer",
 }: Readonly<ModalProps>) {
     const dialogRef = useRef<HTMLDivElement>(null);
@@ -94,7 +103,9 @@ export function Modal({
         <div
             className={variant === "dialog" ? styles.overlayCenter : styles.overlay}
             onClick={(event) => {
-                if (event.target === event.currentTarget && !closeDisabled) onClose();
+                if (event.target === event.currentTarget && !closeDisabled && dismissOnOverlay) {
+                    onClose();
+                }
             }}
             role="presentation"
         >

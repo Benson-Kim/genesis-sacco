@@ -9,7 +9,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Modal } from "../components/Modal";
 
-function Harness({ closeDisabled = false }: Readonly<{ closeDisabled?: boolean }>) {
+function Harness({
+  closeDisabled = false,
+  dismissOnOverlay,
+}: Readonly<{ closeDisabled?: boolean; dismissOnOverlay?: boolean }>) {
   const [open, setOpen] = useState(false);
   return (
     <div>
@@ -17,7 +20,12 @@ function Harness({ closeDisabled = false }: Readonly<{ closeDisabled?: boolean }
         Open drawer
       </button>
       {open && (
-        <Modal title="Test drawer" onClose={() => setOpen(false)} closeDisabled={closeDisabled}>
+        <Modal
+          title="Test drawer"
+          onClose={() => setOpen(false)}
+          closeDisabled={closeDisabled}
+          {...(dismissOnOverlay === undefined ? {} : { dismissOnOverlay })}
+        >
           <input aria-label="First field" />
           <button type="button">Middle action</button>
           <button type="button">Last action</button>
@@ -79,4 +87,38 @@ test("Escape is ignored while closeDisabled (in-flight mutation must not lose st
 
   await user.keyboard("{Escape}");
   expect(screen.getByRole("dialog", { name: "Test drawer" })).toBeInTheDocument();
+});
+
+test("overlay click dismisses by default (read-only drawers keep the light dismissal)", async () => {
+  const user = userEvent.setup();
+  const { container } = render(<Harness />);
+  await user.click(screen.getByRole("button", { name: "Open drawer" }));
+  expect(screen.getByRole("dialog", { name: "Test drawer" })).toBeInTheDocument();
+
+  const overlay = container.querySelector('[role="presentation"]');
+  expect(overlay).not.toBeNull();
+  await user.click(overlay as HTMLElement);
+  expect(screen.queryByRole("dialog", { name: "Test drawer" })).toBeNull();
+});
+
+test("W56-3: dismissOnOverlay={false} — a stray overlay click on a dirty form does NOT close (no silent data loss); ✕ still closes", async () => {
+  const user = userEvent.setup();
+  const { container } = render(<Harness dismissOnOverlay={false} />);
+  await user.click(screen.getByRole("button", { name: "Open drawer" }));
+
+  // The operator has typed into the form (dirty state)…
+  await user.type(screen.getByRole("textbox", { name: "First field" }), "half-completed entry");
+
+  // …and a stray click outside the drawer must NOT discard it.
+  const overlay = container.querySelector('[role="presentation"]');
+  expect(overlay).not.toBeNull();
+  await user.click(overlay as HTMLElement);
+  expect(screen.getByRole("dialog", { name: "Test drawer" })).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "First field" })).toHaveValue(
+    "half-completed entry",
+  );
+
+  // Explicit dismissal remains available.
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog", { name: "Test drawer" })).toBeNull();
 });

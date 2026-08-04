@@ -89,7 +89,14 @@ export function ProductCreateDrawer({
   }
 
   return (
-    <Modal title="Add product" onClose={onClose} closeDisabled={create.isPending}>
+    <Modal
+      title="Add product"
+      onClose={onClose}
+      closeDisabled={create.isPending}
+      // W56-3: a stray overlay click must never discard a half-completed
+      // product form — dismissal is the explicit ✕ or Escape.
+      dismissOnOverlay={false}
+    >
       <form onSubmit={submit} noValidate>
         {create.isError && <ErrorBanner error={create.error} />}
         <FormField id="new-product-name" label="Product name" error={fieldErrors["name"]}>
