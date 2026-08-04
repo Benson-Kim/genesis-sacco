@@ -32,7 +32,7 @@ import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
 import { fmtKes } from "@/lib/format";
 import { STALE_TIME } from "@/lib/query";
-import { useProducts } from "@/modules/applications/components/ApplicationsScreen";
+import { useProducts } from "@/modules/applications/useProducts";
 import { fetchApplicationsPage } from "@/modules/applications/api";
 import type { Application } from "@/modules/applications/schemas";
 import { coverPill } from "@/modules/applications/components/pills";
