@@ -15,7 +15,7 @@
  * - Tab panels are next/dynamic chunks (Phase B speed): the products
  *   editor never loads unless its tab is opened.
  */
-import { useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 import { Banner, Card } from "@genesis/design-system";
@@ -62,16 +62,42 @@ export function useSettings() {
 export function SettingsScreen() {
   const [tab, setTab] = useState<TabId>("interest");
   const settings = useSettings();
+  const tabRefs = useRef<Map<TabId, HTMLButtonElement>>(new Map());
+
+  // Conforming ARIA tabs pattern (W57-4, issue #8): roving tabindex —
+  // one tab stop for the whole tablist; Left/Right (wrapping) and
+  // Home/End move BOTH selection and focus (automatic activation).
+  function onTablistKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const order = TABS.map((entry) => entry.id);
+    const index = order.indexOf(tab);
+    let next: TabId | undefined;
+    if (event.key === "ArrowRight") next = order[(index + 1) % order.length];
+    else if (event.key === "ArrowLeft") next = order[(index - 1 + order.length) % order.length];
+    else if (event.key === "Home") next = order[0];
+    else if (event.key === "End") next = order[order.length - 1];
+    if (next !== undefined) {
+      event.preventDefault();
+      setTab(next);
+      tabRefs.current.get(next)?.focus();
+    }
+  }
 
   return (
     <div className={styles.page}>
-      <div className={styles.tabs} role="tablist">
+      <div className={styles.tabs} role="tablist" aria-label="Settings sections" onKeyDown={onTablistKeyDown}>
         {TABS.map((entry) => (
           <button
             key={entry.id}
+            ref={(node) => {
+              if (node !== null) tabRefs.current.set(entry.id, node);
+              else tabRefs.current.delete(entry.id);
+            }}
             type="button"
             role="tab"
+            id={`settings-tab-${entry.id}`}
             aria-selected={tab === entry.id}
+            aria-controls="settings-tabpanel"
+            tabIndex={tab === entry.id ? 0 : -1}
             className={`${styles.tab}${tab === entry.id ? ` ${styles.tabActive}` : ""}`}
             onClick={() => setTab(entry.id)}
           >
@@ -80,6 +106,11 @@ export function SettingsScreen() {
         ))}
       </div>
 
+      <div
+        role="tabpanel"
+        id="settings-tabpanel"
+        aria-labelledby={`settings-tab-${tab}`}
+      >
       {tab === "products" ? (
         <ProductsScreen />
       ) : settings.isPending ? (
@@ -126,6 +157,7 @@ export function SettingsScreen() {
           )}
         </>
       )}
+      </div>
     </div>
   );
 }

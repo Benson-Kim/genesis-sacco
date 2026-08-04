@@ -64,7 +64,14 @@ export function UserCreateDrawer({
   }
 
   return (
-    <Modal title="Add user" onClose={onClose} closeDisabled={create.isPending}>
+    <Modal
+      title="Add user"
+      onClose={onClose}
+      closeDisabled={create.isPending}
+      // W56-3: a stray overlay click must never discard a half-completed
+      // user-create form — dismissal is the explicit ✕ or Escape.
+      dismissOnOverlay={false}
+    >
       <form onSubmit={submit}>
         <Field label="Full name" htmlFor="create-name">
           <input

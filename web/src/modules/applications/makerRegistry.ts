@@ -21,6 +21,7 @@
  * approval-authority bands. Surfacing the recommender in the contract is
  * recorded as follow-up scope in the MR.
  */
+import { registerSessionScopedStore } from "@/modules/auth/sessionScopedStores";
 
 const makers = new Map<string, string>();
 
@@ -37,7 +38,15 @@ export function committeeMakerOf(applicationId: string): string {
   return makers.get(applicationId) ?? MAKER_UNKNOWN;
 }
 
-/** Test/sign-out hygiene. */
+/** Session-teardown hygiene (W58-2, the !60 F2 class): registered as a
+ * session-scoped store below, so BOTH teardown paths — the query-path
+ * 401 dual-cache teardown and explicit sign-out — clear it. A prior
+ * operator's referral attributions never feed the next session's
+ * MakerCheckerPanel SoD decision. Also test hygiene. */
 export function clearCommitteeMakers(): void {
   makers.clear();
 }
+
+// Teardown wiring by construction (W58-2): registration at module scope
+// means the registry cannot exist without dying on session teardown.
+registerSessionScopedStore(clearCommitteeMakers);

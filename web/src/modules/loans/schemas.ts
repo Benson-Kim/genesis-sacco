@@ -163,8 +163,11 @@ export const CHANNEL_LABELS: Record<CashChannel, string> = {
   bank: "Bank",
 };
 
-const DECIMAL_RE = /^\d+(?:\.\d{1,2})?$/;
-const ALL_ZERO_RE = /^0+(?:\.0{1,2})?$/;
+/** Leading zeros rejected (W59-5, the !60 F6 class): "007.10" is not a
+ * well-formed decimal string and the typed-confirmation banner must
+ * never render "KES 007.10". Pure string shape — no numeric coercion. */
+const DECIMAL_RE = /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/;
+const ALL_ZERO_RE = /^0(?:\.0{1,2})?$/;
 
 /**
  * Client-side pre-validation of the repayment form (the server

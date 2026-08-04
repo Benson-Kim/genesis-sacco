@@ -88,7 +88,9 @@ export function UserDetailDrawer({
   const suspendTarget: UserStatus = user.status === "active" ? "suspended" : "active";
 
   return (
-    <Modal title={title} onClose={onClose}>
+    // W56-3: the drawer hosts the profile-edit form — a stray overlay
+    // click must never discard operator input; dismissal is ✕ or Escape.
+    <Modal title={title} onClose={onClose} dismissOnOverlay={false}>
       {editing ? (
         <>
           {reloadNotice && (
@@ -403,6 +405,9 @@ function ConfirmActionDialog({
       title={titles[kind]}
       onClose={onClose}
       closeDisabled={action.isPending}
+      // W56-3: the role/status confirm dialog carries form input (the
+      // role picker) — a stray overlay click must not discard it.
+      dismissOnOverlay={false}
       variant="dialog"
     >
       {otpResult !== null ? (

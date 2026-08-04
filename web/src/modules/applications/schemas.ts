@@ -58,12 +58,15 @@ export const applicationSchema = z.object({
 export type Application = z.infer<typeof applicationSchema>;
 
 /** Committee tally after a vote (VoteResultOut) — COUNTS + decision only;
- * the server never discloses who voted which way through this endpoint. */
+ * the server never discloses who voted which way through this endpoint.
+ * Boundary strictness (W58-4): `decision` and `stage` REJECT unknown
+ * vocabulary, matching this module's own applicationSchema — an unknown
+ * value is a contract violation, never silently rendered. */
 export const voteResultSchema = z.object({
   approvals: z.number().int(),
   rejections: z.number().int(),
-  decision: z.string().nullable(),
-  stage: z.string(),
+  decision: z.enum(["approved", "rejected"]).nullable(),
+  stage: applicationStageSchema,
 });
 
 export type VoteResult = z.infer<typeof voteResultSchema>;
@@ -89,7 +92,11 @@ export const productSchema = z.object({
 export const productsSchema = z.array(productSchema);
 export type Product = z.infer<typeof productSchema>;
 
-const DECIMAL_RE = /^\d+(?:\.\d{1,2})?$/;
+/** Leading zeros rejected (W58-5, the !60 F6 class): "007.10" is not a
+ * well-formed decimal string and would render as "KES 007.10" in the
+ * confirmation copy. Pure string shape — no numeric coercion anywhere. */
+const DECIMAL_RE = /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/;
+const ALL_ZERO_RE = /^0(?:\.0{1,2})?$/;
 
 /**
  * Client-side pre-validation of the intake form (the server re-validates
@@ -103,7 +110,10 @@ export const applicationCreateSchema = z.object({
   product_id: z.string().uuid({ message: "Select a loan product." }),
   amount: z
     .string()
-    .regex(DECIMAL_RE, "Enter a positive amount (up to 2 decimal places)."),
+    .regex(DECIMAL_RE, "Enter a positive amount (up to 2 decimal places).")
+    .refine((value) => !ALL_ZERO_RE.test(value), {
+      message: "Enter an amount greater than zero.",
+    }),
   term_months: z
     .number({ invalid_type_error: "Enter the term in months." })
     .int("Enter whole months.")

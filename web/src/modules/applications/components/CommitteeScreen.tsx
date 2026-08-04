@@ -22,7 +22,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, Card, Modal, Pill } from "@genesis/design-system";
+import { Banner, Button, Card, ConfirmDangerModal, Pill } from "@genesis/design-system";
 import { MakerCheckerPanel } from "@/modules/authz/components/MakerCheckerPanel";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
@@ -36,6 +36,7 @@ import { useKeysetList } from "@/modules/table/useKeysetList";
 import { fetchMember } from "@/modules/members/api";
 import { fetchApplication, fetchApplicationsPage, voteOnApplication } from "../api";
 import { committeeMakerOf, MAKER_UNKNOWN } from "../makerRegistry";
+import { recordVotedApplication, useHasVotedOn } from "../votedRegistry";
 import { getOwnUserId } from "@/modules/auth/session";
 import type { Application, Vote, VoteResult } from "../schemas";
 import { useProducts } from "../useProducts";
@@ -115,6 +116,9 @@ function ReviewPanel({ applicationId }: Readonly<{ applicationId: string }>) {
   const products = useProducts();
   const [confirmVote, setConfirmVote] = useState<Vote | null>(null);
   const [result, setResult] = useState<VoteResult | null>(null);
+  // Spent affordance across remounts (W58-6): switching agenda items and
+  // back must not re-arm the vote buttons after a recorded vote.
+  const alreadyVoted = useHasVotedOn(applicationId);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
 
   const detail = useQuery({
@@ -148,6 +152,9 @@ function ReviewPanel({ applicationId }: Readonly<{ applicationId: string }>) {
     onSuccess: (tally) => {
       setConfirmVote(null);
       setResult(tally);
+      // The vote is SPENT for this tab (W58-6): the per-tab registry
+      // keeps the affordance withdrawn across panel remounts.
+      recordVotedApplication(applicationId);
       announce(tally.decision === null ? "Vote recorded." : "Committee decision reached.");
       // The vote may have decided the application: refresh the record and
       // every list (the agenda drops decided applications).
@@ -272,18 +279,24 @@ function ReviewPanel({ applicationId }: Readonly<{ applicationId: string }>) {
                 is resolved server-side at vote time. Approve votes are capped by
                 your approval-authority band.
               </div>
+              {alreadyVoted && result === null && (
+                <div className={styles.formNote}>
+                  This tab already recorded your vote on this application —
+                  one vote per committee member; the buttons stay spent.
+                </div>
+              )}
               <div className={styles.voteActions}>
                 <Button
                   variant="danger"
                   onClick={() => setConfirmVote("reject")}
-                  disabled={vote.isPending || result !== null}
+                  disabled={vote.isPending || result !== null || alreadyVoted}
                 >
                   Vote reject
                 </Button>
                 <Button
                   variant="primary"
                   onClick={() => setConfirmVote("approve")}
-                  disabled={vote.isPending || result !== null}
+                  disabled={vote.isPending || result !== null || alreadyVoted}
                 >
                   Vote approve
                 </Button>
@@ -301,36 +314,30 @@ function ReviewPanel({ applicationId }: Readonly<{ applicationId: string }>) {
           Awaiting committee decision on {fmtKes(app.amount)} over {app.term_months} months.
         </div>
       </MakerCheckerPanel>
+      {/* Typed confirmation (W58-3, blocker (f)): a vote decides money
+          movement (quorum approval leads directly to disbursement), so
+          it carries the same ConfirmDangerModal treatment as every
+          other money-adjacent write — typed phrase, pending
+          short-circuit, exactly one wire write per confirmation. */}
       {confirmVote !== null && (
-        <Modal
+        <ConfirmDangerModal
           title={confirmVote === "approve" ? "Cast approve vote" : "Cast reject vote"}
+          confirmPhrase={app.id.slice(0, 8)}
+          confirmLabel={
+            confirmVote === "approve" ? "Confirm approve vote" : "Confirm reject vote"
+          }
+          pending={vote.isPending}
+          onConfirm={() => {
+            if (!vote.isPending) vote.mutate(confirmVote);
+          }}
           onClose={() => setConfirmVote(null)}
-          closeDisabled={vote.isPending}
-          variant="dialog"
         >
           <Banner>
             Your vote is recorded once and cannot be changed (one vote per
-            committee member). A quorum of votes decides the application.
+            committee member). A quorum of votes decides the application
+            — approval leads directly to disbursement.
           </Banner>
-          <div className={styles.actions}>
-            <Button onClick={() => setConfirmVote(null)} disabled={vote.isPending}>
-              Cancel
-            </Button>
-            <Button
-              variant={confirmVote === "approve" ? "primary" : "danger"}
-              onClick={() => {
-                if (!vote.isPending) vote.mutate(confirmVote);
-              }}
-              disabled={vote.isPending}
-            >
-              {vote.isPending
-                ? "Recording…"
-                : confirmVote === "approve"
-                  ? "Confirm approve vote"
-                  : "Confirm reject vote"}
-            </Button>
-          </div>
-        </Modal>
+        </ConfirmDangerModal>
       )}
     </Card>
   );

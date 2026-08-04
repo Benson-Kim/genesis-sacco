@@ -84,6 +84,12 @@ export function LoanDetailDrawer({
   const [quoteRequested, setQuoteRequested] = useState(false);
   const [notice, setNotice] = useState<string>("");
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
+  // Per-posting intent counter (W59-3, the !61 T2 class): bumped on every
+  // SUCCESSFUL posting so a teller re-entering an IDENTICAL repayment
+  // (routine — e.g. two equal instalment payments the same day) is a NEW
+  // posting intent with a NEW key. Stability across retries of one
+  // UNPOSTED intent is untouched (the counter only moves on success).
+  const postingSeq = useRef(0);
 
   const detail = useQuery({
     queryKey: ["loans", "detail", loanId],
@@ -123,15 +129,30 @@ export function LoanDetailDrawer({
         input,
         idempotencyKeyFor(
           keySlot.current,
-          JSON.stringify({ op: "repayment", id: loanId, input }),
+          // Key material = intent + FRESHNESS (W59-2, the !60 F3 class):
+          // the version of the fresh (staleTime 0) loan read anchors the
+          // key to the record state the operator acted on — stable
+          // across pure retries, rotated when the entry changes OR when
+          // a post-409 reload bumped the loan version.
+          JSON.stringify({
+            op: "repayment",
+            id: loanId,
+            recordVersion: detail.data?.version ?? null,
+            // W59-3: identical legitimate re-postings are distinct
+            // intents — the server must never dedup them silently.
+            postingSeq: postingSeq.current,
+            input,
+          }),
         ),
       ),
     onSuccess: (recorded) => {
       setConfirmRepay(null);
       setResult(recorded);
-      // Entry cleared: composing the next repayment is a NEW intent (a
-      // resubmitted IDENTICAL entry would reuse the same key and be
-      // deduplicated server-side rather than double-posting).
+      // The posting landed: the NEXT posting — even a byte-identical
+      // re-entry — is a NEW intent and must carry a NEW key (W59-3);
+      // otherwise the server dedups it and the ledger silently omits a
+      // legitimate second payment while the screen shows success.
+      postingSeq.current += 1;
       setAmount("");
       setChannel("");
       setClientErrors({});
@@ -182,6 +203,9 @@ export function LoanDetailDrawer({
     void queryClient.refetchQueries({ queryKey: ["loans", "schedule", loanId] });
     repay.reset();
     setNotice("Record reloaded — re-check the loan before acting again.");
+    // Every async outcome is announced (issue #8): the post-conflict
+    // reload is an outcome, not a success (W59-4, the !60 F5 class).
+    announce("Record reloaded after the conflict — re-check the loan.");
   }
 
   function submitRepayment(event: FormEvent<HTMLFormElement>) {
@@ -210,8 +234,17 @@ export function LoanDetailDrawer({
     Object.keys(serverErrors).length > 0;
 
   return (
-    <Modal title="Loan detail" onClose={onClose} closeDisabled={repay.isPending}>
-      {notice !== "" && <Banner variant="ok">{notice}</Banner>}
+    // W56-3: the drawer hosts the repayment entry form — a stray overlay
+    // click must never discard operator input; dismissal is ✕ or Escape.
+    <Modal
+      title="Loan detail"
+      onClose={onClose}
+      closeDisabled={repay.isPending}
+      dismissOnOverlay={false}
+    >
+      {/* Informational, NOT success styling: the notice reports a
+          post-conflict reload (W59-4, the !60 F5 class). */}
+      {notice !== "" && <Banner variant="info">{notice}</Banner>}
       <div className={styles.detailGrid}>
         <Kv label="Member">
           {member.data !== undefined ? (

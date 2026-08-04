@@ -47,30 +47,21 @@ interface BandRow {
 const RATE_MSG = "Decimal like 12 or 12.5 (max 2dp)";
 const AMOUNT_MSG = "Amount like 100000 or 100000.50 (max 2dp)";
 
-/** Unknown stored enum values degrade to "not configured" at load so
- * they are never silently resubmitted (F-A5 graceful-degradation). */
-function knownOrEmpty(value: string | null, vocabulary: readonly string[]): string {
-  return value !== null && vocabulary.includes(value) ? value : "";
-}
-
 export function InterestPanel({ settings }: Readonly<{ settings: Settings }>) {
   const permissions = usePermissions();
   const mayEdit = can(permissions.data, "settings", "edit");
   const flow = useSettingsSaveFlow("interest");
 
-  const [method, setMethod] = useState(
-    knownOrEmpty(settings.loan_interest_method, LOAN_INTEREST_METHODS),
-  );
-  const [basis, setBasis] = useState(
-    knownOrEmpty(settings.loan_interest_basis, LOAN_INTEREST_BASES),
-  );
+  // The boundary REJECTS unknown enum vocabulary (W57-2), so the
+  // selects prefill the stored value directly — a degraded-to-blank
+  // value that would be silently NULLED on save can no longer exist.
+  const [method, setMethod] = useState<string>(settings.loan_interest_method ?? "");
+  const [basis, setBasis] = useState<string>(settings.loan_interest_basis ?? "");
   const [penaltyRate, setPenaltyRate] = useState(settings.penalty_rate_pct_per_month ?? "");
   const [penaltyGrace, setPenaltyGrace] = useState(
     settings.penalty_grace_days === null ? "" : String(settings.penalty_grace_days),
   );
-  const [chargedOn, setChargedOn] = useState(
-    knownOrEmpty(settings.penalty_charged_on, PENALTY_CHARGED_ON),
-  );
+  const [chargedOn, setChargedOn] = useState<string>(settings.penalty_charged_on ?? "");
   const [depositRate, setDepositRate] = useState(
     settings.deposit_interest_annual_rate_pct ?? "",
   );
@@ -172,9 +163,7 @@ export function InterestPanel({ settings }: Readonly<{ settings: Settings }>) {
                 <select
                   {...control}
                   className={styles.select}
-                  value={
-                    (LOAN_INTEREST_METHODS as readonly string[]).includes(method) ? method : ""
-                  }
+                  value={method}
                   disabled={!mayEdit}
                   onChange={(event) => setMethod(event.target.value)}
                 >
@@ -196,7 +185,7 @@ export function InterestPanel({ settings }: Readonly<{ settings: Settings }>) {
                 <select
                   {...control}
                   className={styles.select}
-                  value={(LOAN_INTEREST_BASES as readonly string[]).includes(basis) ? basis : ""}
+                  value={basis}
                   disabled={!mayEdit}
                   onChange={(event) => setBasis(event.target.value)}
                 >
@@ -258,9 +247,7 @@ export function InterestPanel({ settings }: Readonly<{ settings: Settings }>) {
               <select
                 {...control}
                 className={styles.select}
-                value={
-                  (PENALTY_CHARGED_ON as readonly string[]).includes(chargedOn) ? chargedOn : ""
-                }
+                value={chargedOn}
                 disabled={!mayEdit}
                 onChange={(event) => setChargedOn(event.target.value)}
               >
@@ -423,6 +410,7 @@ export function InterestPanel({ settings }: Readonly<{ settings: Settings }>) {
             buttonLabel="Save interest rules"
             confirmTitle="Apply interest rules"
             confirmPhrase="interest"
+            settings={settings}
           >
             <div className={styles.formNote}>
               Interest, penalty and dividend parameters drive money postings

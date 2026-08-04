@@ -13,11 +13,13 @@ import { ApiError } from "@genesis/api-client";
 import { Providers } from "@/app/providers";
 import { clearSession, hasSession, setSession } from "@/modules/auth/session";
 import { usePermissions } from "@/modules/authz/usePermissions";
+import { announce } from "@/modules/layout/announcer";
 import { LoansScreen } from "../components/LoansScreen";
 import {
   disbursementSchema,
   loanSchema,
   portfolioSummarySchema,
+  repaymentCreateSchema,
   type Disbursement,
   type Loan,
   type PortfolioSummary,
@@ -63,10 +65,21 @@ jest.mock("@/modules/authz/usePermissions", () => ({
   usePermissions: jest.fn(),
 }));
 
+// The live-region announcer is a spy so the suites can prove every
+// async outcome — including the post-conflict reload (W59-4) — is
+// announced.
+jest.mock("@/modules/layout/announcer", () => {
+  const actual = jest.requireActual<typeof import("@/modules/layout/announcer")>(
+    "@/modules/layout/announcer",
+  );
+  return { ...actual, announce: jest.fn() };
+});
+
 const mocked = jest.mocked(loansApi);
 const mockedApps = jest.mocked(appsApi);
 const mockedMembers = jest.mocked(membersApi);
 const mockedPermissions = jest.mocked(usePermissions);
+const mockedAnnounce = jest.mocked(announce);
 
 const ADMIN_ID = "99999999-9999-9999-9999-999999999999";
 const MEMBER_ID = "11111111-1111-1111-1111-111111111111";
@@ -392,6 +405,14 @@ test("stale disbursement: 409 shows the explicit reload flow with EXACTLY ONE wr
   expect(
     await screen.findByText(/not in the approved stage — disbursement is not/),
   ).toBeInTheDocument();
+  // The reload notice reports a post-conflict state: informational
+  // styling, NEVER the success variant — and it is announced (W59-4).
+  const reloadNotice = screen.getByText(/Record reloaded — re-check the application stage/);
+  expect(reloadNotice).toHaveClass("info");
+  expect(reloadNotice).not.toHaveClass("ok");
+  expect(mockedAnnounce).toHaveBeenCalledWith(
+    "Record reloaded after the conflict — re-check the application stage.",
+  );
   // …the action is gone and the stale write was NEVER replayed.
   expect(screen.queryByRole("button", { name: "Disburse…" })).toBeNull();
   expect(mocked.disburseApplication).toHaveBeenCalledTimes(1);
@@ -426,6 +447,31 @@ test("disbursement idempotency keys: stable across retries of an identical inten
   await user.click(await confirmDisburse(user, dialog, "bank"));
   await waitFor(() => expect(mocked.disburseApplication).toHaveBeenCalledTimes(3));
   expect(mocked.disburseApplication.mock.calls[2]?.[2]).not.toBe(key1);
+});
+
+test("disbursement key freshness (W59-2, the !60 F3 class): after 409 + explicit reload, an identical re-attempt uses a ROTATED key", async () => {
+  const user = userEvent.setup();
+  mocked.disburseApplication.mockRejectedValue(new ApiError(409, "conflict", "corr-stale"));
+  mountScreen();
+
+  const dialog = await openDisburseDialog(user);
+  await user.click(await confirmDisburse(user, dialog));
+  expect(await screen.findByText(/Your change was NOT applied/)).toBeInTheDocument();
+  expect(mocked.disburseApplication).toHaveBeenCalledTimes(1);
+  const key1 = mocked.disburseApplication.mock.calls[0]?.[2];
+
+  // Explicit reload: the record moved underneath (version bumped) but is
+  // STILL approved — e.g. a concurrent non-stage edit — so an identical
+  // channel re-attempt is now a legitimate NEW intent…
+  mockedApps.fetchApplication.mockResolvedValue(approvedApplication({ version: 6 }));
+  await user.click(screen.getByRole("button", { name: "Reload record" }));
+  await waitFor(() => expect(mockedApps.fetchApplication).toHaveBeenCalledTimes(2));
+
+  // …and the reloaded record version in the key material ROTATES the key:
+  // the backend idempotency store can never pin the pre-conflict outcome.
+  await user.click(await confirmDisburse(user, dialog));
+  await waitFor(() => expect(mocked.disburseApplication).toHaveBeenCalledTimes(2));
+  expect(mocked.disburseApplication.mock.calls[1]?.[2]).not.toBe(key1);
 });
 
 test("repayment: NO write until the byte-identical phrase; double-clicked confirm posts ONCE; the amount travels as the typed STRING; the allocation renders verbatim", async () => {
@@ -545,6 +591,99 @@ test("repayment 409 (loan state moved): explicit reload flow, EXACTLY ONE attemp
     await screen.findByText(/not active — the contract accepts no further repayments/),
   ).toBeInTheDocument();
   expect(mocked.recordRepayment).toHaveBeenCalledTimes(1);
+  // The reload notice reports a post-conflict state: informational
+  // styling, NEVER the success variant — and it is announced (W59-4).
+  const reloadNotice = screen.getByText(/Record reloaded — re-check the loan/);
+  expect(reloadNotice).toHaveClass("info");
+  expect(reloadNotice).not.toHaveClass("ok");
+  expect(mockedAnnounce).toHaveBeenCalledWith(
+    "Record reloaded after the conflict — re-check the loan.",
+  );
+});
+
+test("repayment key freshness (W59-2, the !60 F3 class): after 409 + explicit reload, an identical re-entry uses a ROTATED key", async () => {
+  const user = userEvent.setup();
+  mocked.recordRepayment.mockRejectedValue(new ApiError(409, "conflict", "corr-repay"));
+  mountScreen();
+
+  await user.click(await screen.findByText("KES 1,234,567.10"));
+  const drawer = await screen.findByRole("dialog", { name: "Loan detail" });
+  await user.type(within(drawer).getByLabelText("Amount (KES)"), "5000.00");
+  await user.selectOptions(within(drawer).getByLabelText("Channel"), "mpesa");
+  await user.click(within(drawer).getByRole("button", { name: "Record repayment…" }));
+  const confirm = await screen.findByRole("dialog", { name: "Record repayment" });
+  const phrase = LOAN_ID.slice(0, 8);
+  await user.type(within(confirm).getByLabelText(`Type "${phrase}" to confirm`), phrase);
+  await user.click(within(confirm).getByRole("button", { name: "Record repayment" }));
+
+  expect(await screen.findByText(/Your change was NOT applied/)).toBeInTheDocument();
+  expect(mocked.recordRepayment).toHaveBeenCalledTimes(1);
+  const key1 = mocked.recordRepayment.mock.calls[0]?.[2];
+
+  // Explicit reload: the loan moved underneath (version bumped) but is
+  // STILL active — an identical re-entry is now a legitimate NEW intent…
+  mocked.fetchLoan.mockResolvedValue(baseLoan({ version: 8 }));
+  await user.click(screen.getByRole("button", { name: "Reload record" }));
+  await waitFor(() => expect(mocked.fetchLoan).toHaveBeenCalledTimes(2));
+
+  // …and the reloaded loan version in the key material ROTATES the key.
+  await user.click(within(drawer).getByRole("button", { name: "Record repayment…" }));
+  const confirm2 = await screen.findByRole("dialog", { name: "Record repayment" });
+  await user.type(within(confirm2).getByLabelText(`Type "${phrase}" to confirm`), phrase);
+  await user.click(within(confirm2).getByRole("button", { name: "Record repayment" }));
+
+  await waitFor(() => expect(mocked.recordRepayment).toHaveBeenCalledTimes(2));
+  expect(mocked.recordRepayment.mock.calls[1]?.[2]).not.toBe(key1);
+});
+
+test("per-posting intent counter (W59-3, the !61 T2 class): an IDENTICAL legitimate re-entry after success ROTATES the key — a second wire write is observed, never a silent dedup", async () => {
+  const user = userEvent.setup();
+  const recorded: RepaymentResult = {
+    txn_id: "ffffffff-1111-2222-3333-444444444444",
+    txn_ref: "TXN-0007",
+    penalties: "0.00",
+    interest: "0.00",
+    principal: "5000.00",
+    balance_after: "1229567.10",
+    penalty_due_after: "0.00",
+    status: "active",
+  };
+  mocked.recordRepayment.mockResolvedValue(recorded);
+  mountScreen();
+
+  await user.click(await screen.findByText("KES 1,234,567.10"));
+  const drawer = await screen.findByRole("dialog", { name: "Loan detail" });
+  const phrase = LOAN_ID.slice(0, 8);
+
+  // First posting: 5000.00 via mpesa.
+  await user.type(within(drawer).getByLabelText("Amount (KES)"), "5000.00");
+  await user.selectOptions(within(drawer).getByLabelText("Channel"), "mpesa");
+  await user.click(within(drawer).getByRole("button", { name: "Record repayment…" }));
+  const confirm1 = await screen.findByRole("dialog", { name: "Record repayment" });
+  await user.type(within(confirm1).getByLabelText(`Type "${phrase}" to confirm`), phrase);
+  await user.click(within(confirm1).getByRole("button", { name: "Record repayment" }));
+  await waitFor(() => expect(mocked.recordRepayment).toHaveBeenCalledTimes(1));
+  const key1 = mocked.recordRepayment.mock.calls[0]?.[2];
+
+  // The teller records a SECOND, byte-identical repayment (routine —
+  // e.g. two equal instalment payments the same day). The loan version
+  // is unchanged in this harness, so ONLY the per-posting intent
+  // counter distinguishes the intents.
+  await user.type(within(drawer).getByLabelText("Amount (KES)"), "5000.00");
+  await user.selectOptions(within(drawer).getByLabelText("Channel"), "mpesa");
+  await user.click(within(drawer).getByRole("button", { name: "Record repayment…" }));
+  const confirm2 = await screen.findByRole("dialog", { name: "Record repayment" });
+  await user.type(within(confirm2).getByLabelText(`Type "${phrase}" to confirm`), phrase);
+  await user.click(within(confirm2).getByRole("button", { name: "Record repayment" }));
+
+  // A SECOND wire write is observed with a ROTATED key — the server can
+  // never silently dedup the legitimate second payment.
+  await waitFor(() => expect(mocked.recordRepayment).toHaveBeenCalledTimes(2));
+  expect(mocked.recordRepayment.mock.calls[1]?.[1]).toEqual({
+    amount: "5000.00",
+    channel: "mpesa",
+  });
+  expect(mocked.recordRepayment.mock.calls[1]?.[2]).not.toBe(key1);
 });
 
 test("least-disclosure: a 403 on disbursement renders the sanitized banner only, session intact", async () => {
@@ -605,4 +744,21 @@ test("Zod boundary rejects money as NUMBERS and unknown statuses/classes; the di
     internal_gl_account: "GL-SECRET-01",
   });
   expect("internal_gl_account" in parsed).toBe(false);
+});
+
+test("repayment amount rejects leading zeros and zero amounts (W59-5, the !60 F6 class) — pure string shape", () => {
+  const parse = (amount: string) =>
+    repaymentCreateSchema.safeParse({ amount, channel: "mpesa" });
+  // Well-formed decimal strings pass…
+  expect(parse("5000").success).toBe(true);
+  expect(parse("5000.10").success).toBe(true);
+  expect(parse("0.50").success).toBe(true);
+  // …leading zeros are rejected (the typed-confirmation banner can
+  // never render "KES 007.10")…
+  expect(parse("007.10").success).toBe(false);
+  expect(parse("050").success).toBe(false);
+  expect(parse("00.10").success).toBe(false);
+  // …and the existing non-zero refine still holds.
+  expect(parse("0").success).toBe(false);
+  expect(parse("0.00").success).toBe(false);
 });

@@ -245,6 +245,7 @@ export function ApprovalPanel({ settings }: Readonly<{ settings: Settings }>) {
           buttonLabel="Save matrix"
           confirmTitle="Apply approval matrix"
           confirmPhrase="approval"
+          settings={settings}
         >
           <div className={styles.formNote}>
             Authority ceilings and quorum gate money-moving approvals from

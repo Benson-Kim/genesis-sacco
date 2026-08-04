@@ -247,7 +247,16 @@ export function PledgeDrawer({
   const chosenGuarantor = guarantorOptions.find((member) => member.id === guarantorId);
 
   return (
-    <Modal title="Pledge guarantee" onClose={onClose} closeDisabled={pledge.isPending}>
+    <Modal
+      title="Pledge guarantee"
+      onClose={onClose}
+      closeDisabled={pledge.isPending}
+      // W56-3: a stray overlay click must never discard a half-completed
+      // pledge form — dismissal is the explicit ✕ or Escape. (This drawer
+      // arrived via the !60 main-merge after the W56-3 sweep; convention
+      // completed here.)
+      dismissOnOverlay={false}
+    >
       {/* Informational, NOT success styling: the notice reports a
           post-conflict reload (!60 F5). */}
       {notice !== "" && <Banner variant="info">{notice}</Banner>}

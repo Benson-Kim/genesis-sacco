@@ -93,7 +93,9 @@ export function ApplicationDetailDrawer({
   const queryClient = useQueryClient();
   const permissions = usePermissions();
   const [confirmReject, setConfirmReject] = useState(false);
-  const [notice, setNotice] = useState<string>("");
+  // Notices carry a TONE (W59-4): successes are "ok"; the post-conflict
+  // reload notice is informational — never success-styled.
+  const [notice, setNotice] = useState<{ text: string; tone: "ok" | "info" } | null>(null);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
 
   const detail = useQuery({
@@ -135,13 +137,15 @@ export function ApplicationDetailDrawer({
         if (ownId !== null) recordCommitteeMaker(applicationId, ownId);
       }
       setConfirmReject(false);
-      setNotice(
-        input.target === "rejected"
-          ? "Application rejected."
-          : input.target === "committee"
-            ? "Recommended to committee."
-            : "Moved to appraisal.",
-      );
+      setNotice({
+        text:
+          input.target === "rejected"
+            ? "Application rejected."
+            : input.target === "committee"
+              ? "Recommended to committee."
+              : "Moved to appraisal.",
+        tone: "ok",
+      });
       announce("Stage updated.");
     },
     onError: () => {
@@ -178,7 +182,10 @@ export function ApplicationDetailDrawer({
     // version in the body, hence a rotated Idempotency-Key).
     void queryClient.refetchQueries({ queryKey: ["applications", "detail", applicationId] });
     transition.reset();
-    setNotice("Record reloaded — re-check the stage before acting again.");
+    setNotice({ text: "Record reloaded — re-check the stage before acting again.", tone: "info" });
+    // Every async outcome is announced (issue #8): the post-conflict
+    // reload is an outcome, not a success (W59-4, the !60 F5 class).
+    announce("Record reloaded after the conflict — re-check the stage.");
   }
 
   const move = (target: TransitionTarget) => {
@@ -188,7 +195,9 @@ export function ApplicationDetailDrawer({
 
   return (
     <Modal title="Application detail" onClose={onClose} closeDisabled={transition.isPending}>
-      {notice !== "" && <Banner variant="ok">{notice}</Banner>}
+      {/* Success notices keep the ok styling; the post-conflict reload
+          notice is informational (W59-4, the !60 F5 class). */}
+      {notice !== null && <Banner variant={notice.tone}>{notice.text}</Banner>}
       <StageIndicator stage={app.stage} />
       <div className={styles.detailGrid}>
         <Kv label="Member">
