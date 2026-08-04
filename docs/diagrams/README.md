@@ -38,10 +38,12 @@ PHASE B2 common rules):
   the checked-in spot-check scripts (run them from the repo root and
   keep them passing; extend them when you add claims):
   `python3 docs/diagrams/c4-spot-check.py` (module paths, router
-  completeness, pinned function claims) and
-  `python3 docs/diagrams/erd-spot-check.py` (table coverage, both
-  ways). They are run manually / by reviewers — wiring them into CI
-  needs a `.gitlab-ci.yml` edit owned by the CI track (P22).
+  completeness, pinned function claims, sequence-diagram citations)
+  and `python3 docs/diagrams/erd-spot-check.py` (table coverage, both
+  ways). The C4/sequence check runs in CI as the `docs:spot-check`
+  job (`.gitlab-ci.yml`, !38 review R1 — triggered by changes to
+  `docs/diagrams/**` or `backend/src/genesis/api/app.py`); the ERD
+  check is still run manually / by reviewers.
 
 ## Index
 
