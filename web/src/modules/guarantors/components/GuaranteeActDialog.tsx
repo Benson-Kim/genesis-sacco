@@ -219,7 +219,7 @@ export function GuaranteeActDialog({
 
       {confirming && (
         <ConfirmDangerModal
-          title={TITLES[act]}
+          title={act === "consent" ? "Confirm consent attestation" : "Confirm release"}
           confirmPhrase={guarantee.id.slice(0, 8)}
           confirmLabel={act === "consent" ? "Record consent" : "Release guarantee"}
           pending={mutation.isPending}

@@ -330,7 +330,7 @@ export function SubstituteDrawer({
 
       {confirming && (
         <ConfirmDangerModal
-          title="Substitute guarantee"
+          title="Confirm substitution"
           confirmPhrase={guarantee.id.slice(0, 8)}
           confirmLabel="Substitute guarantee"
           pending={substitute.isPending}

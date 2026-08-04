@@ -364,7 +364,7 @@ export function PledgeDrawer({
 
       {confirming && (
         <ConfirmDangerModal
-          title="Pledge guarantee"
+          title="Encumber savings"
           confirmPhrase={app.id.slice(0, 8)}
           confirmLabel="Pledge guarantee"
           pending={pledge.isPending}
