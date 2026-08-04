@@ -1,0 +1,760 @@
+/**
+ * Transactions register + detail + teller money writes + interest run
+ * adversarial tests THROUGH THE REAL SCREEN CODE (P15 Transactions
+ * batch), mirroring the loans/applications reference suites: the
+ * feature API layers are stubbed at the module boundary; rendering,
+ * keyset paging, permission gating, idempotency-key custody, the fresh
+ * member read, 409 handling and the typed confirmations are the real
+ * shipped code, mounted under the REAL <Providers>.
+ */
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { ApiError } from "@genesis/api-client";
+import { Providers } from "@/app/providers";
+import { clearSession, hasSession, setSession } from "@/modules/auth/session";
+import { usePermissions } from "@/modules/authz/usePermissions";
+import { TransactionsScreen } from "../components/TransactionsScreen";
+import {
+  accountTxnSchema,
+  moneyEntrySchema,
+  transactionSchema,
+  type AccountTxn,
+  type InterestRun,
+  type Transaction,
+} from "../schemas";
+import * as txnApi from "../api";
+import * as membersApi from "@/modules/members/api";
+
+jest.mock("../api", () => {
+  const actual = jest.requireActual<typeof import("../api")>("../api");
+  return {
+    ...actual,
+    fetchTransactionsPage: jest.fn(),
+    postDeposit: jest.fn(),
+    postWithdrawal: jest.fn(),
+    postShareTopup: jest.fn(),
+    postMoneyWrite: jest.fn(),
+    runDepositInterest: jest.fn(),
+  };
+});
+
+jest.mock("@/modules/members/api", () => ({
+  fetchMembersPage: jest.fn(),
+  fetchMember: jest.fn(),
+}));
+
+jest.mock("@/modules/authz/usePermissions", () => ({
+  usePermissions: jest.fn(),
+}));
+
+const mocked = jest.mocked(txnApi);
+const mockedMembers = jest.mocked(membersApi);
+const mockedPermissions = jest.mocked(usePermissions);
+
+const ADMIN_ID = "99999999-9999-9999-9999-999999999999";
+const MEMBER_ID = "11111111-1111-1111-1111-111111111111";
+const DEBIT_TXN_ID = "aaaaaaaa-1111-2222-3333-444444444444";
+const CREDIT_TXN_ID = "bbbbbbbb-1111-2222-3333-444444444444";
+
+// Attacker-influenced free-text fields on this screen — must render as
+// inert text (named XSS threat).
+const HOSTILE_REF = "<script>window.__pwned=2</script>TXN-REF";
+const HOSTILE_NAME = '<img src=x onerror=window.__pwned=1> "quoted" member';
+
+function b64url(value: object): string {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function fakeJwt(sub: string): string {
+  const exp = Math.floor(Date.now() / 1000) + 3600;
+  return `${b64url({ alg: "HS256" })}.${b64url({ sub, exp })}.sig`;
+}
+
+function debitTxn(overrides: Partial<Transaction> = {}): Transaction {
+  return {
+    id: DEBIT_TXN_ID,
+    txn_ref: "WD-0221",
+    member_id: MEMBER_ID,
+    type: "withdrawal",
+    amount: "8000.10",
+    channel: "bank",
+    direction: "debit",
+    occurred_at: "2026-07-18T10:15:00+00:00",
+    is_reversal: false,
+    ...overrides,
+  };
+}
+
+function creditTxn(overrides: Partial<Transaction> = {}): Transaction {
+  return {
+    id: CREDIT_TXN_ID,
+    txn_ref: "MP-1042",
+    member_id: MEMBER_ID,
+    type: "deposit",
+    amount: "5000.10",
+    channel: "mpesa",
+    direction: "credit",
+    occurred_at: "2026-07-19T08:00:00+00:00",
+    is_reversal: false,
+    ...overrides,
+  };
+}
+
+const MEMBER = {
+  id: MEMBER_ID,
+  member_no: "M-0001",
+  type: "person" as const,
+  name: "Jane Wanjiku",
+  phone: null,
+  email: null,
+  status: "active" as const,
+  version: 3,
+};
+
+const ACCOUNT_TXN: AccountTxn = {
+  txn_id: "eeeeeeee-1111-2222-3333-444444444444",
+  txn_ref: "MP-1099",
+  amount: "5000.10",
+  balance_after: "173500.10",
+};
+
+const INTEREST_RUN: InterestRun = {
+  period_start: "2026-04-01",
+  period_end: "2026-06-30",
+  annual_rate_pct: "8.00",
+  scanned: 120,
+  posted: 118,
+  skipped_existing: 2,
+  rate_mismatches: 0,
+  total_interest: "45678.10",
+  batches: 2,
+};
+
+const FULL_PERMS = {
+  role_id: ADMIN_ID,
+  permissions: [
+    { module: "transactions", can_view: true, can_create: true, can_edit: true, can_approve: false },
+    { module: "members", can_view: true, can_create: false, can_edit: false, can_approve: false },
+  ],
+};
+
+/** transactions:view ONLY — no create/edit, no members grant. */
+const VIEW_ONLY_PERMS = {
+  role_id: ADMIN_ID,
+  permissions: [
+    { module: "transactions", can_view: true, can_create: false, can_edit: false, can_approve: false },
+  ],
+};
+
+function grantPermissions(perms: typeof FULL_PERMS | typeof VIEW_ONLY_PERMS) {
+  mockedPermissions.mockReturnValue({
+    data: perms,
+    isPending: false,
+    isError: false,
+  } as unknown as ReturnType<typeof usePermissions>);
+}
+
+function page<T>(items: T[], nextCursor: string | null = null) {
+  return { items, nextCursor };
+}
+
+function mountScreen() {
+  return render(
+    <Providers>
+      <TransactionsScreen />
+    </Providers>,
+  );
+}
+
+/** Open the post drawer and fill a valid entry (shared by the
+ * double-post / 409 / key-custody tests). */
+async function fillEntry(
+  user: ReturnType<typeof userEvent.setup>,
+  { amount = "5000.10", channel = "mpesa" }: { amount?: string; channel?: string } = {},
+) {
+  await user.click(await screen.findByRole("button", { name: "+ Post transaction" }));
+  const drawer = await screen.findByRole("dialog", { name: "Post transaction" });
+  await user.selectOptions(await within(drawer).findByLabelText("Member"), MEMBER_ID);
+  // The fresh member read must land before the confirmation can arm.
+  await within(drawer).findByText(/Member verified:/);
+  await user.type(within(drawer).getByLabelText("Amount (KES)"), amount);
+  await user.selectOptions(within(drawer).getByLabelText("Channel"), channel);
+  return drawer;
+}
+
+/** Re-submit the CURRENT drawer entry through the typed confirmation
+ * and return the confirm button. */
+async function confirmEntry(
+  user: ReturnType<typeof userEvent.setup>,
+  drawer: HTMLElement,
+) {
+  await user.click(within(drawer).getByRole("button", { name: "Post to ledger…" }));
+  const confirm = await screen.findByRole("dialog", { name: "Post to ledger" });
+  await user.type(
+    within(confirm).getByLabelText('Type "M-0001" to confirm'),
+    "M-0001",
+  );
+  return within(confirm).getByRole("button", { name: "Post to ledger" });
+}
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  clearSession();
+  setSession({ accessToken: fakeJwt(ADMIN_ID), refreshToken: "refresh-1" });
+  grantPermissions(FULL_PERMS);
+  mocked.fetchTransactionsPage.mockResolvedValue(page([debitTxn(), creditTxn()]));
+  mocked.postMoneyWrite.mockResolvedValue(ACCOUNT_TXN);
+  mocked.runDepositInterest.mockResolvedValue(INTEREST_RUN);
+  mockedMembers.fetchMembersPage.mockResolvedValue(page([MEMBER]));
+  mockedMembers.fetchMember.mockResolvedValue(MEMBER);
+});
+
+afterEach(() => {
+  clearSession();
+});
+
+test("hostile txn ref renders as inert TEXT; DR/CR amounts render VERBATIM in their own columns and are NEVER netted or summed (named XSS threat + blocker (a))", async () => {
+  mocked.fetchTransactionsPage.mockResolvedValue(
+    page([debitTxn({ txn_ref: HOSTILE_REF }), creditTxn()]),
+  );
+  const { container } = mountScreen();
+
+  // The payload is visible as literal text…
+  expect(await screen.findByText(new RegExp("window.__pwned"))).toBeInTheDocument();
+  // …and never materialised as markup.
+  expect(container.querySelector("script")).toBeNull();
+  expect((window as { __pwned?: unknown }).__pwned).toBeUndefined();
+
+  // Each amount renders byte-identically in EXACTLY one column —
+  // falsifiable: a numeric round-trip drops the trailing ".10"; a
+  // client-side reduction would materialise a netted/summed figure.
+  expect(screen.getByText("KES 8,000.10")).toBeInTheDocument();
+  expect(screen.getByText("KES 5,000.10")).toBeInTheDocument();
+  expect(screen.queryByText("KES 3,000.00")).toBeNull(); // no local netting
+  expect(screen.queryByText("KES 13,000.20")).toBeNull(); // no local totals row
+  expect(screen.queryByText(/Totals/)).toBeNull();
+});
+
+test("keyset paging: Load more follows the server cursor VERBATIM — no offset anywhere (gate 1.3)", async () => {
+  const user = userEvent.setup();
+  mocked.fetchTransactionsPage
+    .mockResolvedValueOnce(page([debitTxn()], "opaque-cursor-§1"))
+    .mockResolvedValueOnce(page([creditTxn()]));
+  mountScreen();
+
+  await user.click(await screen.findByRole("button", { name: "Load more" }));
+
+  await waitFor(() => expect(mocked.fetchTransactionsPage).toHaveBeenCalledTimes(2));
+  expect(mocked.fetchTransactionsPage.mock.calls[0]?.[1]).toBeNull();
+  expect(mocked.fetchTransactionsPage.mock.calls[1]?.[1]).toBe("opaque-cursor-§1");
+});
+
+test("type/channel/direction filters drive the SERVER query — the client never filters locally", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+
+  await screen.findByText("KES 8,000.10");
+  await user.selectOptions(screen.getByLabelText("Type"), "withdrawal");
+  await waitFor(() =>
+    expect(mocked.fetchTransactionsPage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "withdrawal" }),
+      null,
+    ),
+  );
+
+  await user.selectOptions(screen.getByLabelText("Channel"), "accrual");
+  await waitFor(() =>
+    expect(mocked.fetchTransactionsPage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "withdrawal", channel: "accrual" }),
+      null,
+    ),
+  );
+
+  await user.click(screen.getByRole("button", { name: "Debit" }));
+  await waitFor(() =>
+    expect(mocked.fetchTransactionsPage).toHaveBeenCalledWith(
+      expect.objectContaining({ direction: "debit" }),
+      null,
+    ),
+  );
+});
+
+test("exact-ref + date-range drafts apply on submit as SERVER query params; the member filter drives member_id", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+
+  await screen.findByText("KES 8,000.10");
+  await user.type(screen.getByLabelText("Reference (exact)"), "WD-0221");
+  await user.type(screen.getByLabelText("From date"), "2026-07-01");
+  await user.type(screen.getByLabelText("To date"), "2026-07-31");
+  await user.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() =>
+    expect(mocked.fetchTransactionsPage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ref: "WD-0221",
+        date_from: "2026-07-01",
+        date_to: "2026-07-31",
+      }),
+      null,
+    ),
+  );
+
+  await user.selectOptions(screen.getByLabelText("Member"), MEMBER_ID);
+  await waitFor(() =>
+    expect(mocked.fetchTransactionsPage).toHaveBeenCalledWith(
+      expect.objectContaining({ member_id: MEMBER_ID }),
+      null,
+    ),
+  );
+});
+
+test("UI affordances follow the matrix: a view-only role gets NO posting, NO interest run, NO member filter — and ZERO members fetches", async () => {
+  grantPermissions(VIEW_ONLY_PERMS);
+  const user = userEvent.setup();
+  mountScreen();
+
+  await screen.findByText("KES 8,000.10");
+  expect(screen.queryByRole("button", { name: "+ Post transaction" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Run deposit interest" })).toBeNull();
+  expect(screen.queryByLabelText("Member")).toBeNull();
+  // Structural: the stripped role never even FETCHES the members list.
+  expect(mockedMembers.fetchMembersPage).not.toHaveBeenCalled();
+
+  // Drill into the detail drawer: without members:view the member stays
+  // an opaque id and NO member fetch happens (deny-by-default).
+  await user.click(screen.getByText("KES 8,000.10"));
+  const drawer = await screen.findByRole("dialog", { name: "Transaction detail" });
+  expect(within(drawer).getByText(MEMBER_ID)).toBeInTheDocument();
+  expect(mockedMembers.fetchMember).not.toHaveBeenCalled();
+});
+
+test("detail drawer resolves the member name (members:view), renders every field VERBATIM and flags reversals", async () => {
+  const user = userEvent.setup();
+  mockedMembers.fetchMember.mockResolvedValue({ ...MEMBER, name: HOSTILE_NAME });
+  mocked.fetchTransactionsPage.mockResolvedValue(
+    page([debitTxn({ is_reversal: true, txn_ref: "RV-0001" })]),
+  );
+  const { container } = mountScreen();
+
+  await user.click(await screen.findByText("KES 8,000.10"));
+  const drawer = await screen.findByRole("dialog", { name: "Transaction detail" });
+
+  // The member resolves via GET /members/{id} — hostile name inert.
+  expect(await within(drawer).findByText(new RegExp("onerror=window.__pwned"))).toBeInTheDocument();
+  expect(container.querySelector("img")).toBeNull();
+  expect((window as { __pwned?: unknown }).__pwned).toBeUndefined();
+  expect(mockedMembers.fetchMember).toHaveBeenCalledWith(MEMBER_ID);
+
+  expect(within(drawer).getByText("RV-0001")).toBeInTheDocument();
+  expect(within(drawer).getByText("KES 8,000.10")).toBeInTheDocument();
+  expect(within(drawer).getByText(/REVERSING entry/)).toBeInTheDocument();
+  // No running balance is reconstructed client-side.
+  expect(within(drawer).getByText(/never reconstructed/)).toBeInTheDocument();
+});
+
+test("DOUBLE-POST impossible from this client: triple-clicked confirmation produces exactly ONE write; the affordance is SPENT after success", async () => {
+  const user = userEvent.setup();
+  let release: (value: AccountTxn) => void = () => undefined;
+  mocked.postMoneyWrite.mockImplementation(
+    () =>
+      new Promise<AccountTxn>((resolve) => {
+        release = resolve;
+      }),
+  );
+  mountScreen();
+
+  const drawer = await fillEntry(user);
+  const confirmButton = await confirmEntry(user, drawer);
+  await user.click(confirmButton);
+  await user.click(confirmButton);
+  await user.click(confirmButton);
+
+  expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(1);
+  expect(mocked.postMoneyWrite.mock.calls[0]?.[0]).toBe("deposit");
+  expect(mocked.postMoneyWrite.mock.calls[0]?.[1]).toBe(MEMBER_ID);
+  // Decimal string end-to-end — never parsed into a float.
+  expect(mocked.postMoneyWrite.mock.calls[0]?.[2]).toEqual({
+    amount: "5000.10",
+    channel: "mpesa",
+  });
+
+  release(ACCOUNT_TXN);
+
+  // The result panel replaces the form — the affordance is spent…
+  expect(await screen.findByText(/Deposit posted · ref MP-1099/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Post to ledger…" })).toBeNull();
+  // …the SERVER's balance renders verbatim (trailing cents survive)…
+  expect(screen.getByText("KES 173,500.10")).toBeInTheDocument();
+  // …still exactly one write.
+  expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(1);
+});
+
+test("STALE-READ DOUBLE-POST PREVENTION: the drawer FRESH-READS the member (staleTime 0) before arming; reopening re-fetches instead of serving cache", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+
+  const drawer = await fillEntry(user);
+  expect(mockedMembers.fetchMember).toHaveBeenCalledTimes(1);
+
+  // NO write can be confirmed before the fresh read has landed: the
+  // confirmation dialog only mounts with the fresh member record.
+  await user.click(within(drawer).getByRole("button", { name: "Post to ledger…" }));
+  await screen.findByRole("dialog", { name: "Post to ledger" });
+  expect(mocked.postMoneyWrite).not.toHaveBeenCalled();
+
+  // Close everything and reopen: record-class staleTime 0 re-fetches —
+  // a cached member record here would feed a STALE read into a money
+  // write (THE failure mode of this module).
+  await user.click(
+    within(screen.getByRole("dialog", { name: "Post to ledger" })).getByRole("button", {
+      name: "Cancel",
+    }),
+  );
+  await user.click(within(drawer).getByRole("button", { name: "Cancel" }));
+  await user.click(await screen.findByRole("button", { name: "+ Post transaction" }));
+  const reopened = await screen.findByRole("dialog", { name: "Post transaction" });
+  await user.selectOptions(await within(reopened).findByLabelText("Member"), MEMBER_ID);
+  await waitFor(() => expect(mockedMembers.fetchMember).toHaveBeenCalledTimes(2));
+});
+
+test("idempotency keys: STABLE across retries of an identical intent, ROTATED when the amount changes", async () => {
+  const user = userEvent.setup();
+  mocked.postMoneyWrite
+    .mockRejectedValueOnce(new ApiError(503, "unavailable", "corr-1"))
+    .mockRejectedValueOnce(new ApiError(503, "unavailable", "corr-2"))
+    .mockResolvedValue(ACCOUNT_TXN);
+  mountScreen();
+
+  const drawer = await fillEntry(user);
+  // Attempt 1 fails with a 5xx…
+  await user.click(await confirmEntry(user, drawer));
+  await waitFor(() => expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(1));
+
+  // …identical retry (same entry) REUSES the key…
+  await user.click(await confirmEntry(user, drawer));
+  await waitFor(() => expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(2));
+  const key1 = mocked.postMoneyWrite.mock.calls[0]?.[3];
+  const key2 = mocked.postMoneyWrite.mock.calls[1]?.[3];
+  expect(key1).toBe(key2);
+
+  // …a different intent (changed amount) ROTATES the key.
+  const amountField = within(drawer).getByLabelText("Amount (KES)");
+  await user.clear(amountField);
+  await user.type(amountField, "7000.10");
+  await user.click(await confirmEntry(user, drawer));
+  await waitFor(() => expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(3));
+  expect(mocked.postMoneyWrite.mock.calls[2]?.[3]).not.toBe(key1);
+});
+
+test("withdrawal 409 (balance moved under the row lock): ConflictBanner with EXACTLY ONE attempt; reload re-fetches the member, announces the withdrawal and NEVER replays; the re-entered intent gets a ROTATED key (!60 F3)", async () => {
+  const user = userEvent.setup();
+  mocked.postMoneyWrite
+    .mockRejectedValueOnce(new ApiError(409, "conflict", "corr-txn"))
+    .mockResolvedValue(ACCOUNT_TXN);
+  mountScreen();
+
+  const drawer = await fillEntry(user, { channel: "bank" });
+  await user.click(await confirmEntry(user, drawer));
+
+  expect(await screen.findByText(/Your change was NOT applied/)).toBeInTheDocument();
+  expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(1);
+  const staleKey = mocked.postMoneyWrite.mock.calls[0]?.[3];
+
+  // Explicit reload: the member re-fetches; the failed posting is
+  // withdrawn with an informational (NOT success-styled) notice (!60 F5).
+  await user.click(screen.getByRole("button", { name: "Reload record" }));
+  await waitFor(() => expect(mockedMembers.fetchMember).toHaveBeenCalledTimes(2));
+  expect(
+    await screen.findByText(/conflicted posting was withdrawn, nothing was replayed/),
+  ).toBeInTheDocument();
+  expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(1);
+
+  // Re-entering the IDENTICAL entry is a NEW intent: the reload epoch
+  // rotates the key, so a backend idempotency store pinned to the
+  // conflicted first attempt can never serve the stale outcome.
+  await user.click(await confirmEntry(user, drawer));
+  await waitFor(() => expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(2));
+  expect(mocked.postMoneyWrite.mock.calls[1]?.[3]).not.toBe(staleKey);
+});
+
+test("an EXITED member structurally withdraws the posting affordance — zero writes (the server enforces regardless)", async () => {
+  const user = userEvent.setup();
+  mockedMembers.fetchMember.mockResolvedValue({ ...MEMBER, status: "exited" });
+  mountScreen();
+
+  await user.click(await screen.findByRole("button", { name: "+ Post transaction" }));
+  const drawer = await screen.findByRole("dialog", { name: "Post transaction" });
+  await user.selectOptions(await within(drawer).findByLabelText("Member"), MEMBER_ID);
+
+  expect(await within(drawer).findByText(/has EXITED/)).toBeInTheDocument();
+  const submit = within(drawer).getByRole("button", { name: "Post to ledger…" });
+  expect(submit).toBeDisabled();
+  expect(mocked.postMoneyWrite).not.toHaveBeenCalled();
+});
+
+test("client Zod verdicts render inline BEFORE any write (leading zeros rejected — !60 F6); server 422 verdicts then WIN per field", async () => {
+  const user = userEvent.setup();
+  mocked.postMoneyWrite.mockRejectedValue(
+    new ApiError(422, "validation_error", null, [
+      { field: "amount", message: "amount exceeds the teller posting policy" },
+    ]),
+  );
+  mountScreen();
+
+  await user.click(await screen.findByRole("button", { name: "+ Post transaction" }));
+  const drawer = await screen.findByRole("dialog", { name: "Post transaction" });
+  await user.selectOptions(await within(drawer).findByLabelText("Member"), MEMBER_ID);
+
+  // Leading-zero amount, no channel — zero writes.
+  await user.type(within(drawer).getByLabelText("Amount (KES)"), "007.10");
+  await user.click(within(drawer).getByRole("button", { name: "Post to ledger…" }));
+  expect(
+    await within(drawer).findByText(
+      "Enter a positive amount (up to 2 decimal places, no leading zeros).",
+    ),
+  ).toBeInTheDocument();
+  expect(within(drawer).getByText("Select a channel.")).toBeInTheDocument();
+  expect(mocked.postMoneyWrite).not.toHaveBeenCalled();
+
+  // Fix the client issues; the server's field verdict renders inline.
+  const amountField = within(drawer).getByLabelText("Amount (KES)");
+  await user.clear(amountField);
+  await user.type(amountField, "7.10");
+  await user.selectOptions(within(drawer).getByLabelText("Channel"), "bank");
+  await user.click(await confirmEntry(user, drawer));
+
+  expect(
+    await within(drawer).findByText("amount exceeds the teller posting policy"),
+  ).toBeInTheDocument();
+  expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(1);
+});
+
+test("least-disclosure: a 403 on posting renders the sanitized banner only, session intact", async () => {
+  const user = userEvent.setup();
+  mocked.postMoneyWrite.mockRejectedValue(new ApiError(403, "forbidden", "corr-f"));
+  mountScreen();
+
+  const drawer = await fillEntry(user);
+  await user.click(await confirmEntry(user, drawer));
+
+  expect(await screen.findByText(/Not permitted\./)).toBeInTheDocument();
+  expect(screen.getByText(/ref: corr-f/)).toBeInTheDocument();
+  expect(screen.queryByText(/forbidden/i)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Reload record" })).toBeNull();
+  expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(1);
+  expect(hasSession()).toBe(true);
+});
+
+test("query-path 401 tears the session down immediately (dual-cache teardown; this module holds NO per-tab registry to clear)", async () => {
+  mocked.fetchTransactionsPage.mockRejectedValue(new ApiError(401, "unauthenticated", "corr-q"));
+  mountScreen();
+
+  await waitFor(() => expect(hasSession()).toBe(false), { timeout: 4000 });
+});
+
+test("interest run: typed confirmation, double-clicked confirm runs ONCE, the SERVER's run figures render verbatim, the affordance is SPENT", async () => {
+  const user = userEvent.setup();
+  let release: (value: InterestRun) => void = () => undefined;
+  mocked.runDepositInterest.mockImplementation(
+    () =>
+      new Promise<InterestRun>((resolve) => {
+        release = resolve;
+      }),
+  );
+  mountScreen();
+
+  await user.click(await screen.findByRole("button", { name: "Run deposit interest" }));
+  const dialog = await screen.findByRole("dialog", { name: "Run deposit interest" });
+  await user.click(within(dialog).getByRole("button", { name: "Run accrual…" }));
+
+  const confirm = await screen.findByRole("dialog", { name: "Accrue deposit interest" });
+  const confirmButton = within(confirm).getByRole("button", { name: "Accrue deposit interest" });
+  // Disabled until the phrase is typed byte-identically — zero writes.
+  expect(confirmButton).toBeDisabled();
+  expect(mocked.runDepositInterest).not.toHaveBeenCalled();
+  await user.type(
+    within(confirm).getByLabelText('Type "accrue interest" to confirm'),
+    "accrue interest",
+  );
+  await user.click(confirmButton);
+  await user.click(confirmButton);
+
+  expect(mocked.runDepositInterest).toHaveBeenCalledTimes(1);
+  release(INTEREST_RUN);
+
+  expect(await screen.findByText(/Interest accrued · 2026-04-01 → 2026-06-30/)).toBeInTheDocument();
+  expect(screen.getByText("KES 45,678.10")).toBeInTheDocument();
+  expect(screen.getByText("8.00% (tenant-configured)")).toBeInTheDocument();
+  // Spent: the action is replaced by the result panel.
+  expect(screen.queryByRole("button", { name: "Run accrual…" })).toBeNull();
+  expect(mocked.runDepositInterest).toHaveBeenCalledTimes(1);
+});
+
+test("interest run 409 (unconfigured rate / no elapsed quarter): sanitized banner + operator note — a CREATE-style conflict with nothing to reload, nothing retried", async () => {
+  const user = userEvent.setup();
+  mocked.runDepositInterest.mockRejectedValue(new ApiError(409, "conflict", "corr-int"));
+  mountScreen();
+
+  await user.click(await screen.findByRole("button", { name: "Run deposit interest" }));
+  const dialog = await screen.findByRole("dialog", { name: "Run deposit interest" });
+  await user.click(within(dialog).getByRole("button", { name: "Run accrual…" }));
+  const confirm = await screen.findByRole("dialog", { name: "Accrue deposit interest" });
+  await user.type(
+    within(confirm).getByLabelText('Type "accrue interest" to confirm'),
+    "accrue interest",
+  );
+  await user.click(within(confirm).getByRole("button", { name: "Accrue deposit interest" }));
+
+  expect(
+    await within(dialog).findByText(/The record changed or conflicts with existing data/),
+  ).toBeInTheDocument();
+  expect(within(dialog).getByText(/rate is not configured/)).toBeInTheDocument();
+  // No record-reload affordance exists for this unversioned run.
+  expect(screen.queryByRole("button", { name: "Reload record" })).toBeNull();
+  expect(mocked.runDepositInterest).toHaveBeenCalledTimes(1);
+});
+
+test("IDENTICAL re-entry after 'Post another' is a NEW intent: the key ROTATES and a SECOND wire write happens — no silent ledger omission (review T2)", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+
+  // First posting succeeds.
+  const drawer = await fillEntry(user);
+  await user.click(await confirmEntry(user, drawer));
+  expect(await screen.findByText(/Deposit posted · ref MP-1099/)).toBeInTheDocument();
+  expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(1);
+  const firstKey = mocked.postMoneyWrite.mock.calls[0]?.[3];
+
+  // "Post another" + the byte-identical entry (two equal cash deposits
+  // the same day — a routine SACCO flow): the intent counter rotates
+  // the key, so the server can NEVER dedup the second posting into the
+  // first response while the operator sees success.
+  await user.click(within(drawer).getByRole("button", { name: "Post another" }));
+  await user.type(within(drawer).getByLabelText("Amount (KES)"), "5000.10");
+  await user.selectOptions(within(drawer).getByLabelText("Channel"), "mpesa");
+  await user.click(await confirmEntry(user, drawer));
+
+  expect(await screen.findByText(/Deposit posted · ref MP-1099/)).toBeInTheDocument();
+  expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(2);
+  expect(mocked.postMoneyWrite.mock.calls[1]?.[2]).toEqual({
+    amount: "5000.10",
+    channel: "mpesa",
+  });
+  expect(mocked.postMoneyWrite.mock.calls[1]?.[3]).not.toBe(firstKey);
+});
+
+test("interest-run key custody: STABLE across pure retries (5xx then 409 reuse one key), ROTATED after the acknowledged conflict (review T3)", async () => {
+  const user = userEvent.setup();
+  mocked.runDepositInterest
+    .mockRejectedValueOnce(new ApiError(503, "unavailable", "corr-1"))
+    .mockRejectedValueOnce(new ApiError(409, "conflict", "corr-2"))
+    .mockResolvedValue(INTEREST_RUN);
+  mountScreen();
+
+  await user.click(await screen.findByRole("button", { name: "Run deposit interest" }));
+  const dialog = await screen.findByRole("dialog", { name: "Run deposit interest" });
+
+  async function attempt() {
+    await user.click(within(dialog).getByRole("button", { name: "Run accrual…" }));
+    const confirm = await screen.findByRole("dialog", { name: "Accrue deposit interest" });
+    await user.type(
+      within(confirm).getByLabelText('Type "accrue interest" to confirm'),
+      "accrue interest",
+    );
+    await user.click(within(confirm).getByRole("button", { name: "Accrue deposit interest" }));
+  }
+
+  // 5xx, then the conflict attempt: both are retries of ONE intent —
+  // the key stays STABLE.
+  await attempt();
+  await waitFor(() => expect(mocked.runDepositInterest).toHaveBeenCalledTimes(1));
+  await attempt();
+  await waitFor(() => expect(mocked.runDepositInterest).toHaveBeenCalledTimes(2));
+  const key1 = mocked.runDepositInterest.mock.calls[0]?.[0];
+  expect(mocked.runDepositInterest.mock.calls[1]?.[0]).toBe(key1);
+
+  // The operator fixes the cause (e.g. configures the rate) and retries
+  // in the SAME dialog: a NEW intent — the key ROTATES, so a backend
+  // idempotency store pinned to the 409 can never replay it.
+  await attempt();
+  await waitFor(() => expect(mocked.runDepositInterest).toHaveBeenCalledTimes(3));
+  expect(mocked.runDepositInterest.mock.calls[2]?.[0]).not.toBe(key1);
+  expect(await screen.findByText(/Interest accrued · 2026-04-01 → 2026-06-30/)).toBeInTheDocument();
+});
+
+test("malformed manual date drafts never become server query params (review T4)", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+
+  await screen.findByText("KES 8,000.10");
+  const callsBefore = mocked.fetchTransactionsPage.mock.calls.length;
+  // type="date" can be bypassed by manual entry in some browsers — the
+  // ISO shape is validated before it reaches the query.
+  const fromField = screen.getByLabelText("From date");
+  fromField.removeAttribute("type"); // simulate a browser without date support
+  await user.type(fromField, "18/07/2026");
+  await user.click(screen.getByRole("button", { name: "Apply" }));
+
+  expect(await screen.findByText("Enter dates as YYYY-MM-DD.")).toBeInTheDocument();
+  // No new list fetch with the malformed value.
+  expect(mocked.fetchTransactionsPage.mock.calls.length).toBe(callsBefore);
+  for (const call of mocked.fetchTransactionsPage.mock.calls) {
+    expect((call[0] as { date_from: string }).date_from).toBe("");
+  }
+});
+
+test("Zod boundary rejects money as NUMBERS, unknown enums and leading-zero inputs; the account-txn boundary STRIPS extra keys", () => {
+  expect(transactionSchema.safeParse(debitTxn()).success).toBe(true);
+  expect(transactionSchema.safeParse({ ...debitTxn(), amount: 8000.1 }).success).toBe(false);
+  expect(transactionSchema.safeParse({ ...debitTxn(), type: "gl_sweep" }).success).toBe(false);
+  expect(transactionSchema.safeParse({ ...debitTxn(), channel: "cash" }).success).toBe(false);
+  expect(transactionSchema.safeParse({ ...debitTxn(), direction: "net" }).success).toBe(false);
+
+  // Anything beyond the AccountTxnOut contract can never reach the DOM.
+  const parsed = accountTxnSchema.parse({ ...ACCOUNT_TXN, internal_gl_note: "GL-SECRET-01" });
+  expect("internal_gl_note" in parsed).toBe(false);
+  expect(accountTxnSchema.safeParse({ ...ACCOUNT_TXN, balance_after: 173500.1 }).success).toBe(
+    false,
+  );
+
+  // Money INPUT hygiene (!60 F6): pure string shape — leading zeros and
+  // zero amounts rejected, honest cents accepted.
+  const entry = { kind: "deposit", member_id: MEMBER_ID, channel: "mpesa" };
+  expect(moneyEntrySchema.safeParse({ ...entry, amount: "007.10" }).success).toBe(false);
+  expect(moneyEntrySchema.safeParse({ ...entry, amount: "0" }).success).toBe(false);
+  expect(moneyEntrySchema.safeParse({ ...entry, amount: "0.00" }).success).toBe(false);
+  expect(moneyEntrySchema.safeParse({ ...entry, amount: "12.345" }).success).toBe(false);
+  expect(moneyEntrySchema.safeParse({ ...entry, amount: "0.50" }).success).toBe(true);
+  expect(moneyEntrySchema.safeParse({ ...entry, amount: "5000.10" }).success).toBe(true);
+});
+
+test("W56-3 inheritance (post-!62 merge): a stray overlay click never discards a dirty teller posting or the armed interest-run dialog; the read-only detail drawer keeps the light dismissal", async () => {
+  const user = userEvent.setup();
+  const { container } = mountScreen();
+
+  // Money-form drawer: the half-completed entry SURVIVES the stray click…
+  const drawer = await fillEntry(user);
+  await user.click(container.querySelector('[role="presentation"]') as HTMLElement);
+  expect(screen.getByRole("dialog", { name: "Post transaction" })).toBeInTheDocument();
+  expect(within(drawer).getByLabelText("Amount (KES)")).toHaveValue("5000.10");
+  // …and the explicit ✕ still closes.
+  await user.click(within(drawer).getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog", { name: "Post transaction" })).toBeNull();
+
+  // Money-write dialog: the interest-run flow is NOT discarded by a
+  // stray click outside the dialog.
+  await user.click(screen.getByRole("button", { name: "Run deposit interest" }));
+  const dialog = await screen.findByRole("dialog", { name: "Run deposit interest" });
+  await user.click(container.querySelector('[role="presentation"]') as HTMLElement);
+  expect(screen.getByRole("dialog", { name: "Run deposit interest" })).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog", { name: "Run deposit interest" })).toBeNull();
+
+  // The read-only detail drawer is NOT form-bearing — the default light
+  // overlay dismissal is the convention there (falsifiable: a blanket
+  // opt-out would fail this branch).
+  await user.click(screen.getByText("KES 8,000.10"));
+  await screen.findByRole("dialog", { name: "Transaction detail" });
+  await user.click(container.querySelector('[role="presentation"]') as HTMLElement);
+  expect(screen.queryByRole("dialog", { name: "Transaction detail" })).toBeNull();
+});
