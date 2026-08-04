@@ -59,6 +59,10 @@ const EXPORT_ID = "eeeeeeee-1111-2222-3333-444444444444";
 const HOSTILE_REPORT = "<script>window.__pwned=3</script>weird_report";
 const HOSTILE_STATUS = "<img src=x onerror=window.__pwned=4>queued?";
 const HOSTILE_COLUMN = '<b>"member_no"</b>';
+// F-R5: the server's filters map renders as key=value pairs — BOTH
+// sides are attacker-influenced and must stay inert text.
+const HOSTILE_FILTER_KEY = "<svg onload=window.__pwned=5>scope";
+const HOSTILE_FILTER_VALUE = '"><iframe src="javascript:window.__pwned=6"></iframe>';
 
 function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -202,14 +206,16 @@ test("the catalogue offers EXACTLY the contract's 11 reports with their declared
   expect(screen.getByText(/No exports requested in this session yet/)).toBeInTheDocument();
 });
 
-test("hostile report/status/column strings from the server render as inert TEXT everywhere (named XSS threat)", async () => {
+test("hostile report/status/column strings AND a hostile filters map from the server render as inert TEXT everywhere (named XSS threat, F-R5)", async () => {
   const user = userEvent.setup();
   mocked.requestExport.mockResolvedValue(
     exportOut({
       report: HOSTILE_REPORT,
       status: HOSTILE_STATUS,
       allowed_columns: [HOSTILE_COLUMN],
-      filters: {},
+      // F-R5: hostile KEYS and VALUES in the server's filters record —
+      // the result panel renders them verbatim as key=value pairs.
+      filters: { [HOSTILE_FILTER_KEY]: HOSTILE_FILTER_VALUE },
     }),
   );
   const { container } = mountScreen();
@@ -223,6 +229,13 @@ test("hostile report/status/column strings from the server render as inert TEXT 
   // strings as literal text…
   expect(await within(drawer).findByText(new RegExp("onerror=window.__pwned"))).toBeInTheDocument();
   expect(within(drawer).getByText(new RegExp('"member_no"'))).toBeInTheDocument();
+  // …and the hostile filters map renders as one literal key=value line
+  // (both sides inert — neither the <svg> key nor the javascript:
+  // iframe value ever parses as markup)…
+  expect(
+    within(drawer).getByText(new RegExp("onload=window.__pwned=5.*scope=")),
+  ).toBeInTheDocument();
+  expect(within(drawer).getByText(new RegExp("window.__pwned=6"))).toBeInTheDocument();
   // Two controls in the open drawer share the accessible name "Close"
   // (the header ✕ and the result panel's action) — scope to the result
   // panel to name the action button unambiguously.
@@ -235,6 +248,8 @@ test("hostile report/status/column strings from the server render as inert TEXT 
   expect(container.querySelector("script")).toBeNull();
   expect(container.querySelector("img")).toBeNull();
   expect(container.querySelector("b")).toBeNull();
+  expect(container.querySelector("svg")).toBeNull();
+  expect(container.querySelector("iframe")).toBeNull();
   expect((window as { __pwned?: unknown }).__pwned).toBeUndefined();
 });
 
