@@ -38,7 +38,7 @@ import { fetchApplication, fetchApplicationsPage, voteOnApplication } from "../a
 import { committeeMakerOf, MAKER_UNKNOWN } from "../makerRegistry";
 import { getOwnUserId } from "@/modules/auth/session";
 import type { Application, Vote, VoteResult } from "../schemas";
-import { useProducts } from "./ApplicationsScreen";
+import { useProducts } from "../useProducts";
 import { coverPill } from "./pills";
 import grid from "@/modules/layout/grid.module.css";
 import styles from "./Applications.module.css";

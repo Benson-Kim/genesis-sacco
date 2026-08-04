@@ -39,6 +39,15 @@ export const NAV_SECTIONS: NavSection[] = [
       },
       { label: "Loan book", href: "/modules/loan_book", module: "loan_book", icon: "loan_book" },
       {
+        // Prototype Operations ▸ Guarantors; lives under the
+        // applications RBAC module (P9/P13.14 guarantee routes are
+        // gated on applications:edit/view server-side).
+        label: "Guarantors",
+        href: "/modules/applications/guarantors",
+        module: "applications",
+        icon: "guarantors",
+      },
+      {
         label: "Transactions",
         href: "/modules/transactions",
         module: "transactions",
