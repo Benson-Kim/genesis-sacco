@@ -403,8 +403,8 @@ test("STALE-READ DOUBLE-POST PREVENTION: the drawer FRESH-READS the member (stal
   expect(mocked.postMoneyWrite).not.toHaveBeenCalled();
 
   // Close everything and reopen: record-class staleTime 0 re-fetches —
-  // caching the member here would serve a stale balance-bearing record
-  // into a money write (THE failure mode of this module).
+  // a cached member record here would feed a STALE read into a money
+  // write (THE failure mode of this module).
   await user.click(
     within(screen.getByRole("dialog", { name: "Post to ledger" })).getByRole("button", {
       name: "Cancel",
@@ -509,7 +509,9 @@ test("client Zod verdicts render inline BEFORE any write (leading zeros rejected
   await user.type(within(drawer).getByLabelText("Amount (KES)"), "007.10");
   await user.click(within(drawer).getByRole("button", { name: "Post to ledger…" }));
   expect(
-    await within(drawer).findByText(/no leading zeros/),
+    await within(drawer).findByText(
+      "Enter a positive amount (up to 2 decimal places, no leading zeros).",
+    ),
   ).toBeInTheDocument();
   expect(within(drawer).getByText("Select a channel.")).toBeInTheDocument();
   expect(mocked.postMoneyWrite).not.toHaveBeenCalled();
