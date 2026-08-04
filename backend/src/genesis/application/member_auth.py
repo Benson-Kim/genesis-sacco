@@ -111,9 +111,7 @@ async def _live_credential_by_email(
     ).first()
     if row is None:
         return None
-    return _LiveCredential(
-        credential_id=uuid.UUID(str(row[0])), member_id=uuid.UUID(str(row[1]))
-    )
+    return _LiveCredential(credential_id=uuid.UUID(str(row[0])), member_id=uuid.UUID(str(row[1])))
 
 
 async def _live_credential_by_id(
@@ -141,9 +139,7 @@ async def _live_credential_by_id(
     ).first()
     if row is None:
         return None
-    return _LiveCredential(
-        credential_id=uuid.UUID(str(row[0])), member_id=uuid.UUID(str(row[1]))
-    )
+    return _LiveCredential(credential_id=uuid.UUID(str(row[0])), member_id=uuid.UUID(str(row[1])))
 
 
 async def request_member_otp(session: AsyncSession, tenant_id: uuid.UUID, email: str) -> None:
@@ -273,9 +269,7 @@ async def rotate_member_refresh_token(
     ).first()
     if peek is None:
         return AuthFailure("unknown refresh token")
-    credential = await _live_credential_by_id(
-        session, tenant_id, uuid.UUID(str(peek[0]))
-    )
+    credential = await _live_credential_by_id(session, tenant_id, uuid.UUID(str(peek[0])))
     if credential is None:
         # The link was revoked or the member exited since issue: the
         # session is dead (least disclosure — no reason detail).
