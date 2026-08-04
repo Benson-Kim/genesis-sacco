@@ -297,8 +297,3 @@ export const declarationPickerSchema = z.object({
 });
 
 export type DeclarationPickerRow = z.infer<typeof declarationPickerSchema>;
-z.string(),
-  status: z.string(),
-});
-
-export type DeclarationPickerRow = z.infer<typeof declarationPickerSchema>;
