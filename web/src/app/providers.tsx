@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-query";
 import { ApiError } from "@genesis/api-client";
 import { clearSession } from "@/modules/auth/session";
+import { clearWitnessedGuarantees } from "@/modules/guarantors/sessionRegistry";
 
 /**
  * A 401 anywhere means the session is gone (refresh rotation failed or was
@@ -17,6 +18,12 @@ import { clearSession } from "@/modules/auth/session";
 function tearDownOn401(error: unknown): void {
   if (error instanceof ApiError && error.status === 401) {
     clearSession();
+    // Per-tab witnessed financial records (member ids, decimal-string
+    // figures, record versions) and the consent/release/substitute
+    // affordances armed on them die WITH the session (!60 F2): an
+    // in-tab operator switch inherits nothing from the previous
+    // operator's identity.
+    clearWitnessedGuarantees();
     if (typeof window !== "undefined") {
       // Code-owned flag only — nothing attacker-controlled enters the URL.
       window.location.assign("/login?reason=expired");

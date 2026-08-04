@@ -63,7 +63,10 @@ export function markWitnessedConflict(guaranteeId: string): void {
   emit();
 }
 
-/** Test/sign-out hygiene. */
+/** Session-teardown hygiene (!60 F2): invoked by the query-path 401
+ * dual-cache teardown (app providers) AND explicit sign-out (auth
+ * logout) so witnessed financial records and the affordances armed on
+ * them never survive an in-tab operator switch. Also test hygiene. */
 export function clearWitnessedGuarantees(): void {
   entries = [];
   emit();

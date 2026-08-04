@@ -7,10 +7,11 @@
  * confirmations are the real shipped code, mounted under the REAL
  * <Providers>.
  */
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiError } from "@genesis/api-client";
 import { Providers } from "@/app/providers";
+import { logout } from "@/modules/auth/api";
 import { clearSession, hasSession, setSession } from "@/modules/auth/session";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { announce } from "@/modules/layout/announcer";
@@ -752,13 +753,50 @@ test("least-disclosure: a 403 on the pledge renders the sanitized banner only, s
   expect(hasSession()).toBe(true);
 });
 
-test("query-path 401 tears the session down immediately (dual-cache teardown)", async () => {
+test("query-path 401 tears the session down immediately (dual-cache teardown) AND empties the witnessed registry — the session panel renders nothing", async () => {
+  // A previous operator's witnessed record is armed in this tab…
+  recordWitnessedGuarantee(guarantee());
   mockedDashboard.fetchDashboardSummary.mockRejectedValue(
     new ApiError(401, "unauthenticated", "corr-q"),
   );
   mountScreen();
 
   await waitFor(() => expect(hasSession()).toBe(false), { timeout: 4000 });
+
+  // …and dies WITH the session (!60 F2): no witnessed financial record,
+  // no armed affordance survives into the next operator's session.
+  await waitFor(() =>
+    expect(screen.queryByText("Pledged (unconsented)")).toBeNull(),
+  );
+  expect(screen.queryByText("KES 50,000.10")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Consent…" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Release…" })).toBeNull();
+  expect(
+    screen.getByText(/No guarantees recorded in this session yet/),
+  ).toBeInTheDocument();
+});
+
+test("explicit sign-out empties the witnessed registry — the session panel renders nothing for the next operator", async () => {
+  recordWitnessedGuarantee(guarantee());
+  mountScreen();
+
+  // The record and its armed affordance are on screen pre-sign-out.
+  expect(await screen.findByText("Pledged (unconsented)")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Consent…" })).toBeInTheDocument();
+
+  // Real sign-out path: local teardown must win even if the revocation
+  // call cannot complete in this harness.
+  await act(async () => {
+    await logout().catch(() => undefined);
+  });
+
+  expect(hasSession()).toBe(false);
+  expect(screen.queryByText("Pledged (unconsented)")).toBeNull();
+  expect(screen.queryByText("KES 50,000.10")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Consent…" })).toBeNull();
+  expect(
+    screen.getByText(/No guarantees recorded in this session yet/),
+  ).toBeInTheDocument();
 });
 
 test("Zod boundary rejects money as NUMBERS and unknown statuses; both write boundaries STRIP extra keys", () => {
