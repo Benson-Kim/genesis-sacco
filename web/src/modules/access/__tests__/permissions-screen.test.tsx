@@ -153,6 +153,9 @@ test("hostile role name renders as inert text in the sidebar AND the matrix head
 test("the matrix renders every RBAC module; modules WITHOUT a server row render deny-by-default (all bits off — the server's RBAC posture, never an invented grant)", async () => {
   mountScreen();
   await screen.findByText(`Permissions — ${HOSTILE_ROLE}`);
+  // The matrix table mounts only after the permissions query resolves
+  // (the head renders on role selection alone) — wait for a cell.
+  await screen.findByRole("checkbox", { name: "Members — View" });
 
   // 7 modules x 4 actions — the full matrix, nothing hidden.
   expect(screen.getAllByRole("checkbox")).toHaveLength(MODULES.length * 4);
@@ -172,6 +175,9 @@ test("permission-stripped affordances: without access_control:edit there is NO s
   const user = userEvent.setup();
   mountScreen();
   await screen.findByText(`Permissions — ${HOSTILE_ROLE}`);
+  // The matrix table mounts only after the permissions query resolves
+  // (the head renders on role selection alone) — wait for a cell.
+  await screen.findByRole("checkbox", { name: "Members — View" });
 
   // Structural absence: no Save button exists at all (not merely
   // disabled), and every checkbox is disabled.
@@ -192,6 +198,9 @@ test("save flushes ONLY the dirty module as one ABSOLUTE full-bit-set write (nev
   );
   mountScreen();
   await screen.findByText(`Permissions — ${HOSTILE_ROLE}`);
+  // The matrix table mounts only after the permissions query resolves
+  // (the head renders on role selection alone) — wait for a cell.
+  await screen.findByRole("checkbox", { name: "Members — View" });
 
   await user.click(screen.getByRole("checkbox", { name: "Members — Create" }));
   expect(screen.getByText("1 unsaved change")).toBeInTheDocument();
@@ -213,7 +222,7 @@ test("save flushes ONLY the dirty module as one ABSOLUTE full-bit-set write (nev
 
 test("double-submit produces EXACTLY ONE write per dirty module (pending state blocks the second click)", async () => {
   const user = userEvent.setup();
-  let resolveUpdate: ((value: Permission) => void) | null = null;
+  let resolveUpdate: (value: Permission) => void = () => {};
   mocked.updateRolePermission.mockImplementation(
     () =>
       new Promise<Permission>((resolve) => {
@@ -222,6 +231,9 @@ test("double-submit produces EXACTLY ONE write per dirty module (pending state b
   );
   mountScreen();
   await screen.findByText(`Permissions — ${HOSTILE_ROLE}`);
+  // The matrix table mounts only after the permissions query resolves
+  // (the head renders on role selection alone) — wait for a cell.
+  await screen.findByRole("checkbox", { name: "Members — View" });
 
   await user.click(screen.getByRole("checkbox", { name: "Members — Create" }));
   const save = screen.getByRole("button", { name: "Save role" });
@@ -232,7 +244,7 @@ test("double-submit produces EXACTLY ONE write per dirty module (pending state b
   // One in-flight write; the repeated clicks hit a disabled control
   // (falsifiable: drop the isPending guard/disabled prop and this grows).
   expect(mocked.updateRolePermission).toHaveBeenCalledTimes(1);
-  resolveUpdate!(perm("members", { can_view: true, can_create: true }));
+  resolveUpdate(perm("members", { can_view: true, can_create: true }));
   await waitFor(() => expect(screen.getByText(/Saved/)).toBeInTheDocument());
   expect(mocked.updateRolePermission).toHaveBeenCalledTimes(1);
 });
@@ -245,6 +257,9 @@ test("idempotency keys: stable across retries of an identical cell submission, r
     .mockResolvedValue(perm("members", { can_view: true, can_create: true, can_edit: true }));
   mountScreen();
   await screen.findByText(`Permissions — ${HOSTILE_ROLE}`);
+  // The matrix table mounts only after the permissions query resolves
+  // (the head renders on role selection alone) — wait for a cell.
+  await screen.findByRole("checkbox", { name: "Members — View" });
 
   await user.click(screen.getByRole("checkbox", { name: "Members — Create" }));
   await user.click(screen.getByRole("button", { name: "Save role" }));
@@ -276,6 +291,9 @@ test("ADVERSARIAL self-privilege-escalation: the server's 403 verdict surfaces a
   mocked.updateRolePermission.mockRejectedValue(new ApiError(403, "forbidden", "corr-esc"));
   mountScreen();
   await screen.findByText(`Permissions — ${HOSTILE_ROLE}`);
+  // The matrix table mounts only after the permissions query resolves
+  // (the head renders on role selection alone) — wait for a cell.
+  await screen.findByRole("checkbox", { name: "Members — View" });
 
   await user.click(screen.getByRole("checkbox", { name: "Access control — Approve" }));
   await user.click(screen.getByRole("button", { name: "Save role" }));
@@ -302,6 +320,9 @@ test("ADVERSARIAL stale matrix write: a 409 surfaces the reload-before-retrying 
   mocked.updateRolePermission.mockRejectedValue(new ApiError(409, "conflict", "corr-stale"));
   mountScreen();
   await screen.findByText(`Permissions — ${HOSTILE_ROLE}`);
+  // The matrix table mounts only after the permissions query resolves
+  // (the head renders on role selection alone) — wait for a cell.
+  await screen.findByRole("checkbox", { name: "Members — View" });
 
   await user.click(screen.getByRole("checkbox", { name: "Members — Create" }));
   await user.click(screen.getByRole("button", { name: "Save role" }));
@@ -323,6 +344,9 @@ test("ADVERSARIAL stale matrix write: a 409 surfaces the reload-before-retrying 
   await screen.findByText("Permissions — System Admin");
   await user.click(screen.getByRole("button", { name: HOSTILE_ROLE }));
   await screen.findByText(`Permissions — ${HOSTILE_ROLE}`);
+  // The matrix table mounts only after the permissions query resolves
+  // (the head renders on role selection alone) — wait for a cell.
+  await screen.findByRole("checkbox", { name: "Members — View" });
 
   // …the draft adopts the SERVER truth (the operator's unsaved create
   // bit is gone, the concurrent edit bit shows), dirty state clears…
@@ -341,6 +365,9 @@ test("mutation 401 tears the session down (re-login flow)", async () => {
   mocked.updateRolePermission.mockRejectedValue(new ApiError(401, "unauthenticated", "corr-401"));
   mountScreen();
   await screen.findByText(`Permissions — ${HOSTILE_ROLE}`);
+  // The matrix table mounts only after the permissions query resolves
+  // (the head renders on role selection alone) — wait for a cell.
+  await screen.findByRole("checkbox", { name: "Members — View" });
 
   await user.click(screen.getByRole("checkbox", { name: "Members — Create" }));
   await user.click(screen.getByRole("button", { name: "Save role" }));
