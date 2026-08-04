@@ -25,6 +25,12 @@ class Module(enum.StrEnum):
     # transactions:edit (A3 maker-checker). Deliberately NARROW grants
     # (see _CORRECTIONS_GRANTS), not the generic non-admin defaults.
     CORRECTIONS = "corrections"
+    # P14.5: member identity is the authorization substrate for
+    # member-visible money actions (credential links; the staff-attested
+    # consent override), so it carries its OWN permission strings —
+    # never generic members:edit. Deliberately NARROW grants (see
+    # _MEMBER_IDENTITY_GRANTS), the _CORRECTIONS_GRANTS precedent.
+    MEMBER_IDENTITY = "member_identity"
 
 
 class Action(enum.StrEnum):
@@ -84,11 +90,30 @@ _CORRECTIONS_GRANTS: dict[str, tuple[bool, bool, bool, bool]] = {
     AUDITOR: (True, False, False, False),
 }
 
+#: P14.5: explicit, narrow grants for the member_identity module —
+#: (view, create, edit, approve) per role. Credential link mutations
+#: (member_identity:create / :edit) and the staff-attested consent
+#: override (member_identity:approve) are identity-of-record powers:
+#: only the roles that administer identity hold them (System Admin,
+#: Branch Manager); the Auditor reviews. Roles absent here hold
+#: NOTHING (deny by default, the _CORRECTIONS_GRANTS precedent) — a
+#: Loan Officer's applications:edit must never imply the power to
+#: re-point who a member IS or to consent in a member's name.
+_MEMBER_IDENTITY_GRANTS: dict[str, tuple[bool, bool, bool, bool]] = {
+    SYSTEM_ADMIN: (True, True, True, True),
+    BRANCH_MANAGER: (True, True, True, True),
+    AUDITOR: (True, False, False, False),
+}
+
 
 def _grants(role: str, module: Module) -> dict[Action, bool]:
     view = create = edit = approve = False
     if module is Module.CORRECTIONS:
         view, create, edit, approve = _CORRECTIONS_GRANTS.get(role, (False, False, False, False))
+    elif module is Module.MEMBER_IDENTITY:
+        view, create, edit, approve = _MEMBER_IDENTITY_GRANTS.get(
+            role, (False, False, False, False)
+        )
     elif role == SYSTEM_ADMIN:
         view = create = edit = approve = True
     elif role == BRANCH_MANAGER:
