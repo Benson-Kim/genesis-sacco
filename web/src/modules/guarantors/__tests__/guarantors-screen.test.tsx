@@ -493,7 +493,11 @@ test("CONSENT: no write until the byte-identical phrase; double-clicked confirm 
   await user.click(await screen.findByRole("button", { name: "Consent…" }));
   const dialog = await screen.findByRole("dialog", { name: "Record guarantor consent" });
   await within(dialog).findByText("KES 50,000.10");
-  await user.click(within(dialog).getByRole("button", { name: "Record consent…" }));
+  const armButton = within(dialog).getByRole("button", { name: "Record consent…" });
+  // Consent converts the pledge into ACTIVE collateral (money-adjacent):
+  // it carries the SAME danger treatment as pledge/release (!60 F7).
+  expect(armButton).toHaveClass("danger");
+  await user.click(armButton);
 
   const confirm = await screen.findByRole("dialog", { name: "Confirm consent attestation" });
   const confirmButton = within(confirm).getByRole("button", { name: "Record consent" });

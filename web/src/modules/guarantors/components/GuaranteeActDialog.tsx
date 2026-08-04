@@ -192,9 +192,12 @@ export function GuaranteeActDialog({
           <Button type="button" onClick={onClose} disabled={mutation.isPending}>
             Cancel
           </Button>
+          {/* Both acts get the danger treatment: consent converts the
+              pledge into ACTIVE collateral (money-adjacent), the same
+              severity class as pledge/release (review !60 F7). */}
           <Button
             type="button"
-            variant={act === "release" ? "danger" : "primary"}
+            variant="danger"
             onClick={() => {
               if (mutation.isPending) return;
               setConfirming(true);
