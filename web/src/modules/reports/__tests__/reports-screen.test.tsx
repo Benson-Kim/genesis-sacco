@@ -218,7 +218,11 @@ test("hostile report/status/column strings from the server render as inert TEXT 
   // strings as literal text…
   expect(await within(drawer).findByText(new RegExp("onerror=window.__pwned"))).toBeInTheDocument();
   expect(within(drawer).getByText(new RegExp('"member_no"'))).toBeInTheDocument();
-  await user.click(within(drawer).getByRole("button", { name: "Close" }));
+  // Two controls in the open drawer share the accessible name "Close"
+  // (the header ✕ and the result panel's action) — scope to the result
+  // panel to name the action button unambiguously.
+  const resultPanel = within(drawer).getByRole("status");
+  await user.click(within(resultPanel).getByRole("button", { name: "Close" }));
   // …and the witnessed row renders the unrecognised hostile report name
   // as literal text (the label fallback never interprets it)…
   expect(screen.getByText(new RegExp("window.__pwned=3"))).toBeInTheDocument();
