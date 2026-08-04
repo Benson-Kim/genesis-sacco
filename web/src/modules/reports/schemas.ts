@@ -225,16 +225,18 @@ export type Artifact = z.infer<typeof artifactSchema>;
 
 /** ExportOut. Extra keys are STRIPPED at this boundary. `report` and
  * `status` are plain strings in the contract (ExportOut serialises the
- * enum server-side) — rendered verbatim, labelled when recognised. */
+ * enum server-side) — rendered verbatim, labelled when recognised. The
+ * timestamps are ISO-shape-asserted (F-R4) so the audit surface can
+ * never render "Invalid Date". */
 export const exportOutSchema = z.object({
   id: z.string(),
   report: z.string(),
   status: z.string(),
   filters: z.record(z.string(), z.string()),
   allowed_columns: z.array(z.string()),
-  as_of: z.string(),
-  completed_at: z.string().nullable(),
-  created_at: z.string(),
+  as_of: timestampSchema,
+  completed_at: timestampSchema.nullable(),
+  created_at: timestampSchema,
   artifact: artifactSchema.nullable(),
 });
 

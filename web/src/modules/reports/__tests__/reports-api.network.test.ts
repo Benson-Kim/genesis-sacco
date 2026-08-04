@@ -39,6 +39,7 @@ const PDF_TOKEN = "pdf-Tok_en-1";
 
 const calls: FetchCall[] = [];
 let exportArtifactShape: "ok" | "hostile_path" | "fractional_rows" = "ok";
+let exportRecordShape: "ok" | "garbage_timestamp" = "ok";
 
 function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
