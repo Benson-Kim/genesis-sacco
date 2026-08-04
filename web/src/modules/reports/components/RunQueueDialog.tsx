@@ -15,6 +15,14 @@
  *   action; a fresh dialog is a new intent with a new key slot).
  *   No typed ConfirmDangerModal: draining the queue moves no money and
  *   destroys nothing.
+ * - The POST has an EMPTY body, so the key material carries an intent
+ *   counter bumped on every success (review F-R2, mirroring
+ *   RequestExportDrawer's T2 defence): a SECOND explicit drain — "Run
+ *   again" in the same mount, or a fresh dialog — always carries a NEW
+ *   key BY CONSTRUCTION. Without it, a backend idempotency store would
+ *   dedup the repeat and replay the FIRST drain's completed/failed
+ *   counts while the operator believes a fresh drain ran (the W59-3/T2
+ *   class). Pure retries of a failed attempt still REUSE the key.
  * - Errors render the least-disclosure ErrorBanner; a 409 (concurrent
  *   identical run holding the idempotency claim) is a CREATE-style
  *   conflict with no record to reload (!56 F-B4 precedent) — the
@@ -46,6 +54,12 @@ export function RunQueueDialog({ onClose }: Readonly<{ onClose: () => void }>) {
   // Freshness component (!60 F3 class): rotate the key ONLY after an
   // acknowledged conflict; pure 5xx retries keep the SAME key.
   const [conflictEpoch, setConflictEpoch] = useState(0);
+  // Per-drain intent counter (review F-R2 — the W59-3/T2 class): the
+  // wire body is EMPTY, so without this a repeated explicit drain would
+  // present the SAME key and a backend idempotency store would replay
+  // the FIRST drain's counts instead of draining again. Bumped on every
+  // success: rotation by construction, not by remount accident.
+  const [intentSeq, setIntentSeq] = useState(0);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
 
   const run = useMutation({
@@ -53,12 +67,17 @@ export function RunQueueDialog({ onClose }: Readonly<{ onClose: () => void }>) {
       runExportQueue(
         idempotencyKeyFor(
           keySlot.current,
-          JSON.stringify({ op: "export-queue-run", conflict_epoch: conflictEpoch }),
+          JSON.stringify({
+            op: "export-queue-run",
+            conflict_epoch: conflictEpoch,
+            intent_seq: intentSeq,
+          }),
         ),
       ),
     onSuccess: (cycle) => {
       // SPENT affordance: the result panel replaces the action.
       setResult(cycle);
+      setIntentSeq((seq) => seq + 1);
       announce("Export queue run completed.");
     },
     onError: (error) => {
@@ -100,6 +119,20 @@ export function RunQueueDialog({ onClose }: Readonly<{ onClose: () => void }>) {
           <div className={styles.actions}>
             <Button type="button" onClick={onClose}>
               Close
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => {
+                // A NEW drain intent (mirrors "Request another", F-R2):
+                // the bumped intent counter already rotated the key, so
+                // this second explicit drain can never be deduped into
+                // the first drain's stored response.
+                setResult(null);
+                run.reset();
+              }}
+            >
+              Run again
             </Button>
           </div>
         </div>

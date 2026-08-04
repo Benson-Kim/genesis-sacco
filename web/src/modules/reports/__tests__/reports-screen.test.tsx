@@ -540,6 +540,82 @@ test("queue run: one write through the dialog, double-clicked Run runs ONCE, the
   expect(mocked.runExportQueue).toHaveBeenCalledTimes(1);
 });
 
+test("F-R2 queue-run key custody: STABLE across a pure retry; a second EXPLICIT drain rotates the key — same mount ('Run again') AND remount — so a backend store can never replay the first drain's counts", async () => {
+  const user = userEvent.setup();
+  mocked.runExportQueue
+    .mockRejectedValueOnce(new ApiError(503, "unavailable", "corr-q1"))
+    .mockResolvedValue({ completed: 2, failed: 0 });
+  mountScreen();
+
+  await user.click(screen.getByRole("button", { name: "Run export queue" }));
+  const dialog = await screen.findByRole("dialog", { name: "Run export queue" });
+
+  // Attempt 1 fails with a 5xx…
+  await user.click(within(dialog).getByRole("button", { name: "Run queue" }));
+  await waitFor(() => expect(mocked.runExportQueue).toHaveBeenCalledTimes(1));
+  const key1 = mocked.runExportQueue.mock.calls[0]?.[0];
+  expect(key1).toBeTruthy();
+
+  // …the pure retry of the SAME intent REUSES the key…
+  await user.click(within(dialog).getByRole("button", { name: "Run queue" }));
+  await waitFor(() => expect(mocked.runExportQueue).toHaveBeenCalledTimes(2));
+  expect(mocked.runExportQueue.mock.calls[1]?.[0]).toBe(key1);
+
+  // …the drain succeeds; a second EXPLICIT drain in the SAME mount
+  // ('Run again') is a NEW intent — the key ROTATES at the wire.
+  expect(await within(dialog).findByText("Export queue drained")).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Run again" }));
+  await user.click(within(dialog).getByRole("button", { name: "Run queue" }));
+  await waitFor(() => expect(mocked.runExportQueue).toHaveBeenCalledTimes(3));
+  const key3 = mocked.runExportQueue.mock.calls[2]?.[0];
+  expect(key3).toBeTruthy();
+  expect(key3).not.toBe(key1);
+
+  // …and a REMOUNT (close + fresh dialog) is also a new intent with a
+  // new key slot — rotated again.
+  expect(await within(dialog).findByText("Export queue drained")).toBeInTheDocument();
+  const resultPanel = within(dialog).getByRole("status");
+  await user.click(within(resultPanel).getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog", { name: "Run export queue" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Run export queue" }));
+  const remounted = await screen.findByRole("dialog", { name: "Run export queue" });
+  await user.click(within(remounted).getByRole("button", { name: "Run queue" }));
+  await waitFor(() => expect(mocked.runExportQueue).toHaveBeenCalledTimes(4));
+  const key4 = mocked.runExportQueue.mock.calls[3]?.[0];
+  expect(key4).toBeTruthy();
+  expect(key4).not.toBe(key3);
+  expect(key4).not.toBe(key1);
+});
+
+test("F-R2 queue-run 409: CREATE-style conflict — sanitized banner + operator note, EXACTLY ONE attempt, nothing to reload; the acknowledged retry carries a ROTATED key (!56 F-B4 / !60 F3)", async () => {
+  const user = userEvent.setup();
+  mocked.runExportQueue
+    .mockRejectedValueOnce(new ApiError(409, "conflict", "corr-qc"))
+    .mockResolvedValue({ completed: 1, failed: 0 });
+  mountScreen();
+
+  await user.click(screen.getByRole("button", { name: "Run export queue" }));
+  const dialog = await screen.findByRole("dialog", { name: "Run export queue" });
+  await user.click(within(dialog).getByRole("button", { name: "Run queue" }));
+
+  expect(
+    await within(dialog).findByText(/The record changed or conflicts with existing data/),
+  ).toBeInTheDocument();
+  expect(within(dialog).getByText(/Nothing ran twice/)).toBeInTheDocument();
+  // No record-reload affordance exists for this recordless conflict.
+  expect(screen.queryByRole("button", { name: "Reload record" })).toBeNull();
+  expect(mocked.runExportQueue).toHaveBeenCalledTimes(1);
+  const staleKey = mocked.runExportQueue.mock.calls[0]?.[0];
+
+  // The operator explicitly retries after the acknowledged conflict: a
+  // NEW intent — the conflict epoch rotates the key so a backend store
+  // pinned to the conflicted claim can never serve its stale outcome.
+  await user.click(within(dialog).getByRole("button", { name: "Run queue" }));
+  await waitFor(() => expect(mocked.runExportQueue).toHaveBeenCalledTimes(2));
+  expect(mocked.runExportQueue.mock.calls[1]?.[0]).not.toBe(staleKey);
+  expect(await within(dialog).findByText("Export queue drained")).toBeInTheDocument();
+});
+
 test("W56-3: a stray overlay click never discards a dirty export request or the armed queue dialog; the explicit ✕ still closes", async () => {
   const user = userEvent.setup();
   const { container } = mountScreen();
