@@ -111,7 +111,7 @@ const SUMMARY: DashboardSummary = {
         member_no: "M-0002",
         name: "Peter Otieno",
         pledged_total: "500000.10",
-        free_capacity: "250000.10",
+        free_capacity: "250000.20",
       },
     ],
   },
@@ -221,7 +221,7 @@ function mountScreen() {
 async function openPledgeDrawer(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByText("Pledge ›"));
   const drawer = await screen.findByRole("dialog", { name: "Pledge guarantee" });
-  await within(drawer).findByText("KES 250,000.10");
+  await within(drawer).findByText("Applied amount");
   return drawer;
 }
 
@@ -282,7 +282,7 @@ test("hostile guarantor name renders as inert TEXT; aggregate money renders VERB
   // falsifiable: a numeric round-trip would drop the trailing ".10".
   expect(screen.getByText("KES 1,234,567.10")).toBeInTheDocument();
   expect(screen.getByText("KES 500,000.10")).toBeInTheDocument();
-  expect(screen.getByText("KES 250,000.10")).toBeInTheDocument();
+  expect(screen.getByText("KES 250,000.20")).toBeInTheDocument();
 });
 
 test("pledge queue: the stage filter drives the SERVER query over the PLEDGEABLE stages only; Load more follows the cursor VERBATIM (gate 1.3)", async () => {
@@ -336,7 +336,7 @@ test("SELF-GUARANTEE structurally impossible: the borrower never appears among t
   // The server-reported free capacity for the chosen guarantor renders
   // verbatim from the fresh aggregate read.
   await user.selectOptions(picker, GUARANTOR_ID);
-  expect(await within(drawer).findByText("KES 250,000.10", { exact: false })).toBeInTheDocument();
+  expect(await within(drawer).findByText("KES 250,000.20")).toBeInTheDocument();
 });
 
 test("STALE-READ OVER-PLEDGE PREVENTION: opening the drawer re-reads the application AND the server aggregates fresh (record class, staleTime 0)", async () => {
