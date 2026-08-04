@@ -43,7 +43,7 @@ from genesis.application.ledger import (
     post_withdrawal,
 )
 from genesis.domain.ledger import Channel
-from genesis.errors import ConflictError, NotFoundError
+from genesis.errors import ConflictError, ForbiddenError, NotFoundError
 from genesis.infrastructure.tenancy import tenant_session
 
 pytestmark = pytest.mark.skipif(
@@ -99,19 +99,28 @@ async def _seed_product(tid: uuid.UUID) -> uuid.UUID:
 
 
 async def _seed_approved_application(
-    tid: uuid.UUID, mid: uuid.UUID, pid: uuid.UUID, amount: Decimal
+    tid: uuid.UUID,
+    mid: uuid.UUID,
+    pid: uuid.UUID,
+    amount: Decimal,
+    created_by: uuid.UUID | None = None,
 ) -> uuid.UUID:
-    """Insert a loan application in 'approved' stage and return its id."""
+    """Insert a loan application in 'approved' stage and return its id.
+
+    created_by defaults to NULL — the pre-0036 shape; the issue-#30
+    SoD tests pass an explicit initiator.
+    """
     app_id = uuid.uuid4()
     async with tenant_session(factory(), tid) as session:
         await session.execute(
             text(
                 "INSERT INTO loan_applications "
                 "(id, tenant_id, member_id, product_id, amount, term_months, "
-                " rate_pct, stage) "
+                " rate_pct, stage, created_by) "
                 "VALUES "
                 "(CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:mid AS uuid), "
-                " CAST(:pid AS uuid), :amount, 12, 12.00, 'approved')"
+                " CAST(:pid AS uuid), :amount, 12, 12.00, 'approved', "
+                " CAST(:actor AS uuid))"
             ),
             {
                 "id": str(app_id),
@@ -119,9 +128,40 @@ async def _seed_approved_application(
                 "mid": str(mid),
                 "pid": str(pid),
                 "amount": str(amount),
+                "actor": str(created_by) if created_by else None,
             },
         )
     return app_id
+
+
+async def _seed_extra_user(tid: uuid.UUID) -> uuid.UUID:
+    """Insert another user into the tenant's existing role; return its id.
+
+    transactions.created_by / loan_applications.created_by are FKs to
+    users (0036), so attributed postings need real principals.
+    """
+    uid = uuid.uuid4()
+    async with tenant_session(factory(), tid) as session:
+        role_id = (
+            await session.execute(
+                text("SELECT id FROM roles WHERE tenant_id = CAST(:tid AS uuid) LIMIT 1"),
+                {"tid": str(tid)},
+            )
+        ).scalar_one()
+        await session.execute(
+            text(
+                "INSERT INTO users (id, tenant_id, role_id, full_name, email) "
+                "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:rid AS uuid), "
+                "'Ledger Actor', :email)"
+            ),
+            {
+                "id": str(uid),
+                "tid": str(tid),
+                "rid": str(role_id),
+                "email": unique_email(),
+            },
+        )
+    return uid
 
 
 # ---------------------------------------------------------------------------
@@ -1036,5 +1076,161 @@ def test_50_parallel_mixed_postings_zero_duplicates() -> None:
         assert len(sh_refs) == 25
         assert len(set(mp_refs)) == 25
         assert len(set(sh_refs)) == 25
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Issue #30 — attribution & disbursement separation of duties (FM-A/B/C)
+# ---------------------------------------------------------------------------
+
+
+def test_initiator_cannot_disburse_own_application() -> None:
+    """FM-A: the initiator of a loan application cannot post its
+    disbursement (issue #30 R4 — the P12 self-settle mirror, 403).
+
+    Falsifiable: remove the created_by comparison from disburse_loan
+    and the initiator's disbursement succeeds, failing this test.
+    Hand-computed oracle: created_by = initiator, actor = initiator
+    -> ForbiddenError with NOTHING posted (no loan, stage unchanged);
+    actor = a different principal -> the same application disburses.
+    """
+
+    async def run() -> None:
+        tid, _ = await seed_user(unique_email())
+        initiator = await _seed_extra_user(tid)
+        other = await _seed_extra_user(tid)
+        mid = await _seed_member(tid)
+        pid = await _seed_product(tid)
+        app_id = await _seed_approved_application(
+            tid, mid, pid, Decimal("5000.00"), created_by=initiator
+        )
+
+        with pytest.raises(ForbiddenError, match="cannot post its disbursement"):
+            async with tenant_session(factory(), tid) as session:
+                await disburse_loan(session, tid, app_id, Channel.BANK, initiator)
+
+        # The refusal is atomic: no loan, no posting, stage unchanged.
+        async with tenant_session(factory(), tid) as session:
+            loans = (
+                await session.execute(
+                    text("SELECT count(*) FROM loans WHERE application_id = CAST(:a AS uuid)"),
+                    {"a": str(app_id)},
+                )
+            ).scalar_one()
+            stage = (
+                await session.execute(
+                    text("SELECT stage FROM loan_applications WHERE id = CAST(:a AS uuid)"),
+                    {"a": str(app_id)},
+                )
+            ).scalar_one()
+        assert int(loans) == 0
+        assert str(stage) == "approved"
+
+        # A DIFFERENT principal disburses the very same application:
+        # the check compares principals, it is not a blanket block.
+        async with tenant_session(factory(), tid) as session:
+            disb = await disburse_loan(session, tid, app_id, Channel.BANK, other)
+        assert disb.loan_id is not None
+
+        # The disbursement posting carries the DISBURSING principal
+        # (issue #30 R3): attribution follows the actor who moved the
+        # money, never the application's initiator.
+        async with tenant_session(factory(), tid) as session:
+            posted_by = (
+                await session.execute(
+                    text("SELECT created_by FROM transactions WHERE id = CAST(:id AS uuid)"),
+                    {"id": str(disb.txn_id)},
+                )
+            ).scalar_one()
+        assert uuid.UUID(str(posted_by)) == other
+
+    asyncio.run(run())
+
+
+def test_unattributed_application_stays_null_and_disburses_under_quorum() -> None:
+    """FM-B: attribution is never invented (issue #30).
+
+    A pre-0036 row (created_by NULL) stays NULL — no backfill default,
+    no fabricated principal — and a NULL initiator is not
+    principal-comparable: the disbursement proceeds for any actor, the
+    P9 committee quorum remaining the approval control for legacy rows
+    (documented in disburse_loan). Falsifiable: defaulting created_by
+    to the acting/disbursing user (inventing attribution) makes the
+    NULL assertion below fail.
+    """
+
+    async def run() -> None:
+        tid, _ = await seed_user(unique_email())
+        actor = await _seed_extra_user(tid)
+        mid = await _seed_member(tid)
+        pid = await _seed_product(tid)
+        app_id = await _seed_approved_application(tid, mid, pid, Decimal("3000.00"))
+
+        async with tenant_session(factory(), tid) as session:
+            disb = await disburse_loan(session, tid, app_id, Channel.BANK, actor)
+        assert disb.loan_id is not None
+
+        async with tenant_session(factory(), tid) as session:
+            created_by = (
+                await session.execute(
+                    text("SELECT created_by FROM loan_applications WHERE id = CAST(:a AS uuid)"),
+                    {"a": str(app_id)},
+                )
+            ).scalar_one()
+        assert created_by is None  # NULL stays NULL — never invented
+
+    asyncio.run(run())
+
+
+def test_posting_actor_attribution_is_immutable() -> None:
+    """FM-C: transactions.created_by is pinned by the 0004 append-only
+    fence — attribution can never be rewritten after the fact (issue
+    #30; migration 0036 re-enables the trigger in its own transaction).
+
+    Falsifiable: dropping/disabling transactions_no_update lets the
+    UPDATE through and the exception assertion fails.
+    """
+
+    async def run() -> None:
+        tid, _ = await seed_user(unique_email())
+        actor = await _seed_extra_user(tid)
+        forger = await _seed_extra_user(tid)
+        mid = await _seed_member(tid)
+
+        async with tenant_session(factory(), tid) as session:
+            result = await post_deposit(session, tid, mid, Decimal("500"), Channel.MPESA, actor)
+            txn_id = result.txn_id
+
+        # Recorded at INSERT from the acting principal.
+        async with tenant_session(factory(), tid) as session:
+            stored = (
+                await session.execute(
+                    text("SELECT created_by FROM transactions WHERE id = CAST(:id AS uuid)"),
+                    {"id": str(txn_id)},
+                )
+            ).scalar_one()
+        assert uuid.UUID(str(stored)) == actor
+
+        # Post-hoc forgery is refused at the database.
+        with pytest.raises(Exception, match="append-only"):
+            async with tenant_session(factory(), tid) as session:
+                await session.execute(
+                    text(
+                        "UPDATE transactions SET created_by = CAST(:u AS uuid) "
+                        "WHERE id = CAST(:id AS uuid)"
+                    ),
+                    {"u": str(forger), "id": str(txn_id)},
+                )
+
+        # The attribution is unchanged.
+        async with tenant_session(factory(), tid) as session:
+            stored_after = (
+                await session.execute(
+                    text("SELECT created_by FROM transactions WHERE id = CAST(:id AS uuid)"),
+                    {"id": str(txn_id)},
+                )
+            ).scalar_one()
+        assert uuid.UUID(str(stored_after)) == actor
 
     asyncio.run(run())

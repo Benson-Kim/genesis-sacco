@@ -1317,6 +1317,15 @@ def test_exit_read_contract_exposes_requested_by_least_disclosure() -> None:
             by_id = {e["id"]: e for e in listing.json()["items"]}
             assert by_id[exit_id]["requested_by"] == str(admin_uid)
 
+            # The statement DOCUMENT carries the initiator too (issue
+            # #30 R3): an examiner reading a settlement sees WHO
+            # requested it next to the figures — no audit-log context
+            # switch. Same least-disclosure posture: the UUID only.
+            statement = await client.get(f"/member-exits/{exit_id}/statement", headers=admin)
+            assert statement.status_code == 200
+            assert statement.json()["requested_by"] == str(admin_uid)
+            assert admin_email not in statement.text
+
             # Least disclosure: the UUID only — no name/email keys, and
             # the initiator's PII appears nowhere in the payloads.
             for payload in (created, single):
@@ -1333,5 +1342,10 @@ def test_exit_read_contract_exposes_requested_by_least_disclosure() -> None:
             legacy = await client.get(f"/member-exits/{unattributed_id}", headers=admin)
             assert legacy.status_code == 200
             assert legacy.json()["requested_by"] is None
+            legacy_statement = await client.get(
+                f"/member-exits/{unattributed_id}/statement", headers=admin
+            )
+            assert legacy_statement.status_code == 200
+            assert legacy_statement.json()["requested_by"] is None
 
     asyncio.run(run())
