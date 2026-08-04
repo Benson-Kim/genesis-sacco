@@ -20,9 +20,14 @@
  *   identity comes from the per-tab registry (the P12 contract exposes
  *   no requested_by — recorded honestly in the MR). The server bans
  *   self-votes and enforces one vote per voter regardless (gate 1.6).
- *   VOID deliberately sits OUTSIDE the panel: the P12 contract allows
- *   the initiator to void their own request (it moves no money and only
- *   narrows state — the documented request-withdrawal path).
+ *   VOID deliberately sits OUTSIDE the panel: the P12 contract gates
+ *   POST /member-exits/{id}/void on members:approve (verified against
+ *   backend member_exits.py — ApproveCtx) and permits an approve-holder
+ *   to void their OWN request (it moves no money and only narrows
+ *   state — the documented request-withdrawal path). An initiator
+ *   holding members:edit ONLY cannot void here NOR at the API — moot
+ *   under the P4 matrix (edit and approve sit on the same roles), and
+ *   the UI gate below mirrors the contract exactly (mayApprove).
  * - EXACTLY ONE write per intent: ConfirmDangerModal typed phrase,
  *   pending short-circuit, `retry: 0`, key material folding intent +
  *   fresh record VERSION + reload epoch (+ the spent-vote registry
@@ -396,9 +401,14 @@ export function ExitDetailDrawer({
         <Button type="button" onClick={onViewStatement} disabled={anyPending}>
           View exit statement
         </Button>
-        {/* VOID: offered on any OPEN exit to members:approve holders —
-            including the initiator (the documented request-withdrawal
-            path; it moves no money and only narrows state). */}
+        {/* VOID: offered on any OPEN exit to members:approve holders
+            ONLY — the contract gate on POST /member-exits/{id}/void is
+            members:approve (backend member_exits.py, ApproveCtx), and
+            an approve-holding initiator may void their OWN request (it
+            moves no money and only narrows state — the documented
+            request-withdrawal path). An edit-only initiator cannot
+            void, in this UI or at the API (moot today: the P4 matrix
+            grants edit and approve to the same roles). */}
         {!terminal && mayApprove && (
           <Button
             type="button"
