@@ -301,7 +301,3 @@ test("this module performs NO reads and NO query strings: every request is a POS
     expect(call.headers.get("x-tenant-id")).toBe(TENANT);
   }
 });
-atch(/^Bearer /);
-    expect(call.headers.get("x-tenant-id")).toBe(TENANT);
-  }
-});

@@ -348,21 +348,3 @@ export function SubstituteDrawer({
     </Modal>
   );
 }
-            if (substitute.isPending) return;
-            const parsed = parsedInput();
-            if (!parsed.success) return;
-            substitute.mutate(parsed.data);
-          }}
-          onClose={() => setConfirming(false)}
-        >
-          <Banner>
-            This releases the current {fmtKes(guarantee.amount)} pledge and encumbers{" "}
-            {chosenSubstitute !== undefined ? chosenSubstitute.name : "the substitute"}
-            &apos;s savings in its place, in ONE atomic server transaction. A failure
-            leaves the original guarantee fully intact.
-          </Banner>
-        </ConfirmDangerModal>
-      )}
-    </Modal>
-  );
-}

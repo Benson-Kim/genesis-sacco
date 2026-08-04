@@ -8,7 +8,7 @@ member OTP request/verify runs first.
 
 Tiny CI tables make seqscan the cheaper plan; the capture disables it
 for the session to prove the query is SERVABLE by an index (the
-P10–P13 precedent). The serving index is the 0035 partial UNIQUE
+P10-P13 precedent). The serving index is the 0035 partial UNIQUE
 uq_member_credentials_email_active — the login handle's claim key
 doubling as its lookup index (the 0019/0026 precedent); the join to
 members rides the primary key. Falsifiable guard: drop the 0035

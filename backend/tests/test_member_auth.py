@@ -321,7 +321,7 @@ def test_revoked_credential_dies_within_one_request() -> None:
 
     async def run() -> None:
         tid, _ = await seed_user(unique_email())
-        mid, cid, email = await _seed_member_with_credential(tid)
+        _mid, cid, email = await _seed_member_with_credential(tid)
         headers = {"x-tenant-id": str(tid)}
         async with api_client() as client:
             await client.post("/member/auth/otp/request", json={"email": email}, headers=headers)
