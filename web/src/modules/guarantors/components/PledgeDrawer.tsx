@@ -144,7 +144,19 @@ export function PledgeDrawer({
         input,
         idempotencyKeyFor(
           keySlot.current,
-          JSON.stringify({ op: "pledge-guarantee", id: applicationId, input }),
+          // Key material = intent + FRESHNESS (!60 F3): the version of
+          // the fresh (staleTime 0) application read anchors the key to
+          // the record state the operator acted on. Pure retries of one
+          // intent keep the key STABLE; a changed guarantor/amount OR a
+          // post-409 reload that bumped the record version ROTATES it —
+          // a legitimate re-submission after a conflict can never be
+          // served a stale pinned outcome by the backend key store.
+          JSON.stringify({
+            op: "pledge-guarantee",
+            id: applicationId,
+            recordVersion: detail.data?.version ?? null,
+            input,
+          }),
         ),
       ),
     onSuccess: (created) => {

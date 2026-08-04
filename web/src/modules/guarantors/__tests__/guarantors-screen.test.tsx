@@ -467,6 +467,37 @@ test("pledge idempotency keys: stable across retries of an identical intent, rot
   expect(mocked.pledgeGuarantee.mock.calls[2]?.[2]).not.toBe(key1);
 });
 
+test("pledge idempotency-key FRESHNESS: after a 409 + explicit reload (record version bumped) an IDENTICAL re-submission ROTATES the key — the pre-conflict key is never reused", async () => {
+  const user = userEvent.setup();
+  mocked.pledgeGuarantee
+    .mockRejectedValueOnce(new ApiError(409, "conflict", "corr-k1"))
+    .mockResolvedValue(guarantee());
+  mountScreen();
+
+  const drawer = await openPledgeDrawer(user);
+  await user.click(await confirmPledge(user, drawer));
+  expect(await screen.findByText(/Your change was NOT applied/)).toBeInTheDocument();
+  expect(mocked.pledgeGuarantee).toHaveBeenCalledTimes(1);
+  const preConflictKey = mocked.pledgeGuarantee.mock.calls[0]?.[2];
+
+  // Concurrent activity moved the record (capacity freed by a release,
+  // say): the stage is STILL pledgeable but the version bumped. The
+  // explicit reload reads it fresh…
+  mockedApps.fetchApplication.mockResolvedValue(application({ version: 3 }));
+  await user.click(screen.getByRole("button", { name: "Reload record" }));
+  await waitFor(() => expect(mockedApps.fetchApplication).toHaveBeenCalledTimes(2));
+
+  // …and re-submitting the IDENTICAL guarantor+amount is a NEW intent
+  // against the reloaded record: the key ROTATES (reload-never-replay
+  // does not rest on backend idempotency-store semantics).
+  await user.click(await confirmPledge(user, drawer));
+  await waitFor(() => expect(mocked.pledgeGuarantee).toHaveBeenCalledTimes(2));
+  expect(mocked.pledgeGuarantee.mock.calls[1]?.[1]).toEqual(
+    mocked.pledgeGuarantee.mock.calls[0]?.[1],
+  );
+  expect(mocked.pledgeGuarantee.mock.calls[1]?.[2]).not.toBe(preConflictKey);
+});
+
 test("pledge validation: client Zod verdicts render inline BEFORE any write; server 422 verdicts then WIN per field", async () => {
   const user = userEvent.setup();
   mocked.pledgeGuarantee.mockRejectedValue(
