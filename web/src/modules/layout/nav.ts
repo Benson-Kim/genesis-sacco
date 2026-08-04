@@ -21,9 +21,9 @@ export interface NavSection {
 }
 
 /**
- * Sidebar structure mirroring the prototype NAV. Screens land in P15;
- * prototype entries without their own RBAC module (guarantors, committee,
- * member exit) will live under their owning modules when built.
+ * Sidebar structure mirroring the prototype NAV. Prototype entries
+ * without their own RBAC module (guarantors, committee, member exit)
+ * live under their owning modules.
  */
 export const NAV_SECTIONS: NavSection[] = [
   {
@@ -59,13 +59,22 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Governance",
     items: [
       // Prototype Governance ▸ Credit committee; lives under the
-      // applications RBAC module (P15 module 3). Member exit joins this
-      // section when its module batch lands.
+      // applications RBAC module (P15 module 3).
       {
         label: "Credit committee",
         href: "/modules/applications/committee",
         module: "applications",
         icon: "committee",
+      },
+      {
+        // Prototype Governance ▸ Member exit; lives under the members
+        // RBAC module (every P12 /member-exits route is gated on
+        // members view/edit/approve server-side — there is no
+        // dedicated exit module in the P4 matrix).
+        label: "Member exit",
+        href: "/modules/members/exits",
+        module: "members",
+        icon: "exit",
       },
     ],
   },

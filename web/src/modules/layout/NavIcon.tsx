@@ -16,7 +16,8 @@ export type NavIconShape =
   | "access_control"
   | "audit_log"
   | "committee"
-  | "guarantors";
+  | "guarantors"
+  | "exit";
 
 const ICON_PATHS: Record<NavIconShape, string> = {
   dashboard: "M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z",
@@ -36,6 +37,8 @@ const ICON_PATHS: Record<NavIconShape, string> = {
   // Shield over a person — the guarantor-collateral metaphor.
   guarantors:
     "M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5zM12 7.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM7.5 17c.9-1.9 2.6-3 4.5-3s3.6 1.1 4.5 3",
+  // Open door with an outbound arrow — the member-exit metaphor.
+  exit: "M14 3h6v18h-6M14 3v18M3 12h9M9 8l-4 4 4 4",
 };
 
 export function NavIcon({ shape, active }: { shape: NavIconShape; active: boolean }) {
