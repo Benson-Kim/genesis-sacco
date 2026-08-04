@@ -53,11 +53,25 @@ const fastApiDetailSchema = z.object({
 });
 
 /**
+ * FastAPI `loc` heads naming WHERE a parameter lives. The head is
+ * stripped to the documented canonical field key (W56-5): the key is
+ * the dotted path WITHOUT its location head, so body and query errors
+ * address the same form field identically and `form-errors.ts`
+ * matching never silently misses a verdict.
+ */
+const LOCATION_HEADS = new Set(["body", "query", "path", "header", "cookie"]);
+
+/**
  * Build an ApiError from an openapi-fetch error body + response. Handles
  * both the app envelope {category, correlation_id} and FastAPI validation
  * bodies {detail: [{loc, msg}]} so 422 stays DISTINCT from 409/other
  * conflicts and field messages reach the operator. Anything else degrades
  * to a sanitized internal error — never an echo of the body (gate 1.6).
+ *
+ * Field keys are CANONICAL (W56-5): the leading location head — body,
+ * query, path, header or cookie — is stripped (head position ONLY, so a
+ * nested segment that happens to be named like a head survives); nested
+ * segments join with ".".
  */
 export function toApiError(error: unknown, response: Response): ApiError {
   const parsed = errorEnvelopeSchema.safeParse(error);
@@ -70,13 +84,15 @@ export function toApiError(error: unknown, response: Response): ApiError {
   }
   const validation = fastApiDetailSchema.safeParse(error);
   if (validation.success) {
-    const fields = validation.data.detail.map((item) => ({
-      field: (item.loc ?? [])
-        .map(String)
-        .filter((part) => part !== "body")
-        .join("."),
-      message: item.msg ?? "invalid value",
-    }));
+    const fields = validation.data.detail.map((item) => {
+      const loc = (item.loc ?? []).map(String);
+      const head = loc[0];
+      const canonical = head !== undefined && LOCATION_HEADS.has(head) ? loc.slice(1) : loc;
+      return {
+        field: canonical.join("."),
+        message: item.msg ?? "invalid value",
+      };
+    });
     return new ApiError(response.status, "validation_error", null, fields);
   }
   return new ApiError(response.status, "internal_error", null);
