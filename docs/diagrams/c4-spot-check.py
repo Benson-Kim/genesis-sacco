@@ -14,13 +14,24 @@ Checks (stdlib only, no dependencies):
 2. Router completeness, both directions: the set of router modules
    wired via ``include_router`` in ``genesis/api/app.py`` equals the
    set of ``genesis/api/*.py`` router modules cited in
-   c4-component.md.
+   c4-component.md. The wired set is derived from the actual
+   ``app.include_router(<name>)`` calls resolved through the module's
+   ``from genesis.api.<mod> import <obj> [as <alias>]`` imports, so an
+   aliased or renamed router import (e.g. ``import jobs_router as
+   ...``) can never silently drop out of the set (!38 review R2 —
+   partial drift, not just total drift, must be detected).
 3. Pinned function claims (P-DIAG drift MR): every named
    function/class the diagrams claim for the corrections/recovery
    component boxes (and the cross-cutting seams they cite) is defined
    in the module the box names — a claim without a matching ``def`` /
    ``class`` is a FAIL. Extend ``PINNED_CLAIMS`` whenever a diagram
    names a new load-bearing callable.
+4. Sequence-diagram citations (!38 review R2): every layer-relative
+   module path (``api|application|domain|infrastructure/<mod>.py``)
+   cited in the P-DIAG.5 sequence diagrams
+   (sequence-committee-voting.md, sequence-snapshot-bind-reverify.md,
+   sequence-outbox-dispatch.md) exists under
+   ``backend/src/genesis/``.
 
 This script is the falsifiable half of the P-DIAG.1 EXIT criterion:
 the CI ``docs:diagrams`` render job is a SYNTAX gate only; the
@@ -44,12 +55,33 @@ BACKEND_SRC = REPO_ROOT / "backend/src"
 APP_PY = BACKEND_SRC / "genesis/api/app.py"
 COMPONENT_MD = REPO_ROOT / "docs/diagrams/c4-component.md"
 
+#: P-DIAG.5 sequence diagrams (!39) — their Source-of-truth footers
+#: cite layer-relative module paths (``application/foo.py``); check 4
+#: verifies each exists under backend/src/genesis/ (!38 review R2).
+SEQUENCE_DIAGRAMS = [
+    REPO_ROOT / "docs/diagrams/sequence-committee-voting.md",
+    REPO_ROOT / "docs/diagrams/sequence-snapshot-bind-reverify.md",
+    REPO_ROOT / "docs/diagrams/sequence-outbox-dispatch.md",
+]
+
 # A cited module path: genesis/<pkg>/<module>.py (also matches bare
 # genesis/api etc. only when the .py suffix is present — package
 # citations like "genesis/domain" are checked as directories below).
 MODULE_RE = re.compile(r"\bgenesis/[a-z_/]+\.py\b")
-PACKAGE_RE = re.compile(r"\bgenesis/[a-z_]+(?=[^./a-z_]|$)")
-INCLUDE_RE = re.compile(r"from genesis\.api\.([a-z_]+) import router")
+# ``$`` needs re.MULTILINE: a package citation at end-of-LINE must
+# match, not only one at end-of-file (!38 review R2).
+PACKAGE_RE = re.compile(r"\bgenesis/[a-z_]+(?=[^./a-z_]|$)", re.MULTILINE)
+# Sequence-diagram citations are layer-relative (audience rule: the
+# footer table cites ``application/dividends.py:declare_dividend``).
+SEQ_MODULE_RE = re.compile(r"\b(?:api|application|domain|infrastructure)/[a-z_]+\.py\b")
+# Router wiring in app.py — resolved via the import map so aliased
+# imports (``import jobs_router as accounting_jobs_router``) are never
+# silently dropped (!38 review R2).
+IMPORT_RE = re.compile(
+    r"^from genesis\.api\.([a-z_]+) import ([a-z_]+)(?:\s+as\s+([a-z_]+))?\s*$",
+    re.MULTILINE,
+)
+INCLUDE_CALL_RE = re.compile(r"\bapp\.include_router\(([a-z_]+)\)")
 
 #: Check 3 — function/class claims the diagrams make, pinned to code.
 #: module path (under backend/src/) -> names that must be defined via
@@ -121,8 +153,39 @@ def check_pinned_claims() -> int:
     return verified
 
 
+def wired_router_modules(app_text: str) -> set[str]:
+    """Check 2 input: the genesis.api modules actually wired in app.py.
+
+    Every ``app.include_router(<name>)`` call is resolved back through
+    the module's imports (plain OR aliased). An include_router call
+    whose name cannot be traced to a ``genesis.api`` import is a FAIL —
+    the regexes must never silently under-count the wired set.
+    """
+    name_to_module: dict[str, str] = {}
+    for module, obj, alias in IMPORT_RE.findall(app_text):
+        name_to_module[alias or obj] = module
+    wired: set[str] = set()
+    unresolved: list[str] = []
+    calls = INCLUDE_CALL_RE.findall(app_text)
+    if not calls:
+        fail(f"no app.include_router(...) calls found in {APP_PY} — regex drift?")
+    for name in calls:
+        module = name_to_module.get(name)
+        if module is None:
+            unresolved.append(name)
+        else:
+            wired.add(module)
+    if unresolved:
+        fail(
+            "include_router names in app.py with no matching "
+            "'from genesis.api.<module> import <obj> [as <alias>]' import "
+            "(regex drift?):\n  " + "\n  ".join(sorted(unresolved))
+        )
+    return wired
+
+
 def main() -> None:
-    for p in [*DIAGRAMS, APP_PY]:
+    for p in [*DIAGRAMS, *SEQUENCE_DIAGRAMS, APP_PY]:
         if not p.exists():
             fail(f"missing input file {p}")
 
@@ -142,9 +205,7 @@ def main() -> None:
 
     # --- Check 2: router completeness, both directions -----------------
     app_text = APP_PY.read_text(encoding="utf-8")
-    wired = set(INCLUDE_RE.findall(app_text))
-    if not wired:
-        fail(f"no include_router imports found in {APP_PY} — regex drift?")
+    wired = wired_router_modules(app_text)
     cited_routers = {
         m.removeprefix("genesis/api/").removesuffix(".py")
         for m in MODULE_RE.findall(COMPONENT_MD.read_text(encoding="utf-8"))
@@ -173,11 +234,27 @@ def main() -> None:
     # --- Check 3: pinned function/class claims --------------------------
     verified_claims = check_pinned_claims()
 
+    # --- Check 4: sequence-diagram module citations (!38 review R2) -----
+    seq_cited: set[str] = set()
+    for diagram in SEQUENCE_DIAGRAMS:
+        seq_cited.update(SEQ_MODULE_RE.findall(diagram.read_text(encoding="utf-8")))
+    if not seq_cited:
+        fail("no module citations found in the sequence diagrams — regex drift?")
+    seq_missing = sorted(
+        m for m in seq_cited if not (BACKEND_SRC / "genesis" / m).is_file()
+    )
+    if seq_missing:
+        fail(
+            "sequence diagrams cite module paths that do not exist under "
+            "backend/src/genesis/:\n  " + "\n  ".join(seq_missing)
+        )
+
     print(
         f"OK: {len(cited_modules)} cited module paths exist; "
         f"{len(wired)} routers wired in app.py all have L3 diagrams; "
         f"no invented routers; {verified_claims} pinned function claims "
-        "verified."
+        f"verified; {len(seq_cited)} sequence-diagram module citations "
+        "exist."
     )
 
 
