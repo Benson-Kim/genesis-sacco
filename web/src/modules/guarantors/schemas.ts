@@ -1,0 +1,105 @@
+import { z } from "zod";
+
+/**
+ * Zod-validated response boundary for the guarantors module (P15 module
+ * 5 — the P9/P13.14 guarantee-pledging surface). Shapes mirror the
+ * generated client types (components["schemas"]["GuaranteeOut"] etc.) —
+ * the drift-checked OpenAPI snapshot remains the contract; these
+ * schemas only assert it at runtime.
+ *
+ * MONEY RULE (P15 blocker (a)): every monetary field (pledge amount,
+ * pledged totals, free capacity) is a decimal STRING end-to-end,
+ * rendered via fmtKes or verbatim and never coerced or combined
+ * arithmetically. Guarantor capacity, encumbrance and exposure are
+ * SERVER facts (the P9 capacity check runs under the guarantor's
+ * deposit-account row lock; the aggregates come from the P13.9
+ * dashboard slice) — the prototype's client-side freeCap()/utilisation
+ * math is deliberately NOT reproduced.
+ */
+
+/** Mirrors the backend guarantee lifecycle (P9 pledge -> P9 consent ->
+ * P13.14 release/substitution). An unknown value is a contract
+ * violation and is REJECTED, never silently rendered. */
+export const GUARANTEE_STATUSES = ["pledged", "active", "released"] as const;
+export const guaranteeStatusSchema = z.enum(GUARANTEE_STATUSES);
+export type GuaranteeStatus = z.infer<typeof guaranteeStatusSchema>;
+
+export const GUARANTEE_STATUS_LABELS: Record<GuaranteeStatus, string> = {
+  pledged: "Pledged (unconsented)",
+  active: "Active",
+  released: "Released",
+};
+
+/** GuaranteeOut — the write-response record (the contract exposes NO
+ * guarantee list/read endpoint; see the module's honesty notes). */
+export const guaranteeSchema = z.object({
+  id: z.string(),
+  application_id: z.string().nullable(),
+  loan_id: z.string().nullable(),
+  borrower_member_id: z.string(),
+  guarantor_member_id: z.string(),
+  /** Decimal string — never a number (blocker (a)). */
+  amount: z.string(),
+  status: guaranteeStatusSchema,
+  version: z.number().int(),
+});
+
+export type Guarantee = z.infer<typeof guaranteeSchema>;
+
+/** SubstitutionOut — the P13.14 atomic swap returns BOTH sides; extra
+ * keys are STRIPPED at this boundary. */
+export const substitutionSchema = z.object({
+  released: guaranteeSchema,
+  replacement: guaranteeSchema,
+});
+
+export type Substitution = z.infer<typeof substitutionSchema>;
+
+const DECIMAL_RE = /^\d+(?:\.\d{1,2})?$/;
+const ALL_ZERO_RE = /^0+(?:\.0{1,2})?$/;
+const AMOUNT_SHAPE_MESSAGE = "Enter a positive amount (up to 2 decimal places).";
+const AMOUNT_ZERO_MESSAGE = "Enter an amount greater than zero.";
+
+/**
+ * Client-side pre-validation of the pledge form (the server re-validates
+ * and is the enforcer — gate 1.6; capacity is checked under the
+ * guarantor's deposit-account row lock server-side). The amount is
+ * validated as a decimal STRING shape (2dp, non-zero — pure string
+ * inspection, no numeric coercion) and sent as a string: it is never
+ * parsed into a float.
+ */
+export const pledgeCreateSchema = z.object({
+  guarantor_member_id: z.string().uuid("Select the guarantor."),
+  amount: z
+    .string()
+    .regex(DECIMAL_RE, AMOUNT_SHAPE_MESSAGE)
+    .refine((value) => !ALL_ZERO_RE.test(value), { message: AMOUNT_ZERO_MESSAGE }),
+});
+
+export type PledgeCreateInput = z.infer<typeof pledgeCreateSchema>;
+
+/**
+ * Client-side pre-validation of the substitution form (P13.14 atomic
+ * swap). The replacement amount is OPTIONAL — when blank the server
+ * derives it from the guarantee row (it may only meet or exceed the
+ * released amount, enforced server-side). `consented` must be true and
+ * `consent_reference` must cite the attestation evidence — an
+ * unconsented or unreferenced substitute is a server 422.
+ */
+export const substituteCreateSchema = z.object({
+  guarantor_member_id: z.string().uuid("Select the substitute guarantor."),
+  consented: z.literal(true, {
+    errorMap: () => ({ message: "Attest the substitute guarantor's consent." }),
+  }),
+  consent_reference: z
+    .string()
+    .trim()
+    .min(1, "Cite the consent evidence (e.g. the signed guarantorship form)."),
+  amount: z
+    .string()
+    .regex(DECIMAL_RE, AMOUNT_SHAPE_MESSAGE)
+    .refine((value) => !ALL_ZERO_RE.test(value), { message: AMOUNT_ZERO_MESSAGE })
+    .nullable(),
+});
+
+export type SubstituteCreateInput = z.infer<typeof substituteCreateSchema>;
