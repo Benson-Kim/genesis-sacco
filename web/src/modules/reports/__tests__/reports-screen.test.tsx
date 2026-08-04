@@ -15,7 +15,12 @@ import { clearSession, hasSession, setSession } from "@/modules/auth/session";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { ReportsScreen } from "../components/ReportsScreen";
 import { clearWitnessedExports, recordWitnessedExport } from "../exportRegistry";
-import { validateExportDraft, EMPTY_FILTER_DRAFT, type ExportOut } from "../schemas";
+import {
+  validateExportDraft,
+  isCalendarDate,
+  EMPTY_FILTER_DRAFT,
+  type ExportOut,
+} from "../schemas";
 import * as reportsApi from "../api";
 import * as membersApi from "@/modules/members/api";
 
@@ -554,6 +559,14 @@ test("validateExportDraft: declared filters only, required enforcement, shape ch
       date_from: "18/07/2026",
     }).errors,
   ).not.toBeNull();
+  // Impossible calendar date — right SHAPE, no such day (F-R3).
+  expect(
+    validateExportDraft("member_statement", {
+      ...EMPTY_FILTER_DRAFT,
+      member_id: MEMBER_ID,
+      date_from: "2026-02-31",
+    }).errors,
+  ).not.toBeNull();
   // Reversed date range.
   expect(
     validateExportDraft("income_statement", {
@@ -580,4 +593,32 @@ test("validateExportDraft: declared filters only, required enforcement, shape ch
     report: "member_statement",
     filters: { member_id: MEMBER_ID, date_from: "2026-07-01" },
   });
+});
+
+test("isCalendarDate (F-R3): a PURE-STRING accept/reject matrix — impossible calendar dates rejected, leap years computed arithmetically, no Date()", () => {
+  const accepted = [
+    "2026-01-01",
+    "2026-02-28",
+    "2024-02-29", // divisible by 4 — leap
+    "2000-02-29", // century divisible by 400 — leap
+    "2026-04-30",
+    "2026-07-18",
+    "2026-12-31",
+  ];
+  const rejected = [
+    "2026-02-29", // 2026 is not a leap year
+    "1900-02-29", // century NOT divisible by 400 — not a leap year
+    "2026-02-31", // no such February day, ever
+    "2026-04-31", // April has 30 days
+    "2026-13-01", // no 13th month
+    "2026-00-10", // no 0th month
+    "2026-06-00", // no 0th day
+    "2026-1-1", // wrong shape (unpadded)
+    "18/07/2026", // wrong shape entirely
+    "2026-02-28T00:00:00", // datetime, not a date
+    "",
+  ];
+  // Assert per-value (filter form keeps failures readable).
+  expect(accepted.filter((value) => !isCalendarDate(value))).toEqual([]);
+  expect(rejected.filter((value) => isCalendarDate(value))).toEqual([]);
 });

@@ -93,8 +93,33 @@ export const REPORT_FILTERS: Record<
   sasra_return: { allowed: [], required: [] },
 };
 
-/** ISO date (YYYY-MM-DD) or empty — the export date filters. */
+/** ISO date SHAPE (YYYY-MM-DD) — the export date filters. Shape only:
+ * calendar validity is `isCalendarDate` below (review F-R3). */
 export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Days per month, 1-indexed; February's 28 is corrected by the
+ * leap-year arithmetic in `isCalendarDate`. */
+const DAYS_IN_MONTH = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+
+/**
+ * PURE-STRING calendar validity for the date filters (review F-R3):
+ * DATE_RE alone accepts impossible dates ("2026-02-31", "2026-13-01").
+ * This checks the shape, then month 01–12 and a day valid for that
+ * month, with leap years computed ARITHMETICALLY (divisible by 4,
+ * except centuries unless divisible by 400) — no Date() construction
+ * and no timezone math, so the verdict is deterministic everywhere.
+ * A UX pre-validation mirror only: the server re-validates regardless.
+ */
+export function isCalendarDate(value: string): boolean {
+  if (!DATE_RE.test(value)) return false;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  if (month < 1 || month > 12) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const maxDay = month === 2 && leap ? 29 : (DAYS_IN_MONTH[month] ?? 0);
+  return day >= 1 && day <= maxDay;
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -119,15 +144,16 @@ const FILTER_MESSAGES: Record<FilterKey, string> = {
   member_id: "Select or enter the member (a UUID).",
   exit_id: "Select or enter the exit request (a UUID).",
   declaration_id: "Select or enter the dividend declaration (a UUID).",
-  date_from: "Enter dates as YYYY-MM-DD.",
-  date_to: "Enter dates as YYYY-MM-DD.",
+  date_from: "Enter a real calendar date as YYYY-MM-DD.",
+  date_to: "Enter a real calendar date as YYYY-MM-DD.",
 };
 
 /**
  * Client-side pre-validation of the export request (the server
  * re-validates and is the enforcer — gate 1.6): required filters per
- * the report's declared surface, UUID shape for ids, ISO shape for
- * dates, and an ordered date range. Returns the wire-ready entry or a
+ * the report's declared surface, UUID shape for ids, real calendar
+ * dates (isCalendarDate — shape AND month/day/leap validity, F-R3),
+ * and an ordered date range. Returns the wire-ready entry or a
  * field→message map for FormField.
  */
 export function validateExportDraft(
@@ -149,7 +175,7 @@ export function validateExportDraft(
       errors[key] = FILTER_MESSAGES[key];
       continue;
     }
-    if ((key === "date_from" || key === "date_to") && !DATE_RE.test(value)) {
+    if ((key === "date_from" || key === "date_to") && !isCalendarDate(value)) {
       errors[key] = FILTER_MESSAGES[key];
       continue;
     }
