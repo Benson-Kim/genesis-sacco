@@ -29,6 +29,7 @@ const APP_ID = "aaaaaaaa-1111-2222-3333-444444444444";
 
 const calls: FetchCall[] = [];
 let transitionStatus = 200;
+let recordGarbageMoney = false;
 
 function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -77,6 +78,12 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
     return json(201, applicationOut);
   }
   if (path === `/applications/${APP_ID}` && request.method === "GET") {
+    if (recordGarbageMoney) {
+      // A STRING, so it passes a naive z.string() — the shared
+      // moneySchema shape (issue #30 A2/S2) is the only thing standing
+      // between it and fmtKes on the committee/detail surfaces.
+      return json(200, { ...applicationOut, amount: "007.10" });
+    }
     return json(200, applicationOut);
   }
   if (path === `/applications/${APP_ID}/transition` && request.method === "POST") {
@@ -123,6 +130,7 @@ const tabStorage = new Map<string, string>();
 /* eslint-disable @typescript-eslint/no-require-imports */
 const session = require("@/modules/auth/session") as typeof import("@/modules/auth/session");
 const appsApi = require("../api") as typeof import("../api");
+const appSchemas = require("../schemas") as typeof import("../schemas");
 const { ApiError } = require("@genesis/api-client") as typeof import("@genesis/api-client");
 /* eslint-enable @typescript-eslint/no-require-imports */
 
@@ -131,6 +139,7 @@ const REFRESH_VALUE = "per-tab-refresh-value";
 beforeEach(() => {
   calls.length = 0;
   transitionStatus = 200;
+  recordGarbageMoney = false;
   session.clearSession();
   session.setSession({ accessToken: jwt(USER_ID, 900), refreshToken: REFRESH_VALUE });
 });
@@ -231,4 +240,37 @@ test("responses parse through the Zod boundary: record reads return validated sh
   expect(application.amount).toBe("250000.10");
   expect(application.stage).toBe("submitted");
   expect(application.version).toBe(3);
+});
+
+test("a garbage money STRING is REJECTED at the wire boundary (issue #30 A2/S2) — a value that passes z.string() can still never reach fmtKes", async () => {
+  recordGarbageMoney = true;
+  const thrown = await appsApi.fetchApplication(APP_ID).catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("amount");
+});
+
+test("issue #30 A2/S2 accept/reject matrix: amount/max_eligible assert the CANONICAL server shape; the percentages stay contract-typed strings", () => {
+  const withField = (field: string, value: unknown) =>
+    appSchemas.applicationSchema.safeParse({ ...applicationOut, [field]: value }).success;
+
+  // Canonical shapes ACCEPTED: loan_applications.amount is
+  // numeric(18,2) CHECK (amount > 0) via str(Decimal);
+  // max_eligible = to_cents(deposits x multiplier) added to the
+  // two-place guarantee sum — Decimal addition keeps the wider scale
+  // (hand-computed oracles).
+  expect(withField("amount", "250000.10")).toBe(true);
+  expect(withField("max_eligible", "300000.00")).toBe(true);
+  expect(withField("max_eligible", null)).toBe(true);
+
+  // Garbage shapes REJECTED on both money fields — each previously
+  // flowed into fmtKes unchallenged (bare z.string()).
+  for (const value of ["abc", "1e5", "007.10", "250000.1", "250000.100", "250000", "250,000.10", " 250000.10", "NaN", ""]) {
+    expect(withField("amount", value)).toBe(false);
+    expect(withField("max_eligible", value)).toBe(false);
+  }
+  // CHECK (amount > 0) / non-negative composition: a '-' is a
+  // contract violation on both.
+  expect(withField("amount", "-1.00")).toBe(false);
+  expect(withField("max_eligible", "-1.00")).toBe(false);
 });

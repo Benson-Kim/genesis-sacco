@@ -37,6 +37,7 @@ const GUARANTEE_ID = "bbbbbbbb-1111-2222-3333-444444444444";
 const calls: FetchCall[] = [];
 let releaseStatus = 200;
 let guaranteeMoneyAsNumbers = false;
+let guaranteeGarbageMoney = false;
 
 function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -79,6 +80,12 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
   if (path === `/applications/${APP_ID}/guarantees` && request.method === "POST") {
     if (guaranteeMoneyAsNumbers) {
       return json(201, guaranteeOut({ amount: 50000.1 }));
+    }
+    if (guaranteeGarbageMoney) {
+      // A STRING, so it passes a naive z.string() — the shared
+      // moneySchema shape (issue #30 A2/S2) is the only thing standing
+      // between it and fmtKes in the act dialogs.
+      return json(201, guaranteeOut({ amount: "007.10" }));
     }
     return json(201, guaranteeOut({ internal_capacity_note: "CAP-SECRET-01" }));
   }
@@ -137,6 +144,7 @@ const tabStorage = new Map<string, string>();
 /* eslint-disable @typescript-eslint/no-require-imports */
 const session = require("@/modules/auth/session") as typeof import("@/modules/auth/session");
 const guarantorsApi = require("../api") as typeof import("../api");
+const guarantorSchemas = require("../schemas") as typeof import("../schemas");
 const { ApiError } = require("@genesis/api-client") as typeof import("@genesis/api-client");
 /* eslint-enable @typescript-eslint/no-require-imports */
 
@@ -146,6 +154,7 @@ beforeEach(() => {
   calls.length = 0;
   releaseStatus = 200;
   guaranteeMoneyAsNumbers = false;
+  guaranteeGarbageMoney = false;
   session.clearSession();
   session.setSession({ accessToken: jwt(USER_ID, 900), refreshToken: REFRESH_VALUE });
 });
@@ -270,6 +279,33 @@ test("a contract-violating response (numeric money) is REJECTED at the boundary 
   expect(thrown).toBeInstanceOf(Error);
   expect(thrown).not.toBeInstanceOf(ApiError);
   expect(String(thrown)).toContain("amount");
+});
+
+test("a garbage money STRING is REJECTED at the wire boundary (issue #30 A2/S2) — a value that passes z.string() can still never reach fmtKes", async () => {
+  guaranteeGarbageMoney = true;
+  const thrown = await guarantorsApi
+    .pledgeGuarantee(APP_ID, { guarantor_member_id: GUARANTOR_ID, amount: "50000.10" }, "key-g")
+    .catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("amount");
+});
+
+test("issue #30 A2/S2 accept/reject matrix: guarantees.amount asserts the CANONICAL server shape (numeric(18,2) CHECK > 0 — migration 0001)", () => {
+  const withAmount = (value: string) =>
+    guarantorSchemas.guaranteeSchema.safeParse(guaranteeOut({ amount: value })).success;
+
+  // Canonical column shapes ACCEPTED (str(Decimal), hand-computed).
+  expect(withAmount("50000.10")).toBe(true);
+  expect(withAmount("0.01")).toBe(true);
+
+  // Garbage shapes REJECTED — each previously flowed into fmtKes
+  // unchallenged (bare z.string()).
+  for (const value of ["abc", "1e5", "007.10", "50000.1", "50000.100", "50000", "50,000.10", " 50000.10", "NaN", ""]) {
+    expect(withAmount(value)).toBe(false);
+  }
+  // CHECK (amount > 0): a '-' is a contract violation.
+  expect(withAmount("-1.00")).toBe(false);
 });
 
 test("this module performs NO reads and NO query strings: every request is a POST to the four write routes (no offset/page/list surface exists)", async () => {

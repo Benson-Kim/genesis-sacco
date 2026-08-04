@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { moneySchema } from "@/lib/schemas";
 
 /**
  * Zod-validated response boundary for the loan-applications / committee
@@ -42,16 +43,25 @@ export const applicationSchema = z.object({
   id: z.string(),
   member_id: z.string(),
   product_id: z.string(),
-  /** Decimal string — never a number (blocker (a)). */
-  amount: z.string(),
+  /** CANONICAL server money shape (issue #30 A2/S2 retrofit):
+   * `loan_applications.amount` is numeric(18,2) CHECK (amount > 0)
+   * (migration 0001) via str(Decimal) (_application_out,
+   * api/loans.py) — a '-' or garbage shape is a contract violation,
+   * REJECTED before it can reach fmtKes. */
+  amount: moneySchema,
   term_months: z.number().int(),
-  /** Decimal string — server-resolved from the product (v1.1 rule 1). */
+  /** Decimal string — server-resolved from the product (v1.1 rule 1);
+   * a percentage, never fmtKes-fed, so the shape stays unasserted. */
   rate_pct: z.string(),
   purpose: z.string().nullable(),
   stage: applicationStageSchema,
   /** Decimal string — the server-computed security-cover ratio. */
   cover_pct: z.string(),
-  max_eligible: z.string().nullable().optional(),
+  /** to_cents(deposits x multiplier) added to the two-place guarantee
+   * sum (application_max_eligible, loan_applications.py) — Decimal
+   * addition keeps the wider scale, so the wire value is ALWAYS the
+   * canonical two-place shape; fmtKes-fed (A2/S2 retrofit). */
+  max_eligible: moneySchema.nullable().optional(),
   version: z.number().int(),
 });
 
