@@ -255,7 +255,7 @@ test("POST /member-exits: the body carries {member_id, reason} and NOTHING else 
   expect(body["member_id"]).toBe(MEMBER_ID);
   expect(body["reason"]).toBe("Relocation");
   // Nothing beyond the ExitRequestBody contract can even be sent —
-  // falsifiable: add an amount/fee key to the API layer and this fails.
+  // falsifiable: add a money key to the API layer and this fails.
   expect(Object.keys(body).sort()).toEqual(["member_id", "reason"]);
 
   // The SERVER's snapshot comes back verbatim; the stubbed internal

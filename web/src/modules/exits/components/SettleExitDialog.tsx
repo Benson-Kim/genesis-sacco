@@ -4,7 +4,7 @@
  * Exit-settlement dialog (P15 module 7 — the TERMINAL money movement
  * of the member lifecycle): `POST /member-exits/{id}/settlement`
  * (members:approve) atomically posts the committee-APPROVED snapshot —
- * ledger postings + zeroed balances + guarantee release + terminal
+ * ledger postings, zeroed balances, guarantee release and terminal
  * member transition in ONE server transaction (P7/P12).
  *
  * - The dialog fetches the exit FRESH (record class, staleTime 0) and
