@@ -18,15 +18,14 @@
  */
 import { useState } from "react";
 import dynamic from "next/dynamic";
-import { useQuery } from "@tanstack/react-query";
 import { Banner, Button, Card } from "@genesis/design-system";
 import { KeysetTable, type Column } from "@/modules/table/KeysetTable";
 import { useKeysetList } from "@/modules/table/useKeysetList";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
 import { fmtKes } from "@/lib/format";
-import { STALE_TIME } from "@/lib/query";
-import { fetchApplicationsPage, fetchProducts, type ApplicationListFilters } from "../api";
+import { fetchApplicationsPage, type ApplicationListFilters } from "../api";
+import { useProducts } from "../useProducts";
 import {
   APPLICATION_STAGES,
   STAGE_LABELS,
@@ -47,20 +46,6 @@ const ApplicationDetailDrawer = dynamic(
   () => import("./ApplicationDetailDrawer").then((m) => m.ApplicationDetailDrawer),
   { ssr: false },
 );
-
-export const PRODUCTS_QUERY_KEY = ["products", "list"] as const;
-
-/** Loan products — reference data (names for the list, options for intake). */
-export function useProducts() {
-  // Product names degrade gracefully on failure: the list still works
-  // (ids render as inert text) and the server validates every product
-  // choice regardless (users-module useRoles precedent).
-  return useQuery({
-    queryKey: PRODUCTS_QUERY_KEY,
-    queryFn: fetchProducts,
-    staleTime: STALE_TIME.reference,
-  });
-}
 
 function StageFilter({
   value,
