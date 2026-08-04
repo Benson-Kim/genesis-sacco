@@ -116,6 +116,13 @@ preserved; combined-state pipeline 2726361694 green) and !54 merged
 2726403180 green on head `75e7c94`). Alembic head on main is **0034**;
 the next free number stays **0035**.
 
+Registry delta update (2026-08-04, the P14.5 claim): **0035 is the
+P14.5 MR's** (member identity & member-facing auth:
+`0035_member_identity.py`, `down_revision = '0034'`, declared in the
+MR description at branch time per rule 14; head 0034 re-verified
+against main's `migrations/versions/` at branch time — no other
+in-flight claim exists). The next free number is **0036**.
+
 ### Post-P13 hardening follow-up batch (issues #21/#24/#23) — status
 
 | Issue | Scope | Status |
