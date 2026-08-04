@@ -104,6 +104,16 @@ class ExitOut(BaseModel):
     loan_balance: str
     fees: str
     net_payable: str
+    #: Initiator attribution (issue #30 R3; the !64 honest-limitation
+    #: row): the staff principal who created the request — persisted
+    #: since 0010 and already driving the self-vote/self-settle 403s,
+    #: now exposed so approvers can see WHO they are checking (the
+    #: maker-checker record itself, not a per-tab witness). Least
+    #: disclosure (gate 1.6): the bare user UUID only — never a name
+    #: or email; resolving it stays behind access_control:view (the
+    #: P13.5 users/audit read paths). NULL only for legacy rows
+    #: written without an actor (attribution is never invented).
+    requested_by: str | None
     decided_at: str | None
     settled_at: str | None
     settlement_txn_id: str | None
@@ -159,6 +169,7 @@ def _out(record: exits_service.ExitRecord) -> ExitOut:
         loan_balance=str(record.loan_balance),
         fees=str(record.fees),
         net_payable=str(record.net_payable),
+        requested_by=str(record.requested_by) if record.requested_by else None,
         decided_at=record.decided_at.isoformat() if record.decided_at else None,
         settled_at=record.settled_at.isoformat() if record.settled_at else None,
         settlement_txn_id=(
