@@ -103,7 +103,19 @@ export function DisburseDialog({
         chosen,
         idempotencyKeyFor(
           keySlot.current,
-          JSON.stringify({ op: "disburse", id: applicationId, channel: chosen }),
+          // Key material = intent + FRESHNESS (W59-2, the !60 F3 class):
+          // the version of the fresh (staleTime 0) application read
+          // anchors the key to the record state the operator acted on.
+          // Pure retries of one intent keep the key STABLE; a changed
+          // channel OR a post-409 reload that bumped the record version
+          // ROTATES it — an identical legitimate re-attempt after a
+          // conflict can never be served a stale pinned outcome.
+          JSON.stringify({
+            op: "disburse",
+            id: applicationId,
+            recordVersion: detail.data?.version ?? null,
+            channel: chosen,
+          }),
         ),
       ),
     onSuccess: (recorded) => {

@@ -428,6 +428,31 @@ test("disbursement idempotency keys: stable across retries of an identical inten
   expect(mocked.disburseApplication.mock.calls[2]?.[2]).not.toBe(key1);
 });
 
+test("disbursement key freshness (W59-2, the !60 F3 class): after 409 + explicit reload, an identical re-attempt uses a ROTATED key", async () => {
+  const user = userEvent.setup();
+  mocked.disburseApplication.mockRejectedValue(new ApiError(409, "conflict", "corr-stale"));
+  mountScreen();
+
+  const dialog = await openDisburseDialog(user);
+  await user.click(await confirmDisburse(user, dialog));
+  expect(await screen.findByText(/Your change was NOT applied/)).toBeInTheDocument();
+  expect(mocked.disburseApplication).toHaveBeenCalledTimes(1);
+  const key1 = mocked.disburseApplication.mock.calls[0]?.[2];
+
+  // Explicit reload: the record moved underneath (version bumped) but is
+  // STILL approved — e.g. a concurrent non-stage edit — so an identical
+  // channel re-attempt is now a legitimate NEW intent…
+  mockedApps.fetchApplication.mockResolvedValue(approvedApplication({ version: 6 }));
+  await user.click(screen.getByRole("button", { name: "Reload record" }));
+  await waitFor(() => expect(mockedApps.fetchApplication).toHaveBeenCalledTimes(2));
+
+  // …and the reloaded record version in the key material ROTATES the key:
+  // the backend idempotency store can never pin the pre-conflict outcome.
+  await user.click(await confirmDisburse(user, dialog));
+  await waitFor(() => expect(mocked.disburseApplication).toHaveBeenCalledTimes(2));
+  expect(mocked.disburseApplication.mock.calls[1]?.[2]).not.toBe(key1);
+});
+
 test("repayment: NO write until the byte-identical phrase; double-clicked confirm posts ONCE; the amount travels as the typed STRING; the allocation renders verbatim", async () => {
   const user = userEvent.setup();
   const recorded: RepaymentResult = {
@@ -545,6 +570,41 @@ test("repayment 409 (loan state moved): explicit reload flow, EXACTLY ONE attemp
     await screen.findByText(/not active — the contract accepts no further repayments/),
   ).toBeInTheDocument();
   expect(mocked.recordRepayment).toHaveBeenCalledTimes(1);
+});
+
+test("repayment key freshness (W59-2, the !60 F3 class): after 409 + explicit reload, an identical re-entry uses a ROTATED key", async () => {
+  const user = userEvent.setup();
+  mocked.recordRepayment.mockRejectedValue(new ApiError(409, "conflict", "corr-repay"));
+  mountScreen();
+
+  await user.click(await screen.findByText("KES 1,234,567.10"));
+  const drawer = await screen.findByRole("dialog", { name: "Loan detail" });
+  await user.type(within(drawer).getByLabelText("Amount (KES)"), "5000.00");
+  await user.selectOptions(within(drawer).getByLabelText("Channel"), "mpesa");
+  await user.click(within(drawer).getByRole("button", { name: "Record repayment…" }));
+  const confirm = await screen.findByRole("dialog", { name: "Record repayment" });
+  const phrase = LOAN_ID.slice(0, 8);
+  await user.type(within(confirm).getByLabelText(`Type "${phrase}" to confirm`), phrase);
+  await user.click(within(confirm).getByRole("button", { name: "Record repayment" }));
+
+  expect(await screen.findByText(/Your change was NOT applied/)).toBeInTheDocument();
+  expect(mocked.recordRepayment).toHaveBeenCalledTimes(1);
+  const key1 = mocked.recordRepayment.mock.calls[0]?.[2];
+
+  // Explicit reload: the loan moved underneath (version bumped) but is
+  // STILL active — an identical re-entry is now a legitimate NEW intent…
+  mocked.fetchLoan.mockResolvedValue(baseLoan({ version: 8 }));
+  await user.click(screen.getByRole("button", { name: "Reload record" }));
+  await waitFor(() => expect(mocked.fetchLoan).toHaveBeenCalledTimes(2));
+
+  // …and the reloaded loan version in the key material ROTATES the key.
+  await user.click(within(drawer).getByRole("button", { name: "Record repayment…" }));
+  const confirm2 = await screen.findByRole("dialog", { name: "Record repayment" });
+  await user.type(within(confirm2).getByLabelText(`Type "${phrase}" to confirm`), phrase);
+  await user.click(within(confirm2).getByRole("button", { name: "Record repayment" }));
+
+  await waitFor(() => expect(mocked.recordRepayment).toHaveBeenCalledTimes(2));
+  expect(mocked.recordRepayment.mock.calls[1]?.[2]).not.toBe(key1);
 });
 
 test("least-disclosure: a 403 on disbursement renders the sanitized banner only, session intact", async () => {

@@ -123,7 +123,17 @@ export function LoanDetailDrawer({
         input,
         idempotencyKeyFor(
           keySlot.current,
-          JSON.stringify({ op: "repayment", id: loanId, input }),
+          // Key material = intent + FRESHNESS (W59-2, the !60 F3 class):
+          // the version of the fresh (staleTime 0) loan read anchors the
+          // key to the record state the operator acted on — stable
+          // across pure retries, rotated when the entry changes OR when
+          // a post-409 reload bumped the loan version.
+          JSON.stringify({
+            op: "repayment",
+            id: loanId,
+            recordVersion: detail.data?.version ?? null,
+            input,
+          }),
         ),
       ),
     onSuccess: (recorded) => {
