@@ -13,6 +13,7 @@ import { ApiError } from "@genesis/api-client";
 import { Providers } from "@/app/providers";
 import { clearSession, hasSession, setSession } from "@/modules/auth/session";
 import { usePermissions } from "@/modules/authz/usePermissions";
+import { announce } from "@/modules/layout/announcer";
 import { GuarantorsScreen } from "../components/GuarantorsScreen";
 import {
   guaranteeSchema,
@@ -69,11 +70,21 @@ jest.mock("@/modules/authz/usePermissions", () => ({
   usePermissions: jest.fn(),
 }));
 
+// The live-region announcer is a spy so the suites can prove every
+// async outcome — including the 409 withdrawal (!60 F5) — is announced.
+jest.mock("@/modules/layout/announcer", () => {
+  const actual = jest.requireActual<typeof import("@/modules/layout/announcer")>(
+    "@/modules/layout/announcer",
+  );
+  return { ...actual, announce: jest.fn() };
+});
+
 const mocked = jest.mocked(guarantorsApi);
 const mockedDashboard = jest.mocked(dashboardApi);
 const mockedApps = jest.mocked(appsApi);
 const mockedMembers = jest.mocked(membersApi);
 const mockedPermissions = jest.mocked(usePermissions);
+const mockedAnnounce = jest.mocked(announce);
 
 const ADMIN_ID = "99999999-9999-9999-9999-999999999999";
 const BORROWER_ID = "11111111-1111-1111-1111-111111111111";
@@ -417,6 +428,14 @@ test("stale pledge: 409 shows the explicit reload flow with EXACTLY ONE write at
   expect(
     await screen.findByText(/no longer in a pledgeable stage/),
   ).toBeInTheDocument();
+  // The reload notice reports a post-conflict state: informational
+  // styling, NEVER the success variant — and it is announced (!60 F5).
+  const reloadNotice = screen.getByText(/Record reloaded — re-check the stage and capacity/);
+  expect(reloadNotice).toHaveClass("info");
+  expect(reloadNotice).not.toHaveClass("ok");
+  expect(mockedAnnounce).toHaveBeenCalledWith(
+    "Record reloaded after the conflict — re-check the stage and capacity.",
+  );
   // …the action is gone and the stale write was NEVER replayed.
   expect(within(drawer).queryByRole("button", { name: "Pledge…" })).toBeNull();
   expect(mocked.pledgeGuarantee).toHaveBeenCalledTimes(1);
@@ -556,7 +575,14 @@ test("RELEASE 409 (record moved outside this tab): EXACTLY ONE attempt; reload s
   // tab's stale copy is structurally withdrawn instead — its actions are
   // gone from the dialog AND the session panel; nothing was replayed.
   await user.click(screen.getByRole("button", { name: "Reload record" }));
-  expect(await screen.findByText(/actions are withdrawn here/)).toBeInTheDocument();
+  const withdrawalNotice = await screen.findByText(/actions are withdrawn here/);
+  // The notice reports a CONFLICTED record: informational styling, NEVER
+  // the success variant — and the withdrawal is announced (!60 F5).
+  expect(withdrawalNotice).toHaveClass("info");
+  expect(withdrawalNotice).not.toHaveClass("ok");
+  expect(mockedAnnounce).toHaveBeenCalledWith(
+    "Guarantee actions withdrawn — the record changed outside this tab.",
+  );
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
   expect(await screen.findByText(/Changed outside this tab/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Release…" })).toBeNull();
@@ -636,6 +662,47 @@ test("SUBSTITUTION (disbursed collateral): release is NOT offered; the swap requ
     await within(drawer).findByText("Substitution recorded (atomic swap)"),
   ).toBeInTheDocument();
   expect(within(drawer).queryByRole("button", { name: "Substitute…" })).toBeNull();
+});
+
+test("SUBSTITUTE 409: reload withdraws the record with an INFORMATIONAL (never success) notice and ANNOUNCES the withdrawal; the stale swap is never replayed", async () => {
+  const user = userEvent.setup();
+  recordWitnessedGuarantee(guarantee({ status: "active", loan_id: LOAN_ID }));
+  mocked.substituteGuarantee.mockRejectedValue(new ApiError(409, "conflict", "corr-sub"));
+  mockedMembers.fetchMember.mockImplementation((id: string) =>
+    Promise.resolve(id === BORROWER_ID ? BORROWER : GUARANTOR),
+  );
+  mountScreen();
+
+  await user.click(await screen.findByRole("button", { name: "Substitute…" }));
+  const drawer = await screen.findByRole("dialog", { name: "Substitute guarantee" });
+  await user.selectOptions(
+    within(drawer).getByLabelText("Substitute guarantor"),
+    GUARANTOR_ID,
+  );
+  await user.click(within(drawer).getByLabelText("Consent attestation"));
+  await user.type(
+    within(drawer).getByLabelText("Consent evidence reference"),
+    "Signed guarantorship form GF-778",
+  );
+  await user.click(within(drawer).getByRole("button", { name: "Substitute…" }));
+  const confirm = await screen.findByRole("dialog", { name: "Confirm substitution" });
+  const phrase = GUARANTEE_ID.slice(0, 8);
+  await user.type(within(confirm).getByLabelText(`Type "${phrase}" to confirm`), phrase);
+  await user.click(within(confirm).getByRole("button", { name: "Substitute guarantee" }));
+
+  expect(await screen.findByText(/Your change was NOT applied/)).toBeInTheDocument();
+  expect(mocked.substituteGuarantee).toHaveBeenCalledTimes(1);
+
+  await user.click(screen.getByRole("button", { name: "Reload record" }));
+  const withdrawalNotice = await screen.findByText(/actions are withdrawn here/);
+  expect(withdrawalNotice).toHaveClass("info");
+  expect(withdrawalNotice).not.toHaveClass("ok");
+  expect(mockedAnnounce).toHaveBeenCalledWith(
+    "Guarantee actions withdrawn — the record changed outside this tab.",
+  );
+  // The form is structurally withdrawn and the stale swap NEVER replayed.
+  expect(within(drawer).queryByRole("button", { name: "Substitute…" })).toBeNull();
+  expect(mocked.substituteGuarantee).toHaveBeenCalledTimes(1);
 });
 
 test("least-disclosure: a 403 on the pledge renders the sanitized banner only, session intact", async () => {

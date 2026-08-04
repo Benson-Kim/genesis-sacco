@@ -149,6 +149,9 @@ export function GuaranteeActDialog({
     setNotice(
       "This guarantee changed outside this tab and its actions are withdrawn here — the contract exposes no per-guarantee read to refresh it.",
     );
+    // Every async outcome is announced (issue #8): the withdrawal is an
+    // outcome, not a success — the live region must say so (!60 F5).
+    announce("Guarantee actions withdrawn — the record changed outside this tab.");
   }
 
   return (
@@ -158,7 +161,9 @@ export function GuaranteeActDialog({
       closeDisabled={mutation.isPending}
       variant="dialog"
     >
-      {notice !== "" && <Banner variant="ok">{notice}</Banner>}
+      {/* Informational, NOT success styling: the notice reports a
+          CONFLICTED/WITHDRAWN record (!60 F5). */}
+      {notice !== "" && <Banner variant="info">{notice}</Banner>}
       <div className={styles.detailGrid}>
         <Kv label="Guarantee record">
           <span className={styles.mono}>{guarantee.id}</span>

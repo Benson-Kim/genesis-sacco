@@ -204,6 +204,9 @@ export function PledgeDrawer({
     void queryClient.refetchQueries({ queryKey: ["dashboard", "summary"] });
     pledge.reset();
     setNotice("Record reloaded — re-check the stage and capacity before acting again.");
+    // Every async outcome is announced (issue #8): the post-conflict
+    // reload is an outcome, not a success (!60 F5).
+    announce("Record reloaded after the conflict — re-check the stage and capacity.");
   }
 
   function armConfirmation(event: FormEvent<HTMLFormElement>) {
@@ -233,7 +236,9 @@ export function PledgeDrawer({
 
   return (
     <Modal title="Pledge guarantee" onClose={onClose} closeDisabled={pledge.isPending}>
-      {notice !== "" && <Banner variant="ok">{notice}</Banner>}
+      {/* Informational, NOT success styling: the notice reports a
+          post-conflict reload (!60 F5). */}
+      {notice !== "" && <Banner variant="info">{notice}</Banner>}
       <div className={styles.detailGrid}>
         <Kv label="Borrower">
           {borrower.data !== undefined ? (
