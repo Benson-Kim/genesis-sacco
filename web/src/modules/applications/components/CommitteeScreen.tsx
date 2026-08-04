@@ -22,7 +22,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, Card, Modal, Pill } from "@genesis/design-system";
+import { Banner, Button, Card, ConfirmDangerModal, Pill } from "@genesis/design-system";
 import { MakerCheckerPanel } from "@/modules/authz/components/MakerCheckerPanel";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
@@ -301,36 +301,30 @@ function ReviewPanel({ applicationId }: Readonly<{ applicationId: string }>) {
           Awaiting committee decision on {fmtKes(app.amount)} over {app.term_months} months.
         </div>
       </MakerCheckerPanel>
+      {/* Typed confirmation (W58-3, blocker (f)): a vote decides money
+          movement (quorum approval leads directly to disbursement), so
+          it carries the same ConfirmDangerModal treatment as every
+          other money-adjacent write — typed phrase, pending
+          short-circuit, exactly one wire write per confirmation. */}
       {confirmVote !== null && (
-        <Modal
+        <ConfirmDangerModal
           title={confirmVote === "approve" ? "Cast approve vote" : "Cast reject vote"}
+          confirmPhrase={app.id.slice(0, 8)}
+          confirmLabel={
+            confirmVote === "approve" ? "Confirm approve vote" : "Confirm reject vote"
+          }
+          pending={vote.isPending}
+          onConfirm={() => {
+            if (!vote.isPending) vote.mutate(confirmVote);
+          }}
           onClose={() => setConfirmVote(null)}
-          closeDisabled={vote.isPending}
-          variant="dialog"
         >
           <Banner>
             Your vote is recorded once and cannot be changed (one vote per
-            committee member). A quorum of votes decides the application.
+            committee member). A quorum of votes decides the application
+            — approval leads directly to disbursement.
           </Banner>
-          <div className={styles.actions}>
-            <Button onClick={() => setConfirmVote(null)} disabled={vote.isPending}>
-              Cancel
-            </Button>
-            <Button
-              variant={confirmVote === "approve" ? "primary" : "danger"}
-              onClick={() => {
-                if (!vote.isPending) vote.mutate(confirmVote);
-              }}
-              disabled={vote.isPending}
-            >
-              {vote.isPending
-                ? "Recording…"
-                : confirmVote === "approve"
-                  ? "Confirm approve vote"
-                  : "Confirm reject vote"}
-            </Button>
-          </div>
-        </Modal>
+        </ConfirmDangerModal>
       )}
     </Card>
   );

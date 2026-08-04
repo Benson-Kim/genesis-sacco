@@ -10,7 +10,7 @@
  * authority bands); these tests pin the UI so it never offers what the
  * API forbids.
  */
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiError } from "@genesis/api-client";
 import { Providers } from "@/app/providers";
@@ -148,6 +148,28 @@ const TALLY_OPEN: VoteResult = {
   stage: "committee",
 };
 
+/** The typed phrase for the vote confirmation (W58-3): the application
+ * id prefix, same convention as the other money-adjacent writes. */
+const CONFIRM_PHRASE = APP_ID.slice(0, 8);
+
+/** Arm the ConfirmDangerModal (W58-3): type the byte-identical phrase
+ * and return the danger confirm button. */
+async function armVoteConfirmation(
+  user: ReturnType<typeof userEvent.setup>,
+  kind: "approve" | "reject",
+) {
+  const dialog = await screen.findByRole("dialog", {
+    name: kind === "approve" ? "Cast approve vote" : "Cast reject vote",
+  });
+  await user.type(
+    within(dialog).getByLabelText(`Type "${CONFIRM_PHRASE}" to confirm`),
+    CONFIRM_PHRASE,
+  );
+  return within(dialog).getByRole("button", {
+    name: kind === "approve" ? "Confirm approve vote" : "Confirm reject vote",
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   clearCommitteeMakers();
@@ -213,7 +235,11 @@ test("an eligible checker (different known principal) votes ONCE through the con
   mountScreen();
 
   await user.click(await screen.findByRole("button", { name: "Vote approve" }));
-  const confirm = await screen.findByRole("button", { name: "Confirm approve vote" });
+  // Typed confirmation (W58-3): the confirm button stays disarmed until
+  // the byte-identical phrase is typed — a reflex click writes nothing.
+  const disarmed = await screen.findByRole("button", { name: "Confirm approve vote" });
+  expect(disarmed).toBeDisabled();
+  const confirm = await armVoteConfirmation(user, "approve");
 
   // Double-click the confirmation: the pending short-circuit yields ONE call.
   await user.click(confirm);
@@ -243,7 +269,7 @@ test("a quorum decision renders from the SERVER verdict — nothing tallied clie
   mountScreen();
 
   await user.click(await screen.findByRole("button", { name: "Vote approve" }));
-  await user.click(await screen.findByRole("button", { name: "Confirm approve vote" }));
+  await user.click(await armVoteConfirmation(user, "approve"));
 
   expect(await screen.findByText("Decision: approved")).toBeInTheDocument();
   expect(screen.getByText("3 approve")).toBeInTheDocument();
@@ -257,7 +283,7 @@ test("already-voted / stage-moved: 409 shows the explicit reload flow with EXACT
   mountScreen();
 
   await user.click(await screen.findByRole("button", { name: "Vote reject" }));
-  await user.click(await screen.findByRole("button", { name: "Confirm reject vote" }));
+  await user.click(await armVoteConfirmation(user, "reject"));
 
   expect(await screen.findByText(/Your change was NOT applied/)).toBeInTheDocument();
   expect(mocked.voteOnApplication).toHaveBeenCalledTimes(1);
@@ -302,7 +328,7 @@ test("least-disclosure: a 403 on the vote renders the sanitized banner only, ses
   mountScreen();
 
   await user.click(await screen.findByRole("button", { name: "Vote approve" }));
-  await user.click(await screen.findByRole("button", { name: "Confirm approve vote" }));
+  await user.click(await armVoteConfirmation(user, "approve"));
 
   expect(await screen.findByText(/Not permitted\./)).toBeInTheDocument();
   expect(screen.getByText(/ref: corr-f/)).toBeInTheDocument();
