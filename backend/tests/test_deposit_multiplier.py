@@ -228,13 +228,19 @@ def test_disbursement_at_exact_cap_succeeds_with_guarantees() -> None:
         # after committee, so seed the live pledge row directly.
         gid = uuid.uuid4()
         async with tenant_session(factory(), tid) as session:
+            # P14.5 FM4: a row born 'active' must carry a consent
+            # principal — seeded fixtures attest via any tenant user.
+            attestor = (
+                await session.execute(text("SELECT id FROM users LIMIT 1"))
+            ).scalar_one()
             await session.execute(
                 text(
                     "INSERT INTO guarantees "
                     "(id, tenant_id, guarantor_member_id, borrower_member_id, "
-                    " application_id, amount, status) "
+                    " application_id, amount, status, consent_attested_by, consent_reference) "
                     "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:g AS uuid), "
-                    "CAST(:b AS uuid), CAST(:a AS uuid), '5000.00', 'active')"
+                    "CAST(:b AS uuid), CAST(:a AS uuid), '5000.00', 'active', "
+                    "CAST(:att AS uuid), 'seeded fixture (P14.5 FM4)')"
                 ),
                 {
                     "id": str(gid),
@@ -242,6 +248,7 @@ def test_disbursement_at_exact_cap_succeeds_with_guarantees() -> None:
                     "g": str(guarantor),
                     "b": str(mid),
                     "a": str(app_id),
+                    "att": str(attestor),
                 },
             )
         async with tenant_session(factory(), tid) as session:

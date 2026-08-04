@@ -4,11 +4,14 @@
  * Consent / release dialog for a guarantee THIS TAB witnessed (P15
  * module 5 — P9 consent, P13.14 release):
  *
- * - CONSENT (`POST /guarantees/{id}/consent`, applications:edit) records
- *   the guarantor's staff-attested consent: pledged -> active. The
- *   contract defines no maker-checker semantics here (the attestation
- *   trust model is the P9 consent route's own) — the guard is the typed
- *   confirmation + the server's status machine and optimistic lock.
+ * - CONSENT (`POST /guarantees/{id}/consent`, member_identity:approve
+ *   since P14.5) records the staff-attested consent OVERRIDE:
+ *   pledged -> active. Consent is the MEMBER principal's own act on the
+ *   /member surface; this staff path exists for the cases where the
+ *   member cannot act (no credential yet, paper consent) and MUST cite
+ *   its evidence (`consent_reference`, written as an audited fact) —
+ *   the guard is the citation + typed confirmation + the server's
+ *   status machine and optimistic lock.
  * - RELEASE (`POST /guarantees/{id}/release`) frees the pledge per the
  *   P13.14 rules. The UI offers it only where the contract can accept
  *   it: a pledged (unconsented) guarantee, or an active one still
@@ -26,8 +29,10 @@
  */
 import { useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
+import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
 import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { FormField } from "@/modules/forms/FormField";
+import { fromApiError } from "@/modules/forms/form-errors";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { announce } from "@/modules/layout/announcer";
@@ -90,16 +95,25 @@ export function GuaranteeActDialog({
   const [result, setResult] = useState<Guarantee | null>(null);
   const [withdrawn, setWithdrawn] = useState(false);
   const [notice, setNotice] = useState<string>("");
+  // P14.5: the staff consent override MUST cite its evidence — the
+  // citation is part of the audited fact, so it also rides the
+  // idempotency-key body (a changed citation is a new intent).
+  const [consentReference, setConsentReference] = useState("");
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
 
   const mutation = useMutation({
     mutationFn: () => {
       const key = idempotencyKeyFor(
         keySlot.current,
-        JSON.stringify({ op: `${act}-guarantee`, id: guarantee.id, version: guarantee.version }),
+        JSON.stringify({
+          op: `${act}-guarantee`,
+          id: guarantee.id,
+          version: guarantee.version,
+          ...(act === "consent" ? { consent_reference: consentReference.trim() } : {}),
+        }),
       );
       return act === "consent"
-        ? consentGuarantee(guarantee.id, guarantee.version, key)
+        ? consentGuarantee(guarantee.id, guarantee.version, consentReference.trim(), key)
         : releaseGuarantee(guarantee.id, guarantee.version, key);
     },
     onSuccess: (updated) => {
@@ -126,6 +140,14 @@ export function GuaranteeActDialog({
   });
 
   const conflict = mutation.isError && isConflict(mutation.error);
+  // Server 422 verdicts render inline on the citation field (P14.5:
+  // the consent override's mandatory evidence), never a bare banner.
+  const fieldErrors = fromApiError(mutation.error);
+  const consentInlineError =
+    act === "consent" &&
+    mutation.error instanceof ApiError &&
+    mutation.error.status === 422 &&
+    Object.keys(fieldErrors).length > 0;
 
   // The UI offers only what the contract can accept (gate 1.6); the
   // server enforces the status machine regardless.
@@ -177,7 +199,9 @@ export function GuaranteeActDialog({
 
       {/* One copy of the 409 reload-and-re-enter flow (gate 1.1). */}
       <ConflictBanner error={mutation.error} onReload={reloadAfterConflict} />
-      {mutation.isError && !conflict && <ErrorBanner error={mutation.error} />}
+      {mutation.isError && !conflict && !consentInlineError && (
+        <ErrorBanner error={mutation.error} />
+      )}
 
       {result !== null && (
         <div className={styles.resultPanel} role="status">
@@ -193,29 +217,52 @@ export function GuaranteeActDialog({
       )}
 
       {actionable && (
-        <div className={styles.actions}>
-          <Button type="button" onClick={onClose} disabled={mutation.isPending}>
-            Cancel
-          </Button>
-          {/* Both acts get the danger treatment: consent converts the
-              pledge into ACTIVE collateral (money-adjacent), the same
-              severity class as pledge/release (review !60 F7). */}
-          <Button
-            type="button"
-            variant="danger"
-            onClick={() => {
-              if (mutation.isPending) return;
-              setConfirming(true);
-            }}
-            disabled={mutation.isPending}
-          >
-            {mutation.isPending
-              ? "Working…"
-              : act === "consent"
-                ? "Record consent…"
-                : "Release…"}
-          </Button>
-        </div>
+        <>
+          {act === "consent" && (
+            <FormField
+              id="consent-reference"
+              label="Consent evidence reference"
+              error={fieldErrors["consent_reference"]}
+              hint="P14.5: consent is the member's own act on the member surface; this staff override MUST cite the evidence it rests on (e.g. the signed consent form) — written as an audited fact."
+            >
+              {(control) => (
+                <input
+                  {...control}
+                  className={styles.input}
+                  maxLength={200}
+                  value={consentReference}
+                  onChange={(event) => setConsentReference(event.target.value)}
+                  disabled={mutation.isPending}
+                />
+              )}
+            </FormField>
+          )}
+          <div className={styles.actions}>
+            <Button type="button" onClick={onClose} disabled={mutation.isPending}>
+              Cancel
+            </Button>
+            {/* Both acts get the danger treatment: consent converts the
+                pledge into ACTIVE collateral (money-adjacent), the same
+                severity class as pledge/release (review !60 F7). */}
+            <Button
+              type="button"
+              variant="danger"
+              onClick={() => {
+                if (mutation.isPending) return;
+                setConfirming(true);
+              }}
+              disabled={
+                mutation.isPending || (act === "consent" && consentReference.trim() === "")
+              }
+            >
+              {mutation.isPending
+                ? "Working…"
+                : act === "consent"
+                  ? "Record consent…"
+                  : "Release…"}
+            </Button>
+          </div>
+        </>
       )}
       {!actionable && result === null && !withdrawn && (
         <div className={styles.formNote}>
