@@ -21,7 +21,7 @@ from sqlalchemy import text
 
 from db_helpers import api_client, factory, seed_user, unique_email
 from genesis.application.auth import AuthContext, issue_access_token
-from genesis.application.guarantees import consent_guarantee, pledge_guarantee
+from genesis.application.guarantees import consent_guarantee_override, pledge_guarantee
 from genesis.application.ledger import disburse_loan
 from genesis.application.rbac import seed_permissions
 from genesis.domain.ledger import Channel
@@ -323,7 +323,9 @@ def test_disbursement_blocks_unconsented_pledged_guarantees() -> None:
         # The documented resolution path: consent the pledge, then the
         # same disbursement succeeds and links exactly that guarantee.
         async with tenant_session(factory(), tid) as session:
-            await consent_guarantee(session, tid, uid, gid, version=1)
+            await consent_guarantee_override(
+                session, tid, uid, gid, version=1, consent_reference="signed form GF-P7"
+            )
         async with tenant_session(factory(), tid) as session:
             result = await disburse_loan(session, tid, app_id, Channel.BANK, uid)
         assert await _guarantee_row(tid, gid) == (str(result.loan_id), "active")
@@ -362,7 +364,9 @@ def test_max_eligible_surfaced_on_application_read() -> None:
                 guarantor_member_id=guarantor,
                 amount=Decimal("5000.00"),
             )
-            await consent_guarantee(session, tid, uid, record.id, version=record.version)
+            await consent_guarantee_override(
+                session, tid, uid, record.id, version=record.version, consent_reference="signed form GF-P7"
+            )
         async with api_client() as client:
             fetched = await client.get(f"/applications/{app_id}", headers=_headers(token))
         assert fetched.status_code == 200, fetched.text
@@ -470,7 +474,9 @@ def test_linked_guarantee_released_on_loan_closure_end_to_end() -> None:
                 guarantor_member_id=guarantor,
                 amount=Decimal("4000.00"),
             )
-            await consent_guarantee(session, tid, uid, pledge.id, version=pledge.version)
+            await consent_guarantee_override(
+                session, tid, uid, pledge.id, version=pledge.version, consent_reference="signed form GF-P7"
+            )
         second_token = await _add_voter(tid)
         async with api_client() as client:
             for target in ("appraisal", "committee"):

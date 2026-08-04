@@ -9,7 +9,7 @@ falsifiable test (remove the guard under test and the test fails):
   4. substitution without consent refused
   5. double release -> exactly one state transition (side-effect counts)
   6. kill-switch mid-substitution -> zero partial state
-  7. wrong actor (guarantor self vs random member vs staff matrix)
+  7. wrong actor (member principal self-service vs staff matrix — P14.5)
   8. tenant scoping (issue-#17 probe: own-tenant session, foreign arg)
   9. exit unblocked after release/substitution, end-to-end through the
      real P12 workflow
@@ -37,9 +37,14 @@ from sqlalchemy.ext.asyncio import (
 
 from db_helpers import api_client, factory, seed_user, unique_email
 from genesis.application import guarantees as guarantees_service
-from genesis.application.auth import AuthContext, issue_access_token
+from genesis.application.auth import (
+    AuthContext,
+    MemberAuthContext,
+    issue_access_token,
+    issue_member_access_token,
+)
 from genesis.application.rbac import seed_permissions
-from genesis.errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableError
+from genesis.errors import ConflictError, NotFoundError, UnprocessableError
 from genesis.infrastructure.tenancy import tenant_session
 
 pytestmark = pytest.mark.skipif(
@@ -226,13 +231,21 @@ async def _seed_guarantee(
 ) -> uuid.UUID:
     gid = uuid.uuid4()
     async with tenant_session(factory(), tid) as session:
+        attestor = None
+        if status == "active":
+            # P14.5 FM4: the 0035 trigger refuses a row ENTERING
+            # 'active' without a principal, so seeded active fixtures
+            # carry a staff attestation (any tenant user).
+            attestor = (await session.execute(text("SELECT id FROM users LIMIT 1"))).scalar_one()
         await session.execute(
             text(
                 "INSERT INTO guarantees "
                 "(id, tenant_id, guarantor_member_id, borrower_member_id, "
-                " application_id, loan_id, amount, status) "
+                " application_id, loan_id, amount, status, "
+                " consent_attested_by, consent_reference) "
                 "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:g AS uuid), "
-                "CAST(:b AS uuid), CAST(:a AS uuid), CAST(:l AS uuid), :amount, :status)"
+                "CAST(:b AS uuid), CAST(:a AS uuid), CAST(:l AS uuid), :amount, :status, "
+                "CAST(:att AS uuid), :cref)"
             ),
             {
                 "id": str(gid),
@@ -243,9 +256,41 @@ async def _seed_guarantee(
                 "l": str(loan_id) if loan_id else None,
                 "amount": amount,
                 "status": status,
+                "att": str(attestor) if attestor is not None else None,
+                "cref": "seeded fixture (P14.5 FM4)" if attestor is not None else None,
             },
         )
     return gid
+
+
+async def _link_member_credential(
+    tid: uuid.UUID, member_id: uuid.UUID, *, email: str | None = None
+) -> uuid.UUID:
+    """Seed an ACTIVE member credential link (the P14.5 identity)."""
+    cid = uuid.uuid4()
+    async with tenant_session(factory(), tid) as session:
+        await session.execute(
+            text(
+                "INSERT INTO member_credentials (id, tenant_id, member_id, email) "
+                "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:m AS uuid), :email)"
+            ),
+            {
+                "id": str(cid),
+                "tid": str(tid),
+                "m": str(member_id),
+                "email": email or unique_email(),
+            },
+        )
+    return cid
+
+
+def _member_headers(
+    tid: uuid.UUID, credential_id: uuid.UUID, member_id: uuid.UUID
+) -> dict[str, str]:
+    token = issue_member_access_token(
+        MemberAuthContext(credential_id=credential_id, member_id=member_id, tenant_id=tid)
+    )
+    return {"authorization": f"Bearer {token}"}
 
 
 async def _guarantee_state(tid: uuid.UUID, gid: uuid.UUID) -> tuple[str, int]:
@@ -461,7 +506,7 @@ def test_concurrent_releases_that_jointly_strip_cover_exactly_one_wins() -> None
             try:
                 async with tenant_session(sm, tid) as session:
                     return await guarantees_service.release_guarantee(
-                        session, tid, uid, gid, version=1, actor_role_id=role_id
+                        session, tid, uid, gid, version=1
                     )
             except ConflictError as exc:
                 return exc
@@ -551,7 +596,6 @@ def test_substitution_swaps_atomically_and_notifies_all_parties() -> None:
                 json={
                     "version": 1,
                     "guarantor_member_id": str(new_g),
-                    "consented": True,
                     "consent_reference": _CONSENT_REF,
                 },
                 headers=_headers(token),
@@ -621,7 +665,6 @@ def test_substitution_shortfall_and_missing_consent_refused() -> None:
                 json={
                     "version": 1,
                     "guarantor_member_id": str(new_g),
-                    "consented": True,
                     "consent_reference": _CONSENT_REF,
                     "amount": "4999.99",
                 },
@@ -630,29 +673,21 @@ def test_substitution_shortfall_and_missing_consent_refused() -> None:
             assert short.status_code == 422, short.text
             assert set(short.json()) == {"category", "correlation_id"}
 
-            unconsented = await client.post(
+            # P14.5: the caller-asserted consented boolean is REMOVED
+            # from the contract (the !29 lesson made structural) —
+            # presenting it is an unknown field, a structural 422
+            # (extra="forbid"), never an accepted assertion.
+            legacy_flag = await client.post(
                 f"/guarantees/{gid}/substitute",
                 json={
                     "version": 1,
                     "guarantor_member_id": str(new_g),
-                    "consented": False,
+                    "consented": True,
                     "consent_reference": _CONSENT_REF,
                 },
                 headers=_headers(token),
             )
-            assert unconsented.status_code == 422, unconsented.text
-
-            # consented is mandatory: omitting it is a structural 422.
-            missing = await client.post(
-                f"/guarantees/{gid}/substitute",
-                json={
-                    "version": 1,
-                    "guarantor_member_id": str(new_g),
-                    "consent_reference": _CONSENT_REF,
-                },
-                headers=_headers(token),
-            )
-            assert missing.status_code == 422, missing.text
+            assert legacy_flag.status_code == 422, legacy_flag.text
 
             # Review R1: the attestation must cite its evidence — a
             # missing or blank consent_reference is refused before any
@@ -662,7 +697,6 @@ def test_substitution_shortfall_and_missing_consent_refused() -> None:
                 json={
                     "version": 1,
                     "guarantor_member_id": str(new_g),
-                    "consented": True,
                 },
                 headers=_headers(token),
             )
@@ -672,7 +706,6 @@ def test_substitution_shortfall_and_missing_consent_refused() -> None:
                 json={
                     "version": 1,
                     "guarantor_member_id": str(new_g),
-                    "consented": True,
                     "consent_reference": "   ",
                 },
                 headers=_headers(token),
@@ -686,7 +719,6 @@ def test_substitution_shortfall_and_missing_consent_refused() -> None:
                 json={
                     "version": 1,
                     "guarantor_member_id": str(borrower),
-                    "consented": True,
                     "consent_reference": _CONSENT_REF,
                 },
                 headers=_headers(token),
@@ -750,7 +782,6 @@ def test_concurrent_substitutions_never_over_pledge_the_substitute() -> None:
                         gid,
                         version=1,
                         guarantor_member_id=substitute,
-                        consented=True,
                         consent_reference=_CONSENT_REF,
                     )
             except ConflictError as exc:
@@ -810,7 +841,6 @@ def test_substitution_capacity_shortfall_leaves_original_intact() -> None:
                 json={
                     "version": 1,
                     "guarantor_member_id": str(poor_sub),
-                    "consented": True,
                     "consent_reference": _CONSENT_REF,
                 },
                 headers=_headers(token),
@@ -853,7 +883,6 @@ def test_substitution_of_pledged_or_undisbursed_guarantee_refused() -> None:
                     json={
                         "version": 1,
                         "guarantor_member_id": str(new_g),
-                        "consented": True,
                         "consent_reference": _CONSENT_REF,
                     },
                     headers=_headers(token),
@@ -892,7 +921,7 @@ def test_double_release_concurrent_and_idempotency_key_replay() -> None:
             try:
                 async with tenant_session(sm, tid) as session:
                     return await guarantees_service.release_guarantee(
-                        session, tid, uid, gid, version=1, actor_role_id=role_id
+                        session, tid, uid, gid, version=1
                     )
             except ConflictError as exc:
                 return exc
@@ -1031,7 +1060,6 @@ def test_kill_switch_mid_substitution_leaves_original_guarantee_intact(
                     gid,
                     version=1,
                     guarantor_member_id=new_g,
-                    consented=True,
                     consent_reference=_CONSENT_REF,
                 )
         monkeypatch.undo()
@@ -1058,7 +1086,6 @@ def test_kill_switch_mid_substitution_leaves_original_guarantee_intact(
                 gid,
                 version=1,
                 guarantor_member_id=new_g,
-                consented=True,
                 consent_reference=_CONSENT_REF,
             )
         assert released.status == "released"
@@ -1073,21 +1100,22 @@ def test_kill_switch_mid_substitution_leaves_original_guarantee_intact(
 
 
 def test_guarantor_releases_own_unconsented_pledge_only() -> None:
-    """The guarantor (email-linked user WITHOUT applications:edit) may
-    release their own PLEDGED guarantee; not someone else's; not their
-    own ACTIVE one. Auditor carries applications:view only, so every
-    refusal below is the service-level actor check, not the route gate.
+    """P14.5 (FM2, wrong actor): the guarantor acts for themselves as
+    the MEMBER principal on /member/guarantees/{id}/release — the
+    retired email-match never decides. Their own PLEDGED guarantee
+    releases; someone else's pledge and their own ACTIVE collateral
+    get the SAME single refusal (least disclosure). A staff token with
+    applications:view only (Auditor) is now refused AT THE ROUTE: the
+    staff release path is applications:edit exactly.
     """
 
     async def run() -> None:
         tid, _, _, _ = await _seed_actor()
-        g_email = unique_email()
-        other_email = unique_email()
         borrower = await _seed_member(tid)
-        guarantor = await _seed_member(tid, deposit="10000.00", email=g_email)
-        # A second member exists solely so other_token below is a real
-        # member-linked user ("random member") — the id is never needed.
-        await _seed_member(tid, deposit="10000.00", email=other_email)
+        guarantor = await _seed_member(tid, deposit="10000.00")
+        other_member = await _seed_member(tid, deposit="10000.00")
+        g_cred = await _link_member_credential(tid, guarantor)
+        other_cred = await _link_member_credential(tid, other_member)
         pid = await _seed_product(tid)
         aid = await _seed_application(tid, borrower, pid, amount="1000.00", stage="submitted")
         own_pledged = await _seed_guarantee(
@@ -1106,51 +1134,87 @@ def test_guarantor_releases_own_unconsented_pledge_only() -> None:
             status="active",
             application_id=aid,
         )
-        _, _, self_token = await _add_user(tid, "Auditor", email=g_email)
-        _, _, other_token = await _add_user(tid, "Auditor", email=other_email)
+        self_headers = _member_headers(tid, g_cred, guarantor)
+        other_headers = _member_headers(tid, other_cred, other_member)
 
         async with api_client() as client:
-            # A random member (email-linked to a DIFFERENT member) can
-            # release nobody's pledge.
+            # Another member's principal can release nobody's pledge.
             res = await client.post(
-                f"/guarantees/{own_pledged}/release",
+                f"/member/guarantees/{own_pledged}/release",
                 json={"version": 1},
-                headers=_headers(other_token),
+                headers=other_headers,
             )
             assert res.status_code == 403, res.text
+            assert set(res.json()) == {"category", "correlation_id"}
             assert await _guarantee_state(tid, own_pledged) == ("pledged", 1)
 
             # The guarantor cannot self-release CONSENTED collateral.
             res = await client.post(
-                f"/guarantees/{own_active}/release",
+                f"/member/guarantees/{own_active}/release",
                 json={"version": 1},
-                headers=_headers(self_token),
+                headers=self_headers,
             )
             assert res.status_code == 403, res.text
             assert await _guarantee_state(tid, own_active) == ("active", 1)
 
-            # The guarantor CAN withdraw their own unconsented pledge.
+            # An applications:view-only STAFF token is refused at the
+            # staff route (applications:edit exactly since P14.5).
+            _, _, viewer_token = await _add_user(tid, "Auditor")
             res = await client.post(
                 f"/guarantees/{own_pledged}/release",
                 json={"version": 1},
-                headers=_headers(self_token),
+                headers=_headers(viewer_token),
+            )
+            assert res.status_code == 403, res.text
+            assert await _guarantee_state(tid, own_pledged) == ("pledged", 1)
+
+            # The guarantor CAN withdraw their own unconsented pledge —
+            # and the audit actor is the CREDENTIAL, the acting
+            # principal (P14.5 actor model).
+            res = await client.post(
+                f"/member/guarantees/{own_pledged}/release",
+                json={"version": 1},
+                headers=self_headers,
             )
             assert res.status_code == 200, res.text
         assert await _guarantee_state(tid, own_pledged) == ("released", 2)
+        async with tenant_session(factory(), tid) as session:
+            actor = (
+                await session.execute(
+                    text(
+                        "SELECT actor_id FROM audit_log "
+                        "WHERE action = 'guarantee.release' AND entity_id = :gid"
+                    ),
+                    {"gid": str(own_pledged)},
+                )
+            ).scalar_one()
+        assert uuid.UUID(str(actor)) == g_cred
 
     asyncio.run(run())
 
 
 def test_release_and_substitute_permission_matrix_per_role() -> None:
-    """P4 matrix walk for the new routes.
+    """P4 matrix walk for the guarantee routes (P14.5 posture).
 
-    release: applications:edit holders succeed (System Admin, Branch
-    Manager, Loan Officer); applications:view-only roles pass the route
-    gate but fail the service actor check (Credit Committee, Auditor);
-    roles without any applications grant are refused at the route
-    (Teller, Accountant). substitute: applications:edit only.
+    release: applications:edit EXACTLY (System Admin, Branch Manager,
+    Loan Officer); every other role — including applications:view
+    holders (Credit Committee, Auditor) — is refused AT THE ROUTE (the
+    email-match self-service is retired; members act on /member).
+    substitute: applications:edit only. consent: the staff path is the
+    attested override under member_identity:approve — System Admin and
+    Branch Manager ONLY (deny by default; falsifiable: route consent
+    through applications:edit and the Loan Officer denial fails).
     """
 
+    consent_override_expectation = {
+        "System Admin": 200,
+        "Branch Manager": 200,
+        "Loan Officer": 403,
+        "Credit Committee": 403,
+        "Teller": 403,
+        "Accountant": 403,
+        "Auditor": 403,
+    }
     release_expectation = {
         "System Admin": 200,
         "Branch Manager": 200,
@@ -1174,6 +1238,28 @@ def test_release_and_substitute_permission_matrix_per_role() -> None:
         tid, _, _, _ = await _seed_actor()
         pid = await _seed_product(tid)
         async with api_client() as client:
+            for role, expected in consent_override_expectation.items():
+                borrower = await _seed_member(tid)
+                guarantor = await _seed_member(tid, deposit="10000.00")
+                aid = await _seed_application(
+                    tid, borrower, pid, amount="1000.00", stage="submitted"
+                )
+                gid = await _seed_guarantee(
+                    tid,
+                    guarantor=guarantor,
+                    borrower=borrower,
+                    amount="500.00",
+                    status="pledged",
+                    application_id=aid,
+                )
+                _, _, token = await _add_user(tid, role)
+                res = await client.post(
+                    f"/guarantees/{gid}/consent",
+                    json={"version": 1, "consent_reference": _CONSENT_REF},
+                    headers=_headers(token),
+                )
+                assert res.status_code == expected, f"consent override as {role}: {res.text}"
+
             for role, expected in release_expectation.items():
                 borrower = await _seed_member(tid)
                 guarantor = await _seed_member(tid, deposit="10000.00")
@@ -1218,7 +1304,6 @@ def test_release_and_substitute_permission_matrix_per_role() -> None:
                     json={
                         "version": 1,
                         "guarantor_member_id": str(new_g),
-                        "consented": True,
                         "consent_reference": _CONSENT_REF,
                     },
                     headers=_headers(token),
@@ -1258,9 +1343,7 @@ def test_release_and_substitute_refuse_foreign_tenant_argument() -> None:
         )
         async with tenant_session(factory(), tid) as session:
             with pytest.raises(NotFoundError):
-                await guarantees_service.release_guarantee(
-                    session, foreign, uid, gid, version=1, actor_role_id=role_id
-                )
+                await guarantees_service.release_guarantee(session, foreign, uid, gid, version=1)
             with pytest.raises(NotFoundError):
                 await guarantees_service.substitute_guarantee(
                     session,
@@ -1269,7 +1352,6 @@ def test_release_and_substitute_refuse_foreign_tenant_argument() -> None:
                     gid,
                     version=1,
                     guarantor_member_id=new_g,
-                    consented=True,
                     consent_reference=_CONSENT_REF,
                 )
         assert await _guarantee_state(tid, gid) == ("active", 1)
@@ -1393,7 +1475,6 @@ def test_exit_unblocked_after_substitution_end_to_end() -> None:
                 json={
                     "version": 1,
                     "guarantor_member_id": str(new_g),
-                    "consented": True,
                     "consent_reference": _CONSENT_REF,
                 },
                 headers=admin,
@@ -1425,10 +1506,11 @@ def test_exit_unblocked_after_substitution_end_to_end() -> None:
 
 
 def test_substitution_consent_attestation_is_first_class_audited_fact() -> None:
-    """Review R1 (consent integrity): the substitute guarantor cannot act
-    for themselves until P14 member auth, so their consent is staff-
+    """Review R1 (consent integrity): substitution consent is the
+    explicit staff-attested override (P14.5), so it is staff-
     attested — and the attestation must be a recorded fact, not a bare
-    boolean. Hand-computed oracle: ONE guarantee.consent audit row on
+    boolean (P14.5: the boolean no longer exists). Hand-computed
+    oracle: ONE guarantee.consent_override audit row on
     the replacement naming the attesting actor and the cited evidence,
     plus ONE guarantee.consented outbox confirmation addressed to the
     substitute guarantor (the detection control for a conscripted
@@ -1457,7 +1539,6 @@ def test_substitution_consent_attestation_is_first_class_audited_fact() -> None:
                 json={
                     "version": 1,
                     "guarantor_member_id": str(new_g),
-                    "consented": True,
                     "consent_reference": _CONSENT_REF,
                 },
                 headers=_headers(token),
@@ -1471,7 +1552,7 @@ def test_substitution_consent_attestation_is_first_class_audited_fact() -> None:
                     text(
                         "SELECT actor_id, after->>'attested_by', "
                         "after->>'consent_reference', after->>'replaces' "
-                        "FROM audit_log WHERE action = 'guarantee.consent' "
+                        "FROM audit_log WHERE action = 'guarantee.consent_override' "
                         "AND entity_id = :rid"
                     ),
                     {"rid": replacement_id},
@@ -1543,7 +1624,6 @@ def test_non_active_member_cannot_be_substitute_guarantor() -> None:
                     json={
                         "version": 1,
                         "guarantor_member_id": str(bad_sub),
-                        "consented": True,
                         "consent_reference": _CONSENT_REF,
                     },
                     headers=_headers(token),
@@ -1567,160 +1647,16 @@ def test_non_active_member_cannot_be_substitute_guarantor() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Review R3 — the email identity link, proven not asserted
+# Review R3 — RETIRED by P14.5
 # ---------------------------------------------------------------------------
-
-
-def test_p4_seeded_matrix_email_rewriters_hold_applications_edit() -> None:
-    """Review R3: the F3 claim — 'no role that can rewrite either email
-    lacks applications:edit' — walked against the SEEDED P4 matrix in
-    the database, not a code comment. Emails are rewritten via
-    members:edit (members.email) or access_control:edit (users.email).
-    Hand-computed from the prototype seedPerms(): exactly System Admin
-    and Branch Manager hold either, and both hold applications:edit.
-    Falsifiable: grant members:edit or access_control:edit to any role
-    without applications:edit in domain/rbac.py and this fails."""
-
-    async def run() -> None:
-        tid, _, _, _ = await _seed_actor()
-        async with tenant_session(factory(), tid) as session:
-            rows = (
-                await session.execute(
-                    text(
-                        "SELECT r.name, p.module, p.can_edit FROM roles r "
-                        "JOIN permissions p ON p.role_id = r.id "
-                        "WHERE p.module IN ('members', 'access_control', 'applications')"
-                    )
-                )
-            ).all()
-        grants: dict[str, dict[str, bool]] = {}
-        for name, module, can_edit in rows:
-            grants.setdefault(str(name), {})[str(module)] = bool(can_edit)
-        assert set(grants) == {
-            "System Admin",
-            "Branch Manager",
-            "Loan Officer",
-            "Teller",
-            "Credit Committee",
-            "Accountant",
-            "Auditor",
-        }
-        rewriters = {
-            role
-            for role, g in grants.items()
-            if g.get("members", False) or g.get("access_control", False)
-        }
-        assert rewriters == {"System Admin", "Branch Manager"}
-        for role in rewriters:
-            assert grants[role].get("applications", False), (
-                f"{role} can rewrite an email but lacks applications:edit — "
-                "the identity link becomes steerable"
-            )
-
-    asyncio.run(run())
-
-
-def test_email_identity_link_is_byte_exact_and_tenant_fenced() -> None:
-    """Review R3: the users.email <-> members.email link matches
-    byte-exactly (Postgres `=`; no canonicalisation exists anywhere in
-    the codebase) and never crosses a tenant fence. A variant can only
-    fail CLOSED (deny the self-service path), never open it."""
-
-    async def run() -> None:
-        tid, _, _, _ = await _seed_actor()
-        exact = f"Guarantor.CASE-{uuid.uuid4().hex[:8]}@Example.com"
-        borrower = await _seed_member(tid)
-        guarantor = await _seed_member(tid, deposit="10000.00", email=exact)
-        pid = await _seed_product(tid)
-        aid = await _seed_application(tid, borrower, pid, amount="1000.00", stage="submitted")
-        gid = await _seed_guarantee(
-            tid,
-            guarantor=guarantor,
-            borrower=borrower,
-            amount="500.00",
-            status="pledged",
-            application_id=aid,
-        )
-        # Auditor holds applications:view only: every 403 below is the
-        # service-level identity check, not the route gate.
-        _, _, case_token = await _add_user(tid, "Auditor", email=exact.lower())
-        _, _, space_token = await _add_user(tid, "Auditor", email=f" {exact}")
-        _, _, exact_token = await _add_user(tid, "Auditor", email=exact)
-
-        async with api_client() as client:
-            for token in (case_token, space_token):
-                res = await client.post(
-                    f"/guarantees/{gid}/release",
-                    json={"version": 1},
-                    headers=_headers(token),
-                )
-                assert res.status_code == 403, res.text
-                assert await _guarantee_state(tid, gid) == ("pledged", 1)
-            # Positive control: only the byte-exact email links.
-            res = await client.post(
-                f"/guarantees/{gid}/release",
-                json={"version": 1},
-                headers=_headers(exact_token),
-            )
-            assert res.status_code == 200, res.text
-        assert await _guarantee_state(tid, gid) == ("released", 2)
-
-        # Tenant fence: a user in ANOTHER tenant whose email equals the
-        # guarantor's must never link (u.tenant_id predicate + RLS; the
-        # join is additionally anchored on the guarantor member's
-        # globally-unique id). NULL-email guarantor covers the
-        # NULL-never-matches branch at the same time.
-        null_email_guarantor = await _seed_member(tid, deposit="10000.00", email=None)
-        gid2 = await _seed_guarantee(
-            tid,
-            guarantor=null_email_guarantor,
-            borrower=borrower,
-            amount="500.00",
-            status="pledged",
-            application_id=aid,
-        )
-        foreign_email = unique_email()
-        foreign_tid, _ = await seed_user(foreign_email, role_name="System Admin")
-        async with tenant_session(factory(), foreign_tid) as session:
-            foreign_user_row = (
-                await session.execute(
-                    text("SELECT id FROM users WHERE email = :email"),
-                    {"email": foreign_email},
-                )
-            ).scalar_one()
-        foreign_uid = uuid.UUID(str(foreign_user_row))
-        # Same-tenant user with the FOREIGN user's email string exists
-        # nowhere in tid; a tid Auditor with that email must not link to
-        # the NULL-email guarantor either.
-        _, _, twin_token = await _add_user(tid, "Auditor", email=foreign_email)
-        async with api_client() as client:
-            res = await client.post(
-                f"/guarantees/{gid2}/release",
-                json={"version": 1},
-                headers=_headers(twin_token),
-            )
-            assert res.status_code == 403, res.text
-        # Service level: the foreign tenant's user id as actor inside a
-        # tid session must never satisfy _actor_is_guarantor (the
-        # u.tenant_id = :tid predicate and RLS both refuse the row).
-        async with tenant_session(factory(), tid) as session:
-            auditor_role_row = (
-                await session.execute(text("SELECT id FROM roles WHERE name = 'Auditor'"))
-            ).scalar_one()
-            auditor_role = uuid.UUID(str(auditor_role_row))
-            with pytest.raises(ForbiddenError):
-                await guarantees_service.release_guarantee(
-                    session,
-                    tid,
-                    foreign_uid,
-                    gid2,
-                    version=1,
-                    actor_role_id=auditor_role,
-                )
-        assert await _guarantee_state(tid, gid2) == ("pledged", 1)
-
-    asyncio.run(run())
-
+# The R3 suite (byte-exact users.email <-> members.email matching, the
+# email-rewriters matrix walk) defended the INTERIM identity bridge
+# that P14.5 removes: no code path joins users.email to members.email
+# any more, so there is no byte-exactness or rewriter-privilege
+# property left to pin. Its threat (identity spoof via email rewrite)
+# is covered STRONGER by the FM2 suite in tests/test_member_identity.py
+# — rewriting either email provably redirects nothing because the
+# member_credentials LINK row is the only authority.
 
 # ---------------------------------------------------------------------------
 # Review R4 — Idempotency-Key replay is scoped to (tenant, actor, route)
@@ -1728,15 +1664,15 @@ def test_email_identity_link_is_byte_exact_and_tenant_fenced() -> None:
 
 
 def test_idempotency_replay_scoped_to_actor_and_tenant() -> None:
-    """Review R4: a stored response must replay ONLY to the same
-    (tenant, actor, method+path+body). A DIFFERENT user presenting the
-    same key must never read the first caller's stored response (that
-    would bypass the per-handler authorization the original passed) —
-    they get the least-disclosure 409 claim-conflict envelope. A
-    different tenant claims its own (tenant, key) row and hits the real
-    handler (404 here). Falsifiable: drop the actor from the request
-    hash in the idempotency middleware and the second user receives the
-    first caller's 200 replay, failing this test."""
+    """Review R4, completed by P14.5 FM5: the claim key is scoped
+    (tenant, actor principal, route), so a DIFFERENT user presenting
+    the same client key is a MISS — their request claims its OWN row
+    and hits the REAL handler (here: 409 stale version, because the
+    release already landed), never the first caller's stored 200. A
+    different tenant likewise claims its own row (404 for the foreign
+    id). Falsifiable: drop the actor from scoped_storage_key and the
+    second user receives the first caller's 200 replay, failing the
+    replayed-header and claim-row-count assertions."""
 
     async def run() -> None:
         tid, _, _, token_a = await _seed_actor()
@@ -1766,8 +1702,10 @@ def test_idempotency_replay_scoped_to_actor_and_tenant() -> None:
             )
             assert first.status_code == 200, first.text
 
-            # Same tenant, DIFFERENT user, same key/path/body: never the
-            # stored response — the claim-conflict envelope instead.
+            # Same tenant, DIFFERENT user, same key/path/body: a MISS —
+            # the REAL handler runs under user B's own claim and
+            # reports the true state (stale version 1 -> 409); user A's
+            # stored 200 is never served.
             other_user = await client.post(
                 f"/guarantees/{gid}/release",
                 json=body,
@@ -1797,6 +1735,16 @@ def test_idempotency_replay_scoped_to_actor_and_tenant() -> None:
             assert replay.headers.get("idempotency-replayed") == "true"
             assert replay.json() == first.json()
 
+        # The MISS is structural: each same-tenant actor claimed a
+        # DISTINCT scoped row for the one client key (A's and B's).
+        async with tenant_session(factory(), tid) as session:
+            claims = (
+                await session.execute(
+                    text("SELECT count(*) FROM idempotency_keys WHERE key LIKE :suffix"),
+                    {"suffix": f"%:{key}"},
+                )
+            ).scalar_one()
+        assert int(claims) == 2, "each actor must claim its own scoped row"
         # Exactly one release happened (side-effect counts, not return
         # values): 1 audit row, 2 notifications, one version bump.
         assert await _guarantee_state(tid, gid) == ("released", 2)
@@ -1850,7 +1798,6 @@ def test_stage_disbursed_without_loan_id_is_substitution_only() -> None:
                 json={
                     "version": 1,
                     "guarantor_member_id": str(new_g),
-                    "consented": True,
                     "consent_reference": _CONSENT_REF,
                 },
                 headers=_headers(token),
@@ -1871,6 +1818,11 @@ def test_stage_disbursed_without_loan_id_is_substitution_only() -> None:
 
 
 def test_unconsented_substitute_refused_at_service_level() -> None:
+    """P14.5: with no consent boolean left to assert, the ONLY consent
+    channel is the cited attestation — a blank consent_reference is
+    refused before any read or write (the FM4 posture at the service
+    boundary)."""
+
     async def run() -> None:
         tid, uid, _, _ = await _seed_actor()
         async with tenant_session(factory(), tid) as session:
@@ -1882,8 +1834,7 @@ def test_unconsented_substitute_refused_at_service_level() -> None:
                     uuid.uuid4(),
                     version=1,
                     guarantor_member_id=uuid.uuid4(),
-                    consented=False,
-                    consent_reference=_CONSENT_REF,
+                    consent_reference="   ",
                 )
 
     asyncio.run(run())
