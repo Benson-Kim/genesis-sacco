@@ -391,7 +391,11 @@ test("hostile money/status shapes are REJECTED by the real boundary and can neve
   // register renders the error state, never the garbage.
   mocked.fetchExitsPage.mockRejectedValue(new Error("contract violation at the boundary"));
   mountScreen();
-  expect(await screen.findByText(/Could not load this list/)).toBeInTheDocument();
+  // The Providers default retries queries ONCE (~1s backoff) before
+  // surfacing the error state — allow for it.
+  expect(
+    await screen.findByText(/Could not load this list/, undefined, { timeout: 5000 }),
+  ).toBeInTheDocument();
   expect(screen.queryByText(/134,500/)).toBeNull();
 });
 
