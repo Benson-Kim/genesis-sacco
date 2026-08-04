@@ -200,7 +200,9 @@ test("happy path: OTP login → catalogue → ONE wire POST requests the export 
 
   // The result panel renders the SERVER's frozen request record…
   await expect(page.getByText("Export queued · Trial balance")).toBeVisible();
-  await expect(page.getByText("whole tenant")).toBeVisible();
+  // exact: the six no-filter catalogue cards' "Whole tenant — no
+  // filters." scope lines also contain the (case-insensitive) phrase.
+  await expect(page.getByText("whole tenant", { exact: true })).toBeVisible();
   // …and exactly ONE write reached the wire: report only (no filters
   // key at all), idempotency + bearer as HEADERS, nothing in the query.
   expect(state.exportBodies).toHaveLength(1);
@@ -211,8 +213,10 @@ test("happy path: OTP login → catalogue → ONE wire POST requests the export 
   // panel's action — scope to the result panel (role=status).
   await drawer.getByRole("status").getByRole("button", { name: "Close" }).click();
 
-  // The witnessed row appeared, still queued.
-  await expect(page.getByText("Queued")).toBeVisible();
+  // The witnessed row appeared, still queued. (exact: the shared live
+  // region persists "Export queued. Run the export queue to render
+  // it." — a case-insensitive substring match would collide with it.)
+  await expect(page.getByText("Queued", { exact: true })).toBeVisible();
 
   // Drain the queue (the operations mirror of the worker loop).
   await page.getByRole("button", { name: "Run export queue" }).click();
@@ -224,8 +228,10 @@ test("happy path: OTP login → catalogue → ONE wire POST requests the export 
   await dialog.getByRole("status").getByRole("button", { name: "Close" }).click();
 
   // Refresh the requester-only record: completed + server metadata.
+  // (exact: the live region's "Export queue run completed." would
+  // otherwise also match.)
   await page.getByRole("button", { name: "Refresh" }).click();
-  await expect(page.getByText("Completed")).toBeVisible();
+  await expect(page.getByText("Completed", { exact: true })).toBeVisible();
   expect(state.statusReads).toBeGreaterThan(0);
 
   // Download the CSV: a REAL browser download through the generated
