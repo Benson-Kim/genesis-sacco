@@ -75,6 +75,70 @@ describe("dashboard contract (Zod — FM: contract-violation response)", () => {
     expect(dashboardSummarySchema.safeParse(drifted).success).toBe(false);
   });
 
+  it("issue #30 A2/S2 accept/reject matrix: aggregate shapes admit the bare '0'; the sign survives ONLY on the documented negative branches; garbage rejects", () => {
+    const withDeposits = (total_deposits: string) =>
+      dashboardSummarySchema.safeParse({
+        ...FULL_SUMMARY,
+        deposits: { total_deposits, total_share_capital: "250000.00" },
+      }).success;
+    const withFlow = (deposits: string) =>
+      dashboardSummarySchema.safeParse({
+        ...FULL_SUMMARY,
+        monthly_flows: [{ month: "2026-07", deposits, disbursements: "150000.00" }],
+      }).success;
+    const withGuarantors = (free_capacity: string, pledged_total = "500000.10") =>
+      dashboardSummarySchema.safeParse({
+        ...FULL_SUMMARY,
+        guarantors: {
+          active_guarantees: 3,
+          total_pledged: "1234567.10",
+          distinct_guarantors: 2,
+          guarantors: [
+            {
+              member_id: "11111111-1111-1111-1111-111111111111",
+              member_no: "GP-0001",
+              name: "Jane Wanjiku",
+              pledged_total,
+              free_capacity,
+            },
+          ],
+        },
+      }).success;
+
+    // COALESCE(SUM(...), 0) over an EMPTY set serialises as the bare
+    // "0" (the SQL zero literal is a scale-0 numeric) — hand-computed
+    // oracle from application/dashboard.py; a non-empty SUM keeps the
+    // column's two-place scale.
+    expect(withDeposits("0")).toBe(true);
+    expect(withDeposits("1234567.89")).toBe(true);
+
+    // Garbage shapes REJECTED — each previously flowed into fmtKes
+    // unchallenged (bare z.string()).
+    for (const value of ["abc", "1e5", "007.10", "150", "00", "1234567.8", " 0.00", ""]) {
+      expect(withDeposits(value)).toBe(false);
+      expect(withFlow(value)).toBe(false);
+      expect(withGuarantors(value)).toBe(false);
+    }
+
+    // The sign: total_deposits sums CHECK (balance >= 0) columns — a
+    // '-' is a contract violation there. The monthly flow series nets
+    // NEGATIVE when a month holds only reversals (MONTHLY_FLOWS_SQL)
+    // and free_capacity is the advisory balance-minus-pledged
+    // difference — both keep their sign.
+    expect(withDeposits("-1.00")).toBe(false);
+    expect(withFlow("-200000.00")).toBe(true);
+    expect(withGuarantors("-250000.20")).toBe(true);
+    // …but a signed pledged_total (a SUM of CHECK (amount > 0) rows)
+    // stays a violation.
+    expect(withGuarantors("250000.20", "-500000.10")).toBe(false);
+
+    // Timestamp boundary: a garbage as_of is REJECTED — fmtDateTime can
+    // never render "Invalid Date" in the header (!63 F-R4).
+    expect(
+      dashboardSummarySchema.safeParse({ ...FULL_SUMMARY, as_of: "yesterday-ish" }).success,
+    ).toBe(false);
+  });
+
   it("fetchDashboardSummary throws (never returns) on a malformed body", async () => {
     mockGet.mockResolvedValue({
       data: { as_of: "2026-08-03", loan_book: { active_loans: "eighty-seven" } },
