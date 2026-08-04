@@ -27,9 +27,10 @@ def test_matrix_shape() -> None:
     matrix = seed_matrix()
     assert len(matrix) == 7
     for role in ROLE_NAMES:
-        # 8 modules: the 7 prototype modules + the dedicated P13.15
-        # corrections module (A3 maker-checker).
-        assert len(matrix[role]) == 8
+        # 9 modules: the 7 prototype modules + the dedicated P13.15
+        # corrections module (A3 maker-checker) + the dedicated P14.5
+        # member_identity module (identity-of-record powers).
+        assert len(matrix[role]) == 9
         for module in Module:
             assert set(matrix[role][module]) == set(Action)
 

@@ -365,7 +365,12 @@ def test_max_eligible_surfaced_on_application_read() -> None:
                 amount=Decimal("5000.00"),
             )
             await consent_guarantee_override(
-                session, tid, uid, record.id, version=record.version, consent_reference="signed form GF-P7"
+                session,
+                tid,
+                uid,
+                record.id,
+                version=record.version,
+                consent_reference="signed form GF-P7",
             )
         async with api_client() as client:
             fetched = await client.get(f"/applications/{app_id}", headers=_headers(token))
@@ -475,7 +480,12 @@ def test_linked_guarantee_released_on_loan_closure_end_to_end() -> None:
                 amount=Decimal("4000.00"),
             )
             await consent_guarantee_override(
-                session, tid, uid, pledge.id, version=pledge.version, consent_reference="signed form GF-P7"
+                session,
+                tid,
+                uid,
+                pledge.id,
+                version=pledge.version,
+                consent_reference="signed form GF-P7",
             )
         second_token = await _add_voter(tid)
         async with api_client() as client:
