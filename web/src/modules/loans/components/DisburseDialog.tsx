@@ -167,6 +167,9 @@ export function DisburseDialog({
     void queryClient.invalidateQueries({ queryKey: ["applications", "list"] });
     disburse.reset();
     setNotice("Record reloaded — re-check the application stage before acting again.");
+    // Every async outcome is announced (issue #8): the post-conflict
+    // reload is an outcome, not a success (W59-4, the !60 F5 class).
+    announce("Record reloaded after the conflict — re-check the application stage.");
   }
 
   function armConfirmation() {
@@ -182,7 +185,9 @@ export function DisburseDialog({
 
   return (
     <Modal title="Disburse loan" onClose={onClose} closeDisabled={disburse.isPending} variant="dialog">
-      {notice !== "" && <Banner variant="ok">{notice}</Banner>}
+      {/* Informational, NOT success styling: the notice reports a
+          post-conflict reload (W59-4, the !60 F5 class). */}
+      {notice !== "" && <Banner variant="info">{notice}</Banner>}
       <div className={styles.detailGrid}>
         <Kv label="Member">
           {member.data !== undefined ? (

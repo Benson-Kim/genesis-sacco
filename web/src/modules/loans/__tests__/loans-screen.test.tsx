@@ -13,6 +13,7 @@ import { ApiError } from "@genesis/api-client";
 import { Providers } from "@/app/providers";
 import { clearSession, hasSession, setSession } from "@/modules/auth/session";
 import { usePermissions } from "@/modules/authz/usePermissions";
+import { announce } from "@/modules/layout/announcer";
 import { LoansScreen } from "../components/LoansScreen";
 import {
   disbursementSchema,
@@ -63,10 +64,21 @@ jest.mock("@/modules/authz/usePermissions", () => ({
   usePermissions: jest.fn(),
 }));
 
+// The live-region announcer is a spy so the suites can prove every
+// async outcome — including the post-conflict reload (W59-4) — is
+// announced.
+jest.mock("@/modules/layout/announcer", () => {
+  const actual = jest.requireActual<typeof import("@/modules/layout/announcer")>(
+    "@/modules/layout/announcer",
+  );
+  return { ...actual, announce: jest.fn() };
+});
+
 const mocked = jest.mocked(loansApi);
 const mockedApps = jest.mocked(appsApi);
 const mockedMembers = jest.mocked(membersApi);
 const mockedPermissions = jest.mocked(usePermissions);
+const mockedAnnounce = jest.mocked(announce);
 
 const ADMIN_ID = "99999999-9999-9999-9999-999999999999";
 const MEMBER_ID = "11111111-1111-1111-1111-111111111111";
@@ -392,6 +404,14 @@ test("stale disbursement: 409 shows the explicit reload flow with EXACTLY ONE wr
   expect(
     await screen.findByText(/not in the approved stage — disbursement is not/),
   ).toBeInTheDocument();
+  // The reload notice reports a post-conflict state: informational
+  // styling, NEVER the success variant — and it is announced (W59-4).
+  const reloadNotice = screen.getByText(/Record reloaded — re-check the application stage/);
+  expect(reloadNotice).toHaveClass("info");
+  expect(reloadNotice).not.toHaveClass("ok");
+  expect(mockedAnnounce).toHaveBeenCalledWith(
+    "Record reloaded after the conflict — re-check the application stage.",
+  );
   // …the action is gone and the stale write was NEVER replayed.
   expect(screen.queryByRole("button", { name: "Disburse…" })).toBeNull();
   expect(mocked.disburseApplication).toHaveBeenCalledTimes(1);
@@ -570,6 +590,14 @@ test("repayment 409 (loan state moved): explicit reload flow, EXACTLY ONE attemp
     await screen.findByText(/not active — the contract accepts no further repayments/),
   ).toBeInTheDocument();
   expect(mocked.recordRepayment).toHaveBeenCalledTimes(1);
+  // The reload notice reports a post-conflict state: informational
+  // styling, NEVER the success variant — and it is announced (W59-4).
+  const reloadNotice = screen.getByText(/Record reloaded — re-check the loan/);
+  expect(reloadNotice).toHaveClass("info");
+  expect(reloadNotice).not.toHaveClass("ok");
+  expect(mockedAnnounce).toHaveBeenCalledWith(
+    "Record reloaded after the conflict — re-check the loan.",
+  );
 });
 
 test("repayment key freshness (W59-2, the !60 F3 class): after 409 + explicit reload, an identical re-entry uses a ROTATED key", async () => {

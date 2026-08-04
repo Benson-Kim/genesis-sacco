@@ -203,6 +203,9 @@ export function LoanDetailDrawer({
     void queryClient.refetchQueries({ queryKey: ["loans", "schedule", loanId] });
     repay.reset();
     setNotice("Record reloaded — re-check the loan before acting again.");
+    // Every async outcome is announced (issue #8): the post-conflict
+    // reload is an outcome, not a success (W59-4, the !60 F5 class).
+    announce("Record reloaded after the conflict — re-check the loan.");
   }
 
   function submitRepayment(event: FormEvent<HTMLFormElement>) {
@@ -239,7 +242,9 @@ export function LoanDetailDrawer({
       closeDisabled={repay.isPending}
       dismissOnOverlay={false}
     >
-      {notice !== "" && <Banner variant="ok">{notice}</Banner>}
+      {/* Informational, NOT success styling: the notice reports a
+          post-conflict reload (W59-4, the !60 F5 class). */}
+      {notice !== "" && <Banner variant="info">{notice}</Banner>}
       <div className={styles.detailGrid}>
         <Kv label="Member">
           {member.data !== undefined ? (

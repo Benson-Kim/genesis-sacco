@@ -13,6 +13,7 @@ import { ApiError } from "@genesis/api-client";
 import { Providers } from "@/app/providers";
 import { clearSession, hasSession, setSession } from "@/modules/auth/session";
 import { usePermissions } from "@/modules/authz/usePermissions";
+import { announce } from "@/modules/layout/announcer";
 import { ApplicationsScreen } from "../components/ApplicationsScreen";
 import { clearCommitteeMakers } from "../makerRegistry";
 import {
@@ -46,9 +47,20 @@ jest.mock("@/modules/authz/usePermissions", () => ({
   usePermissions: jest.fn(),
 }));
 
+// The live-region announcer is a spy so the suites can prove every
+// async outcome — including the post-conflict reload (W59-4) — is
+// announced.
+jest.mock("@/modules/layout/announcer", () => {
+  const actual = jest.requireActual<typeof import("@/modules/layout/announcer")>(
+    "@/modules/layout/announcer",
+  );
+  return { ...actual, announce: jest.fn() };
+});
+
 const mocked = jest.mocked(appsApi);
 const mockedMembers = jest.mocked(membersApi);
 const mockedPermissions = jest.mocked(usePermissions);
+const mockedAnnounce = jest.mocked(announce);
 
 const ADMIN_ID = "99999999-9999-9999-9999-999999999999";
 const MEMBER_ID = "11111111-1111-1111-1111-111111111111";
@@ -326,6 +338,14 @@ test("stale stage move: 409 shows the explicit reload flow with EXACTLY ONE writ
   expect(await screen.findByRole("button", { name: "Recommend to committee" })).toBeInTheDocument();
   // …and NEVER replays the stale submission.
   expect(mocked.transitionApplication).toHaveBeenCalledTimes(1);
+  // The reload notice reports a post-conflict state: informational
+  // styling, NEVER the success variant — and it is announced (W59-4).
+  const reloadNotice = screen.getByText(/Record reloaded — re-check the stage/);
+  expect(reloadNotice).toHaveClass("info");
+  expect(reloadNotice).not.toHaveClass("ok");
+  expect(mockedAnnounce).toHaveBeenCalledWith(
+    "Record reloaded after the conflict — re-check the stage.",
+  );
 });
 
 test("terminal reject flows through the typed confirmation: NO write until the byte-identical phrase is typed", async () => {
