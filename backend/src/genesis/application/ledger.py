@@ -1112,7 +1112,8 @@ async def disburse_loan(
     # collateral on a live loan without the guarantor's recorded
     # consent (P9 consent contract). Any remaining 'pledged' row
     # blocks disbursement — the resolution paths are consent
-    # (guarantees.consent_guarantee) or release/substitution
+    # (guarantees.consent_guarantee_as_member / the staff-attested
+    # consent_guarantee_override) or release/substitution
     # (BUILD_PROMPTS P13.14). Read under the application row lock
     # held since step 1 (pledging locks the application FOR UPDATE,
     # so the set cannot change underneath us). Least disclosure:

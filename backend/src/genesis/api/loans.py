@@ -46,16 +46,11 @@ _products_list = RequireAnyPermission(
     (Module.SETTINGS, Action.VIEW),
     (Module.APPLICATIONS, Action.CREATE),
 )
-#: P13.14 release gate: staff with applications:edit release anything
-#: the rules allow; a guarantor withdrawing their OWN unconsented
-#: pledge holds only applications:view (the Guarantors screen). The
-#: binding wrong-actor check (self vs staff) runs server-side in the
-#: service under the row locks — this dependency is the deny-by-default
-#: outer fence (gate 1.6).
-_guarantee_release = RequireAnyPermission(
-    (Module.APPLICATIONS, Action.EDIT),
-    (Module.APPLICATIONS, Action.VIEW),
-)
+#: P14.5 consent-override gate: consent is the MEMBER principal's act
+#: (the /member routes); the staff path is an explicit ATTESTED
+#: OVERRIDE carrying the dedicated narrow permission — never
+#: applications:edit (the !29 substitution-consent lesson).
+_member_identity_approve = RequirePermission(Module.MEMBER_IDENTITY, Action.APPROVE)
 
 SettingsViewCtx = Annotated[AuthContext, Depends(_settings_view)]
 SettingsCreateCtx = Annotated[AuthContext, Depends(_settings_create)]
@@ -65,7 +60,7 @@ AppsCreateCtx = Annotated[AuthContext, Depends(_apps_create)]
 AppsEditCtx = Annotated[AuthContext, Depends(_apps_edit)]
 AppsApproveCtx = Annotated[AuthContext, Depends(_apps_approve)]
 ProductListCtx = Annotated[AuthContext, Depends(_products_list)]
-GuaranteeReleaseCtx = Annotated[AuthContext, Depends(_guarantee_release)]
+MemberIdentityApproveCtx = Annotated[AuthContext, Depends(_member_identity_approve)]
 
 
 class ProductCreateBody(BaseModel):
@@ -189,10 +184,17 @@ class GuaranteePledgeBody(BaseModel):
     amount: Decimal = Field(gt=0, le=1_000_000_000)
 
 
-class ConsentBody(BaseModel):
+class ConsentOverrideBody(BaseModel):
+    """Staff-attested consent override (P14.5 scope 4): consent is the
+    member principal's act on the /member routes; this body carries the
+    optimistic-lock version plus the MANDATORY evidence citation — a
+    bare caller-asserted consent flag is a rejected design (the !29
+    lesson; there is no boolean to assert)."""
+
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(ge=1)
+    consent_reference: str = Field(min_length=1, max_length=200)
 
 
 class GuaranteeReleaseBody(BaseModel):
@@ -205,19 +207,20 @@ class GuaranteeReleaseBody(BaseModel):
 
 
 class GuaranteeSubstituteBody(BaseModel):
-    """Atomic-swap request (P13.14). consented records the substitute
-    guarantor's staff-attested consent and consent_reference cites the
-    evidence it rests on (e.g. the signed guarantorship form) — an
-    unconsented or unreferenced substitute is refused (422) and the
-    attestation is written as a first-class audited fact (review R1).
-    amount may only meet or exceed the released amount (server-derived
-    from the guarantee row when omitted)."""
+    """Atomic-swap request (P13.14; P14.5 scope 4). consent_reference
+    cites the evidence the staff attestation rests on (e.g. the signed
+    guarantorship form) — an unreferenced substitute is refused (422)
+    and the attestation is written onto the replacement row and as a
+    first-class guarantee.consent_override audit fact. The pre-P14.5
+    caller-asserted `consented` boolean is REMOVED (the !29 lesson):
+    consent is never a flag a caller asserts. amount may only meet or
+    exceed the released amount (server-derived from the guarantee row
+    when omitted)."""
 
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(ge=1)
     guarantor_member_id: uuid.UUID
-    consented: bool
     consent_reference: str = Field(min_length=1, max_length=200)
     amount: Decimal | None = Field(default=None, gt=0, le=1_000_000_000)
 
@@ -442,19 +445,28 @@ async def pledge_guarantee(
 
 
 @router.post("/guarantees/{guarantee_id}/consent")
-async def consent_guarantee(
+async def consent_guarantee_override(
     guarantee_id: uuid.UUID,
-    body: ConsentBody,
-    ctx: AppsEditCtx,
+    body: ConsentOverrideBody,
+    ctx: MemberIdentityApproveCtx,
 ) -> GuaranteeOut:
+    """Staff-attested consent OVERRIDE: pledged -> active (P14.5).
+
+    Consent is an act of the MEMBER principal
+    (POST /member/guarantees/{id}/consent); this staff path is an
+    explicit attested override — member_identity:approve, its own
+    guarantee.consent_override audit category, a mandatory evidence
+    citation, and a confirmation notification to the guarantor.
+    """
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        record = await guarantees_service.consent_guarantee(
+        record = await guarantees_service.consent_guarantee_override(
             session,
             ctx.tenant_id,
             ctx.user_id,
             guarantee_id,
             version=body.version,
+            consent_reference=body.consent_reference,
         )
     return _guarantee_out(record)
 
@@ -463,15 +475,17 @@ async def consent_guarantee(
 async def release_guarantee(
     guarantee_id: uuid.UUID,
     body: GuaranteeReleaseBody,
-    ctx: GuaranteeReleaseCtx,
+    ctx: AppsEditCtx,
 ) -> GuaranteeOut:
     """Release one guarantee per the P13.14 rules (prototype "Release").
 
-    Staff (applications:edit) release pledged guarantees and — cover
-    rule permitting — active ones on undisbursed applications; a
-    guarantor may withdraw their own unconsented pledge. An active
-    guarantee behind a disbursed loan is never bare-released (409):
-    use the substitution endpoint.
+    STAFF-only since P14.5: applications:edit EXACTLY — the interim
+    email-match self-service is retired; a guarantor withdraws their
+    own unconsented pledge as a MEMBER principal
+    (POST /member/guarantees/{id}/release). Staff release pledged
+    guarantees and — cover rule permitting — active ones on
+    undisbursed applications. An active guarantee behind a disbursed
+    loan is never bare-released (409): use the substitution endpoint.
     """
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
@@ -481,7 +495,6 @@ async def release_guarantee(
             ctx.user_id,
             guarantee_id,
             version=body.version,
-            actor_role_id=ctx.role_id,
         )
     return _guarantee_out(record)
 
@@ -507,7 +520,6 @@ async def substitute_guarantee(
             guarantee_id,
             version=body.version,
             guarantor_member_id=body.guarantor_member_id,
-            consented=body.consented,
             consent_reference=body.consent_reference,
             amount=body.amount,
         )

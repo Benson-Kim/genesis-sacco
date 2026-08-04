@@ -3,7 +3,7 @@
 from fastapi.routing import APIRoute
 
 from genesis.api.app import create_app
-from genesis.api.authz import RequirePermission
+from genesis.api.authz import RequireMemberPrincipal, RequirePermission
 from genesis.domain.rbac import ROLE_NAMES, Action, Module, seed_matrix
 
 UNPROTECTED_ALLOWLIST = {
@@ -14,6 +14,12 @@ UNPROTECTED_ALLOWLIST = {
     "/auth/refresh",
     "/auth/logout",
     "/me/permissions",
+    # P14.5 member pre-auth endpoints: the member analogue of the staff
+    # /auth/* rows above (x-tenant-id scoped, rate-guarded; identity is
+    # established BY them, so no principal gate can precede them).
+    "/member/auth/otp/request",
+    "/member/auth/otp/verify",
+    "/member/auth/refresh",
 }
 
 
@@ -102,7 +108,15 @@ def test_member_identity_module_grants_are_narrow() -> None:
 
 
 def test_every_operation_carries_the_authz_dependency() -> None:
-    """Spec walk (P4 exit): deny-by-default is structural, not a convention."""
+    """Spec walk (P4 exit): deny-by-default is structural, not a convention.
+
+    P14.5 extends the walk, never weakens it: every route outside the
+    pre-auth allowlist carries EITHER a staff RequirePermission gate OR
+    — on /member/* business routes ONLY — the RequireMemberPrincipal
+    gate (the member principal's own deny-by-default fence, FM1). A
+    member gate anywhere outside /member/*, or a /member business
+    route without it, fails the walk.
+    """
     app = create_app()
     for route in app.routes:
         if not isinstance(route, APIRoute):
@@ -110,6 +124,14 @@ def test_every_operation_carries_the_authz_dependency() -> None:
         if route.path in UNPROTECTED_ALLOWLIST:
             continue
         calls = [dep.call for dep in route.dependant.dependencies]
+        if route.path.startswith("/member/"):
+            assert any(isinstance(call, RequireMemberPrincipal) for call in calls), (
+                f"member route {route.path} lacks the RequireMemberPrincipal gate"
+            )
+            continue
+        assert not any(isinstance(call, RequireMemberPrincipal) for call in calls), (
+            f"staff route {route.path} must never carry the member gate"
+        )
         assert any(isinstance(call, RequirePermission) for call in calls), (
             f"route {route.path} lacks a RequirePermission dependency"
         )

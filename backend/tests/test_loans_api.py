@@ -18,7 +18,7 @@ from db_helpers import api_client, factory, seed_user, unique_email
 from genesis.application import loan_applications as applications_service
 from genesis.application import loan_products as products_service
 from genesis.application.auth import AuthContext, issue_access_token
-from genesis.application.guarantees import consent_guarantee, pledge_guarantee
+from genesis.application.guarantees import consent_guarantee_override, pledge_guarantee
 from genesis.application.rbac import seed_permissions
 from genesis.domain.committee import Decision, Vote
 from genesis.domain.lending import ApplicationStage
@@ -466,16 +466,26 @@ def test_guarantee_consent_and_cover_recompute() -> None:
             gid = pledge.json()["id"]
             refreshed = await client.get(f"/applications/{aid}", headers=headers)
             assert refreshed.json()["cover_pct"] == "50.00"
-            consent = await client.post(
+            # P14.5: the staff consent path is the attested OVERRIDE —
+            # member_identity:approve (System Admin holds it) + the
+            # mandatory evidence citation; a bare {"version"} body is
+            # a 422 (no caller-asserted consent shape survives).
+            bare = await client.post(
                 f"/guarantees/{gid}/consent",
                 json={"version": 1},
+                headers=headers,
+            )
+            assert bare.status_code == 422
+            consent = await client.post(
+                f"/guarantees/{gid}/consent",
+                json={"version": 1, "consent_reference": "signed form GF-P9"},
                 headers=headers,
             )
             assert consent.status_code == 200
             assert consent.json()["status"] == "active"
             double = await client.post(
                 f"/guarantees/{gid}/consent",
-                json={"version": 2},
+                json={"version": 2, "consent_reference": "signed form GF-P9"},
                 headers=headers,
             )
             assert double.status_code == 409
@@ -846,7 +856,7 @@ def test_vote_and_consent_and_guarantor_404s_and_409s() -> None:
             # 404 on consenting non-existent guarantee
             consent_missing = await client.post(
                 f"/guarantees/{uuid.uuid4()}/consent",
-                json={"version": 1},
+                json={"version": 1, "consent_reference": "signed form GF-P9"},
                 headers=headers,
             )
             assert consent_missing.status_code == 404
@@ -1132,7 +1142,15 @@ def test_application_service_direct_flow() -> None:
                 amount=Decimal("2000.00"),
             )
         async with tenant_session(factory(), tid) as session:
-            consented = await consent_guarantee(session, tid, None, guarantee.id, version=1)
+            attestor = (await session.execute(text("SELECT id FROM users LIMIT 1"))).scalar_one()
+            consented = await consent_guarantee_override(
+                session,
+                tid,
+                uuid.UUID(str(attestor)),
+                guarantee.id,
+                version=1,
+                consent_reference="signed form GF-P9",
+            )
         assert consented.status == "active"
 
         async with tenant_session(factory(), tid) as session:
