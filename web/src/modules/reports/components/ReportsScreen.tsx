@@ -38,9 +38,11 @@ import grid from "@/modules/layout/grid.module.css";
 import { downloadArtifact, fetchExport } from "../api";
 import { recordWitnessedExport, useWitnessedExports } from "../exportRegistry";
 import {
+  DATE_RE,
   REPORT_FILTERS,
   REPORT_LABELS,
   REPORT_NAMES,
+  exportFilenameStem,
   reportLabel,
   type ExportOut,
   type ReportName,
@@ -130,7 +132,14 @@ function ExportRow({ record }: Readonly<{ record: ExportOut }>) {
   });
 
   const artifact = record.artifact;
-  const asOfDate = record.as_of.slice(0, 10);
+  // F-R1: the filename is built ONLY from sanitized parts — the stem is
+  // the recognised report enum value (or a fixed fallback; never the raw
+  // server string), the date part is shape-checked (the boundary already
+  // asserts it, F-R4 — this keeps the SINK safe by construction), and
+  // the extension is appended last and fixed.
+  const stem = exportFilenameStem(record.report);
+  const asOfSlice = record.as_of.slice(0, 10);
+  const asOfDate = DATE_RE.test(asOfSlice) ? asOfSlice : "undated";
 
   return (
     <tr>
@@ -160,7 +169,7 @@ function ExportRow({ record }: Readonly<{ record: ExportOut }>) {
                 onClick={() =>
                   download.mutate({
                     path: artifact.csv_download,
-                    filename: `${record.report}-${asOfDate}.csv`,
+                    filename: `${stem}-${asOfDate}.csv`,
                   })
                 }
                 disabled={download.isPending}
@@ -172,7 +181,7 @@ function ExportRow({ record }: Readonly<{ record: ExportOut }>) {
                 onClick={() =>
                   download.mutate({
                     path: artifact.pdf_download,
-                    filename: `${record.report}-${asOfDate}.pdf`,
+                    filename: `${stem}-${asOfDate}.pdf`,
                   })
                 }
                 disabled={download.isPending}

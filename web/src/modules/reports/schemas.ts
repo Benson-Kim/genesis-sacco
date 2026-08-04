@@ -256,6 +256,23 @@ export function reportLabel(report: string): string {
 }
 
 /**
+ * Download-filename stem for an export artifact (review F-R1 —
+ * filename injection/spoofing): `ExportOut.report` is an UNCONSTRAINED
+ * string at this boundary, and `reportLabel` is display-only, so a
+ * hostile/corrupted value could smuggle path separators, control
+ * characters or an RTL override (U+202E) into the browser download
+ * name. The stem is therefore ONLY ever the recognised enum value
+ * ([a-z_] — filename-safe by construction, and exactly the stem the
+ * server itself uses for its Content-Disposition filename) or a fixed
+ * neutral fallback; the extension is appended last and fixed by the
+ * caller. Raw server strings NEVER reach the download layer.
+ */
+export function exportFilenameStem(report: string): string {
+  const parsed = reportNameSchema.safeParse(report);
+  return parsed.success ? parsed.data : "export";
+}
+
+/**
  * Picker row for the exit filter (ExitOut, stripped): the reports
  * screen needs the id and enough context to pick one — none of the
  * record's settlement figures are consumed here (they belong to the

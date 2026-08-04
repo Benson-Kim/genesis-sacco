@@ -477,6 +477,42 @@ test("witnessed row: Refresh re-reads the requester-only record; the SERVER's tr
   ]);
 });
 
+test("F-R1: a hostile report string can NEVER reach the download filename — the stem is the recognised enum value or the fixed 'export' fallback", async () => {
+  const user = userEvent.setup();
+  // Path traversal + RTL override (U+202E) + markup — the raw server
+  // string must never be handed to the download layer as a filename.
+  const HOSTILE_FILENAME_REPORT = "../..\u202Evsc.csv<img>";
+  recordWitnessedExport({
+    ...COMPLETED_EXPORT,
+    report: HOSTILE_FILENAME_REPORT,
+  });
+  mountScreen();
+
+  expect(await screen.findByText("Completed")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "CSV" }));
+  await waitFor(() => expect(mocked.downloadArtifact).toHaveBeenCalledTimes(1));
+  expect(mocked.downloadArtifact.mock.calls[0]).toEqual([
+    "/exports/downloads/csv-Tok_en-1",
+    "export-2026-08-04.csv",
+  ]);
+  await user.click(screen.getByRole("button", { name: "PDF" }));
+  await waitFor(() => expect(mocked.downloadArtifact).toHaveBeenCalledTimes(2));
+  expect(mocked.downloadArtifact.mock.calls[1]).toEqual([
+    "/exports/downloads/pdf-Tok_en-1",
+    "export-2026-08-04.pdf",
+  ]);
+  // Belt and braces: NO filename ever handed to the download layer
+  // contains a separator, an RTL override or markup.
+  for (const call of mocked.downloadArtifact.mock.calls) {
+    const filename = call[1];
+    expect(filename).toMatch(/^[a-z_]+-\d{4}-\d{2}-\d{2}\.(?:csv|pdf)$/);
+    expect(filename).not.toContain("/");
+    expect(filename).not.toContain("\\");
+    expect(filename).not.toContain("\u202E");
+    expect(filename).not.toContain("<");
+  }
+});
+
 test("queue run: one write through the dialog, double-clicked Run runs ONCE, the SERVER's counts render verbatim, the affordance is SPENT", async () => {
   const user = userEvent.setup();
   let release: (value: { completed: number; failed: number }) => void = () => undefined;
