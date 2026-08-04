@@ -81,6 +81,26 @@ def test_corrections_module_grants_are_narrow() -> None:
         assert not any(matrix[denied_role][corrections].values())
 
 
+def test_member_identity_module_grants_are_narrow() -> None:
+    """P14.5: identity-of-record powers (credential links, the
+    staff-attested consent override) belong to the identity
+    administrators ONLY — System Admin and Branch Manager hold all
+    four, the Auditor reviews, every other role holds NOTHING (deny by
+    default, the corrections precedent). Falsifiable: routing
+    member_identity through the generic module defaults gives the Loan
+    Officer view and the Teller members-adjacent access — the denials
+    below fail."""
+    matrix = seed_matrix()
+    module = Module.MEMBER_IDENTITY
+    for admin_role in ("System Admin", "Branch Manager"):
+        assert all(matrix[admin_role][module].values())
+    auditor = matrix["Auditor"][module]
+    assert auditor[Action.VIEW]
+    assert not any((auditor[Action.CREATE], auditor[Action.EDIT], auditor[Action.APPROVE]))
+    for denied_role in ("Loan Officer", "Teller", "Credit Committee", "Accountant"):
+        assert not any(matrix[denied_role][module].values())
+
+
 def test_every_operation_carries_the_authz_dependency() -> None:
     """Spec walk (P4 exit): deny-by-default is structural, not a convention."""
     app = create_app()
