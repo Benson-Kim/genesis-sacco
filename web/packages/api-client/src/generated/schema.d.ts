@@ -590,6 +590,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/credentials/{credential_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke Member Credential
+         * @description Revoke a credential link (FM3). The row is kept (forensic
+         *     history); every live use of the credential dies at its next
+         *     per-request or in-transaction link re-check.
+         */
+        post: operations["revoke_member_credential_credentials__credential_id__revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dashboard/summary": {
         parameters: {
             query?: never;
@@ -777,8 +799,17 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Consent Guarantee */
-        post: operations["consent_guarantee_guarantees__guarantee_id__consent_post"];
+        /**
+         * Consent Guarantee Override
+         * @description Staff-attested consent OVERRIDE: pledged -> active (P14.5).
+         *
+         *     Consent is an act of the MEMBER principal
+         *     (POST /member/guarantees/{id}/consent); this staff path is an
+         *     explicit attested override — member_identity:approve, its own
+         *     guarantee.consent_override audit category, a mandatory evidence
+         *     citation, and a confirmation notification to the guarantor.
+         */
+        post: operations["consent_guarantee_override_guarantees__guarantee_id__consent_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -798,11 +829,13 @@ export interface paths {
          * Release Guarantee
          * @description Release one guarantee per the P13.14 rules (prototype "Release").
          *
-         *     Staff (applications:edit) release pledged guarantees and — cover
-         *     rule permitting — active ones on undisbursed applications; a
-         *     guarantor may withdraw their own unconsented pledge. An active
-         *     guarantee behind a disbursed loan is never bare-released (409):
-         *     use the substitution endpoint.
+         *     STAFF-only since P14.5: applications:edit EXACTLY — the interim
+         *     email-match self-service is retired; a guarantor withdraws their
+         *     own unconsented pledge as a MEMBER principal
+         *     (POST /member/guarantees/{id}/release). Staff release pledged
+         *     guarantees and — cover rule permitting — active ones on
+         *     undisbursed applications. An active guarantee behind a disbursed
+         *     loan is never bare-released (409): use the substitution endpoint.
          */
         post: operations["release_guarantee_guarantees__guarantee_id__release_post"];
         delete?: never;
@@ -1266,6 +1299,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/member/auth/otp/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request Member Otp
+         * @description Member OTP request (the P3 policy verbatim; never reveals
+         *     whether a credential exists).
+         */
+        post: operations["request_member_otp_member_auth_otp_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/member/auth/otp/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify Member Otp
+         * @description Verify the member OTP; issues MEMBER-audience tokens (FM1).
+         */
+        post: operations["verify_member_otp_member_auth_otp_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/member/auth/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Member Token
+         * @description Rotate a member refresh token; reuse revokes the family (P3).
+         */
+        post: operations["refresh_member_token_member_auth_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/member/guarantees/{guarantee_id}/consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Consent Guarantee As Member
+         * @description Guarantor consent as the MEMBER principal: pledged -> active.
+         *
+         *     The link is re-verified inside the transaction under the guarantee
+         *     row lock (FM2); the consent row carries the credential (FM4).
+         */
+        post: operations["consent_guarantee_as_member_member_guarantees__guarantee_id__consent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/member/guarantees/{guarantee_id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Release Guarantee As Member
+         * @description Withdraw the member's OWN unconsented pledge (P13.14 rules;
+         *     the member-principal replacement for the retired email-match).
+         */
+        post: operations["release_guarantee_as_member_member_guarantees__guarantee_id__release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/members": {
         parameters: {
             query?: never;
@@ -1333,6 +1471,32 @@ export interface paths {
         /** Update Member */
         put: operations["update_member_members__member_id__put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/members/{member_id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Member Credentials
+         * @description Link history for one member (member_identity:view — the
+         *     identity surface is never disclosed under mere members:view).
+         */
+        get: operations["list_member_credentials_members__member_id__credentials_get"];
+        put?: never;
+        /**
+         * Create Member Credential
+         * @description Link a login email to a member (FM3: audited admin mutation;
+         *     the active-email claim is atomic — a lost race is a 409).
+         */
+        post: operations["create_member_credential_members__member_id__credentials_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2317,8 +2481,44 @@ export interface components {
             /** Year */
             year: number;
         };
-        /** ConsentBody */
-        ConsentBody: {
+        /**
+         * ConsentOverrideBody
+         * @description Staff-attested consent override (P14.5 scope 4): consent is the
+         *     member principal's act on the /member routes; this body carries the
+         *     optimistic-lock version plus the MANDATORY evidence citation — a
+         *     bare caller-asserted consent flag is a rejected design (the !29
+         *     lesson; there is no boolean to assert).
+         */
+        ConsentOverrideBody: {
+            /** Consent Reference */
+            consent_reference: string;
+            /** Version */
+            version: number;
+        };
+        /**
+         * CredentialCreateBody
+         * @description extra="forbid" (gate 1.6 v1.1): the member comes from the path,
+         *     the status from the schema default — the email is the only input.
+         */
+        CredentialCreateBody: {
+            /** Email */
+            email: string;
+        };
+        /** CredentialOut */
+        CredentialOut: {
+            /** Email */
+            email: string;
+            /** Id */
+            id: string;
+            /** Member Id */
+            member_id: string;
+            /** Status */
+            status: string;
+            /** Version */
+            version: number;
+        };
+        /** CredentialRevokeBody */
+        CredentialRevokeBody: {
             /** Version */
             version: number;
         };
@@ -2797,21 +2997,21 @@ export interface components {
         };
         /**
          * GuaranteeSubstituteBody
-         * @description Atomic-swap request (P13.14). consented records the substitute
-         *     guarantor's staff-attested consent and consent_reference cites the
-         *     evidence it rests on (e.g. the signed guarantorship form) — an
-         *     unconsented or unreferenced substitute is refused (422) and the
-         *     attestation is written as a first-class audited fact (review R1).
-         *     amount may only meet or exceed the released amount (server-derived
-         *     from the guarantee row when omitted).
+         * @description Atomic-swap request (P13.14; P14.5 scope 4). consent_reference
+         *     cites the evidence the staff attestation rests on (e.g. the signed
+         *     guarantorship form) — an unreferenced substitute is refused (422)
+         *     and the attestation is written onto the replacement row and as a
+         *     first-class guarantee.consent_override audit fact. The pre-P14.5
+         *     caller-asserted `consented` boolean is REMOVED (the !29 lesson):
+         *     consent is never a flag a caller asserts. amount may only meet or
+         *     exceed the released amount (server-derived from the guarantee row
+         *     when omitted).
          */
         GuaranteeSubstituteBody: {
             /** Amount */
             amount?: number | string | null;
             /** Consent Reference */
             consent_reference: string;
-            /** Consented */
-            consented: boolean;
             /**
              * Guarantor Member Id
              * Format: uuid
@@ -2950,6 +3150,19 @@ export interface components {
          * @enum {string}
          */
         LoanStatus: "active" | "closed" | "written_off";
+        /**
+         * MemberActBody
+         * @description Consent/self-release body: the optimistic-lock version ONLY.
+         *
+         *     extra="forbid" (gate 1.6 v1.1): there is deliberately NO field for
+         *     who consents — the principal IS the authenticated credential; a
+         *     caller-asserted identity or consent flag is a rejected design (the
+         *     !29 lesson).
+         */
+        MemberActBody: {
+            /** Version */
+            version: number;
+        };
         /** MemberCreateBody */
         MemberCreateBody: {
             /** Email */
@@ -5148,6 +5361,41 @@ export interface operations {
             };
         };
     };
+    revoke_member_credential_credentials__credential_id__revoke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialRevokeBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     dashboard_summary_dashboard_summary_get: {
         parameters: {
             query?: never;
@@ -5464,7 +5712,7 @@ export interface operations {
             };
         };
     };
-    consent_guarantee_guarantees__guarantee_id__consent_post: {
+    consent_guarantee_override_guarantees__guarantee_id__consent_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -5475,7 +5723,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ConsentBody"];
+                "application/json": components["schemas"]["ConsentOverrideBody"];
             };
         };
         responses: {
@@ -6193,6 +6441,177 @@ export interface operations {
             };
         };
     };
+    request_member_otp_member_auth_otp_request_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OtpRequestBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_member_otp_member_auth_otp_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OtpVerifyBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_member_token_member_auth_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefreshBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    consent_guarantee_as_member_member_guarantees__guarantee_id__consent_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                guarantee_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberActBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuaranteeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    release_guarantee_as_member_member_guarantees__guarantee_id__release_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                guarantee_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberActBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuaranteeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_members_members_get: {
         parameters: {
             query?: {
@@ -6346,6 +6765,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemberOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_member_credentials_members__member_id__credentials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                member_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_member_credential_members__member_id__credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                member_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialCreateBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialOut"];
                 };
             };
             /** @description Validation Error */
