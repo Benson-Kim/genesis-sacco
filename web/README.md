@@ -76,6 +76,44 @@ No secrets here — `NEXT_PUBLIC_*` values are public by definition (gate 1.6).
 - Mutations send an `Idempotency-Key` (one key per logical submission, gate 1.4).
 - All list UIs use the keyset (cursor) contract `{items, next_cursor}` (gate 1.3).
 
+## Idempotency-Key MATERIAL rule (gate 1.4 — issue #30 finding S7)
+
+Every mutation calls the single shared
+`idempotencyKeyFor(slot, material)` (`@genesis/api-client`): identical
+material reuses the key (the server's idempotency store replays the
+stored response); changed material rotates it. The slot lives in a
+`useRef` for the lifetime of one form/dialog instance — never module
+scope, never shared across records. What goes INTO the material is a
+RULE per mutation class, not a per-module choice (this section
+codifies the previously unwritten convention — audit finding S7):
+
+1. **Always**: an `op` discriminator naming the mutation class (e.g.
+   `"member-create"`, `"perm"`) plus the FULL canonical write body —
+   `JSON.stringify` of exactly what will be sent. A submission whose
+   content changed is a NEW logical intent and MUST rotate the key.
+2. **Simple creates** (no optimistic lock; the server holds the
+   uniqueness/first-write claim — e.g. member registration): rule 1
+   is sufficient. Precedent: `MemberCreateDrawer`.
+3. **Versioned (optimistic-locked) writes**: additionally fold the
+   record `version` being acted on. A reload that advanced the
+   version is a NEW intent — a stale submission must never replay
+   across a reload.
+4. **Money-movers and state-machine executions** (disburse, settle,
+   vote, void): additionally fold the fresh record version + reload
+   epoch + a per-SUCCESS intent counter, so an intentional repeat
+   AFTER a success is a NEW intent (never served the stored response)
+   while retries of an identical failed attempt still reuse the key.
+   Precedent: exits settlement, loans `DisburseDialog` (the !60 F3 /
+   W59-3 lessons).
+5. **Never fold**: timestamps, random values, or anything the
+   operator did not change — they break retry stability, the property
+   the server-side replay window depends on.
+
+The stability/rotation contract itself is falsifiably tested at the
+package (`packages/api-client/src/__tests__/contract-helpers.test.ts`),
+screen (per-module jest suites) and wire (network suites, e2e header
+proofs) levels.
+
 ## Security posture (gate 1.6 — banking standard)
 
 **Token storage & XSS blast radius.** No token ever touches
