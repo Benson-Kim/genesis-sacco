@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { aggregateMoneySchema, isoTimestampSchema, moneySchema } from "@/lib/schemas";
 
 /**
  * Zod-validated response boundary for the loan-book module (P15 module 4
@@ -53,9 +54,17 @@ export const loanSchema = z.object({
   application_id: z.string(),
   member_id: z.string(),
   product_id: z.string(),
-  /** Decimal strings — never numbers (blocker (a)). */
-  principal: z.string(),
-  balance: z.string(),
+  /** CANONICAL server money shapes (issue #30 A2/S2 retrofit), all
+   * fmtKes-fed: `loans.principal` CHECK (principal > 0),
+   * `loans.balance` CHECK (balance >= 0) (migration 0001) and
+   * `loans.penalty_due` CHECK (penalty_due >= 0) (migration 0007) are
+   * numeric(18,2) serialised via str(Decimal) (_loan_out,
+   * api/loan_book.py) — a '-' or garbage shape is a contract
+   * violation, REJECTED before it can reach fmtKes. */
+  principal: moneySchema,
+  balance: moneySchema,
+  /** Rate string (numeric(5,2)) — a percentage, never fmtKes-fed; the
+   * shape is deliberately NOT money-asserted. */
   rate_pct: z.string(),
   term_months: z.number().int(),
   status: loanStatusSchema,
@@ -65,9 +74,11 @@ export const loanSchema = z.object({
    * derived provision KES figure is NOT computed client-side (the
    * portfolio summary carries the server-computed total). */
   provision_pct: z.string(),
-  penalty_due: z.string(),
-  disbursed_at: z.string().nullable(),
-  closed_at: z.string().nullable(),
+  penalty_due: moneySchema,
+  /** datetime.isoformat() shapes — both feed fmtDateTime on the drawer
+   * (the !63 F-R4 lesson): garbage is REJECTED, never "Invalid Date". */
+  disbursed_at: isoTimestampSchema.nullable(),
+  closed_at: isoTimestampSchema.nullable(),
   version: z.number().int(),
 });
 
@@ -77,11 +88,16 @@ export type Loan = z.infer<typeof loanSchema>;
  * server-computed decimal string, rendered verbatim. */
 export const scheduleRowSchema = z.object({
   installment_no: z.number().int(),
+  /** DATE isoformat ("YYYY-MM-DD", _schedule_out row.due_date) rendered
+   * VERBATIM — deliberately NOT isoTimestampSchema, which would reject
+   * every legitimate response (issue #30 A2/S2 sweep note). */
   due_date: z.string(),
-  principal_due: z.string(),
-  interest_due: z.string(),
-  total_due: z.string(),
-  paid_amount: z.string(),
+  /** loan_schedules columns, each CHECK (>= 0) numeric(18,2)
+   * (migration 0001) via str(Decimal) — fmtKes-fed (A2/S2 retrofit). */
+  principal_due: moneySchema,
+  interest_due: moneySchema,
+  total_due: moneySchema,
+  paid_amount: moneySchema,
 });
 
 export const scheduleSchema = z.array(scheduleRowSchema);
@@ -90,11 +106,17 @@ export type ScheduleRow = z.infer<typeof scheduleRowSchema>;
 /** Early settlement quote (SettlementQuoteOut) — as-of stamped server
  * facts; the total is the SERVER's sum, never recomputed here. */
 export const settlementQuoteSchema = z.object({
+  /** DATE isoformat (quote_date.isoformat(), api/loan_book.py) rendered
+   * VERBATIM — deliberately NOT isoTimestampSchema (A2/S2 sweep note). */
   as_of: z.string(),
-  principal_balance: z.string(),
-  interest_due: z.string(),
-  penalties_due: z.string(),
-  total: z.string(),
+  /** Every bucket is to_cents-quantised by domain settlement_quote()
+   * (which also REFUSES negative buckets) and the total is the
+   * to_cents property sum — canonical non-negative two-place shapes,
+   * all fmtKes-fed (issue #30 A2/S2 retrofit). */
+  principal_balance: moneySchema,
+  interest_due: moneySchema,
+  penalties_due: moneySchema,
+  total: moneySchema,
 });
 
 export type SettlementQuote = z.infer<typeof settlementQuoteSchema>;
@@ -117,11 +139,15 @@ export type Disbursement = z.infer<typeof disbursementSchema>;
 export const repaymentResultSchema = z.object({
   txn_id: z.string(),
   txn_ref: z.string(),
-  penalties: z.string(),
-  interest: z.string(),
-  principal: z.string(),
-  balance_after: z.string(),
-  penalty_due_after: z.string(),
+  /** Allocation buckets (domain allocate_repayment: min/to_cents over
+   * non-negative dues) and the post-write balances (to_cents;
+   * loans.balance/penalty_due CHECKs >= 0) — canonical non-negative
+   * shapes, all fmtKes-fed (issue #30 A2/S2 retrofit). */
+  penalties: moneySchema,
+  interest: moneySchema,
+  principal: moneySchema,
+  balance_after: moneySchema,
+  penalty_due_after: moneySchema,
   status: loanStatusSchema,
 });
 
@@ -133,19 +159,29 @@ export type RepaymentResult = z.infer<typeof repaymentResultSchema>;
 export const classificationSliceSchema = z.object({
   classification: loanClassSchema,
   count: z.number().int(),
-  balance: z.string(),
-  provisions: z.string(),
+  /** SQL aggregates (COALESCE(SUM(...), 0), application/loans.py
+   * portfolio_summary): an empty aggregate legitimately serialises as
+   * the bare "0" — the aggregate shape is the honest boundary
+   * (issue #30 A2/S2 retrofit); fmtKes-fed. */
+  balance: aggregateMoneySchema,
+  provisions: aggregateMoneySchema,
 });
 
 export const portfolioSummarySchema = z.object({
   active_loans: z.number().int(),
-  outstanding_balance: z.string(),
-  npl_balance: z.string(),
+  /** COALESCE(SUM(...), 0) aggregates via str(Decimal) — bare "0" on
+   * an empty book, two-place otherwise; every one fmtKes-fed
+   * (issue #30 A2/S2 retrofit). */
+  outstanding_balance: aggregateMoneySchema,
+  npl_balance: aggregateMoneySchema,
+  /** Ratio percentages (to_cents ratios, ZERO when the book is empty)
+   * — rendered as "%" text, never fmtKes-fed: deliberately left
+   * unasserted (A2/S2 sweep note). */
   npl_ratio_pct: z.string(),
-  par30_balance: z.string(),
+  par30_balance: aggregateMoneySchema,
   par30_ratio_pct: z.string(),
-  provisions: z.string(),
-  penalties_due: z.string(),
+  provisions: aggregateMoneySchema,
+  penalties_due: aggregateMoneySchema,
   by_classification: z.array(classificationSliceSchema),
 });
 

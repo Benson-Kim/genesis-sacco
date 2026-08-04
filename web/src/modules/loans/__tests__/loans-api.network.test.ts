@@ -34,6 +34,8 @@ const LOAN_ID = "cccccccc-1111-2222-3333-444444444444";
 const calls: FetchCall[] = [];
 let disburseStatus = 201;
 let loanMoneyAsNumbers = false;
+let loanGarbageMoney = false;
+let loanGarbageTimestamp = false;
 
 function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -93,6 +95,15 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
   if (path === `/loans/${LOAN_ID}` && request.method === "GET") {
     if (loanMoneyAsNumbers) {
       return json(200, { ...loanOut, balance: 1234567.1 });
+    }
+    if (loanGarbageMoney) {
+      // A STRING, so it passes a naive z.string() — the shared
+      // moneySchema shape (issue #30 A2/S2) is the only thing standing
+      // between it and fmtKes on the loan drawer.
+      return json(200, { ...loanOut, penalty_due: "007.10" });
+    }
+    if (loanGarbageTimestamp) {
+      return json(200, { ...loanOut, disbursed_at: "yesterday-ish" });
     }
     return json(200, loanOut);
   }
@@ -180,6 +191,7 @@ const tabStorage = new Map<string, string>();
 /* eslint-disable @typescript-eslint/no-require-imports */
 const session = require("@/modules/auth/session") as typeof import("@/modules/auth/session");
 const loansApi = require("../api") as typeof import("../api");
+const loanSchemas = require("../schemas") as typeof import("../schemas");
 const { ApiError } = require("@genesis/api-client") as typeof import("@genesis/api-client");
 /* eslint-enable @typescript-eslint/no-require-imports */
 
@@ -189,6 +201,8 @@ beforeEach(() => {
   calls.length = 0;
   disburseStatus = 201;
   loanMoneyAsNumbers = false;
+  loanGarbageMoney = false;
+  loanGarbageTimestamp = false;
   session.clearSession();
   session.setSession({ accessToken: jwt(USER_ID, 900), refreshToken: REFRESH_VALUE });
 });
@@ -298,6 +312,97 @@ test("a contract-violating response (numeric money) is REJECTED at the boundary 
   expect(thrown).toBeInstanceOf(Error);
   expect(thrown).not.toBeInstanceOf(ApiError);
   expect(String(thrown)).toContain("balance");
+});
+
+test("a garbage money STRING is REJECTED at the wire boundary (issue #30 A2/S2) — a value that passes z.string() can still never reach fmtKes", async () => {
+  loanGarbageMoney = true;
+  const thrown = await loansApi.fetchLoan(LOAN_ID).catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("penalty_due");
+});
+
+test("a garbage timestamp is REJECTED at the boundary (the !63 F-R4 lesson) — 'Invalid Date' can never render on the loan drawer", async () => {
+  loanGarbageTimestamp = true;
+  const thrown = await loansApi.fetchLoan(LOAN_ID).catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("disbursed_at");
+});
+
+test("issue #30 A2/S2 accept/reject matrix: loan/schedule/quote/repayment money asserts the CANONICAL shape; portfolio aggregates admit the bare '0'; no CHECK(>=0) column accepts a sign", () => {
+  const loanWith = (field: string, value: string) =>
+    loanSchemas.loanSchema.safeParse({ ...loanOut, [field]: value }).success;
+  const rowWith = (field: string, value: string) =>
+    loanSchemas.scheduleRowSchema.safeParse({ ...scheduleRowOut, [field]: value }).success;
+
+  // Canonical column shapes ACCEPTED — exactly the backend
+  // serialisation (str(Decimal) of numeric(18,2) / to_cents;
+  // hand-computed oracles).
+  expect(loanWith("balance", "0.00")).toBe(true);
+  expect(loanWith("principal", "2000000.00")).toBe(true);
+  expect(loanWith("penalty_due", "1500.10")).toBe(true);
+  expect(rowWith("paid_amount", "0.00")).toBe(true);
+
+  // Garbage shapes REJECTED on every money field — each previously
+  // flowed into fmtKes unchallenged (bare z.string()).
+  const garbage = ["abc", "1e5", "007.10", "1500.1", "1500.100", "1500", "1,500.10", " 1500.10", "NaN", ""];
+  for (const value of garbage) {
+    expect(loanWith("principal", value)).toBe(false);
+    expect(loanWith("balance", value)).toBe(false);
+    expect(loanWith("penalty_due", value)).toBe(false);
+    expect(rowWith("principal_due", value)).toBe(false);
+    expect(rowWith("total_due", value)).toBe(false);
+  }
+
+  // A '-' is a CONTRACT VIOLATION on every loans/loan_schedules money
+  // column (CHECK > 0 / >= 0, migrations 0001 + 0007) and on the
+  // settlement quote (domain settlement_quote REFUSES negatives).
+  expect(loanWith("balance", "-1.00")).toBe(false);
+  expect(rowWith("paid_amount", "-1.00")).toBe(false);
+
+  const quote = {
+    as_of: "2026-08-03",
+    principal_balance: "1234567.10",
+    interest_due: "10000.10",
+    penalties_due: "1500.10",
+    total: "1246067.30",
+  };
+  expect(loanSchemas.settlementQuoteSchema.safeParse(quote).success).toBe(true);
+  expect(
+    loanSchemas.settlementQuoteSchema.safeParse({ ...quote, total: "-1.00" }).success,
+  ).toBe(false);
+  expect(
+    loanSchemas.settlementQuoteSchema.safeParse({ ...quote, interest_due: "1e5" }).success,
+  ).toBe(false);
+
+  // Portfolio aggregates: COALESCE(SUM(...), 0) legitimately emits the
+  // bare "0" for an empty book — the aggregate shape (and ONLY it)
+  // accepts that one extra value; garbage still rejects.
+  const summary = {
+    active_loans: 0,
+    outstanding_balance: "0",
+    npl_balance: "0",
+    npl_ratio_pct: "0.00",
+    par30_balance: "0",
+    par30_ratio_pct: "0.00",
+    provisions: "0",
+    penalties_due: "0",
+    by_classification: [
+      { classification: "normal", count: 0, balance: "0", provisions: "0" },
+    ],
+  };
+  expect(loanSchemas.portfolioSummarySchema.safeParse(summary).success).toBe(true);
+  expect(
+    loanSchemas.portfolioSummarySchema.safeParse({ ...summary, outstanding_balance: "150" })
+      .success,
+  ).toBe(false);
+  expect(
+    loanSchemas.portfolioSummarySchema.safeParse({ ...summary, provisions: "-1.00" }).success,
+  ).toBe(false);
+  expect(
+    loanSchemas.portfolioSummarySchema.safeParse({ ...summary, npl_balance: "007.10" }).success,
+  ).toBe(false);
 });
 
 test("GET /portfolio/summary + /loans/{id}/schedule parse through their boundaries (server aggregates only)", async () => {
