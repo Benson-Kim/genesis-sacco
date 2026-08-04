@@ -104,8 +104,17 @@ export function RequestExitDrawer({ onClose }: Readonly<{ onClose: () => void }>
   const freshMember = memberDetail.data;
 
   const create = useMutation({
-    mutationFn: (entry: ExitRequestEntry) =>
-      createExitRequest(
+    // STRUCTURAL freshness guard (the F-M1 class, applied
+    // module-wide): the write never fires without the fresh member
+    // read (pattern (e)) — its key material folds the REAL member
+    // version, never a null sentinel.
+    mutationFn: (entry: ExitRequestEntry) => {
+      if (freshMember === undefined) {
+        return Promise.reject(
+          new Error("The fresh member record is not loaded — the exit request was NOT recorded."),
+        );
+      }
+      return createExitRequest(
         entry.member_id,
         entry.reason === "" ? null : entry.reason,
         idempotencyKeyFor(
@@ -113,12 +122,13 @@ export function RequestExitDrawer({ onClose }: Readonly<{ onClose: () => void }>
           JSON.stringify({
             op: "exit-request",
             entry,
-            member_version: freshMember?.version ?? null,
+            member_version: freshMember.version,
             reload_epoch: reloadEpoch,
             intent_seq: intentSeq,
           }),
         ),
-      ),
+      );
+    },
     onSuccess: (record) => {
       setConfirmEntry(null);
       // SPENT affordance: the result panel replaces the form.
