@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { components } from "@genesis/api-client";
 
 /**
  * Zod-validated response boundary for the tenant-settings API (P15,
@@ -27,6 +28,30 @@ export const approvalBandSchema = z.object({
 export type RateBand = z.infer<typeof rateBandSchema>;
 export type ApprovalBand = z.infer<typeof approvalBandSchema>;
 
+/** Code-owned enum vocabularies (compile-time pinned to the generated
+ * client enums below — drift stops the build). */
+export const LOAN_INTEREST_METHODS = ["reducing_balance", "flat"] as const;
+export const LOAN_INTEREST_BASES = ["thirty_360", "actual_365"] as const;
+export const PENALTY_CHARGED_ON = ["instalment_in_arrears", "full_outstanding"] as const;
+
+/** Bidirectional type equality — `true` only when A and B are the same
+ * union (compile-time drift tripwire for mirrored enums, the W56-2
+ * pattern). */
+type MirrorEquals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
+
+export const LOAN_INTEREST_METHOD_MIRROR_PINNED: MirrorEquals<
+  (typeof LOAN_INTEREST_METHODS)[number],
+  components["schemas"]["LoanInterestMethod"]
+> = true;
+export const LOAN_INTEREST_BASIS_MIRROR_PINNED: MirrorEquals<
+  (typeof LOAN_INTEREST_BASES)[number],
+  components["schemas"]["LoanInterestBasis"]
+> = true;
+export const PENALTY_CHARGED_ON_MIRROR_PINNED: MirrorEquals<
+  (typeof PENALTY_CHARGED_ON)[number],
+  components["schemas"]["PenaltyChargedOn"]
+> = true;
+
 export const settingsSchema = z.object({
   configured: z.boolean(),
   version: z.number().int(),
@@ -38,13 +63,15 @@ export const settingsSchema = z.object({
   deposit_rebate_rate_pct: z.string().nullable(),
   penalty_rate_pct_per_month: z.string().nullable(),
   penalty_grace_days: z.number().int().nullable(),
-  // Enum-carrying strings degrade gracefully to text (the F-A5
-  // users-status precedent): an unknown value renders inert and the
-  // select falls back to "not configured"; the server enforces the
-  // vocabulary regardless.
-  penalty_charged_on: z.string().nullable(),
-  loan_interest_method: z.string().nullable(),
-  loan_interest_basis: z.string().nullable(),
+  // Enum boundary (W57-2, fleet standard): unknown vocabulary is a
+  // contract violation REJECTED at the boundary — never silently
+  // degraded. Degradation was a money-parameters integrity hazard: a
+  // degraded value rendered as "not configured" would be silently
+  // NULLED (config CLEARED) by the next WYSIWYG save of the tab. The
+  // vocabularies are compile-time pinned to the generated enums above.
+  penalty_charged_on: z.enum(PENALTY_CHARGED_ON).nullable(),
+  loan_interest_method: z.enum(LOAN_INTEREST_METHODS).nullable(),
+  loan_interest_basis: z.enum(LOAN_INTEREST_BASES).nullable(),
   loan_rate_bands: z.array(rateBandSchema).nullable(),
   min_share_capital: z.string().nullable(),
   registration_fee: z.string().nullable(),
@@ -60,11 +87,6 @@ export const settingsSchema = z.object({
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
-
-/** Code-owned enum vocabularies (mirror the generated client enums). */
-export const LOAN_INTEREST_METHODS = ["reducing_balance", "flat"] as const;
-export const LOAN_INTEREST_BASES = ["thirty_360", "actual_365"] as const;
-export const PENALTY_CHARGED_ON = ["instalment_in_arrears", "full_outstanding"] as const;
 
 export const METHOD_LABELS: Record<(typeof LOAN_INTEREST_METHODS)[number], string> = {
   reducing_balance: "Reducing balance",

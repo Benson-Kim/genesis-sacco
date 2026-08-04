@@ -325,3 +325,30 @@ test("Zod boundary rejects money as NUMBERS — a contract-violating response ne
   expect(settingsSchema.safeParse(violating).success).toBe(false);
   expect(settingsSchema.safeParse(baseSettings()).success).toBe(true);
 });
+
+test("Zod boundary rejects unknown enum vocabulary (W57-2) — a degraded value can never be silently re-saved as null", () => {
+  // Fleet standard: unknown enum values are contract violations REJECTED
+  // at the boundary, closing the silent-config-clear hazard (a value the
+  // select can't represent would render "not configured" and be NULLED —
+  // config CLEARED — by the next WYSIWYG save of the tab).
+  expect(
+    settingsSchema.safeParse({ ...baseSettings(), loan_interest_method: "exotic_method" })
+      .success,
+  ).toBe(false);
+  expect(
+    settingsSchema.safeParse({ ...baseSettings(), loan_interest_basis: "actual_360" }).success,
+  ).toBe(false);
+  expect(
+    settingsSchema.safeParse({ ...baseSettings(), penalty_charged_on: "everything" }).success,
+  ).toBe(false);
+  // null (genuinely not configured) remains valid — rejection targets
+  // unknown vocabulary only, never the contract's explicit null.
+  expect(
+    settingsSchema.safeParse({
+      ...baseSettings(),
+      loan_interest_method: null,
+      loan_interest_basis: null,
+      penalty_charged_on: null,
+    }).success,
+  ).toBe(true);
+});
