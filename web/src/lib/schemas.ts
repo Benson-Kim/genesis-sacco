@@ -35,7 +35,7 @@ import { z } from "zod";
  * 3. AGGREGATE money (`aggregateMoneySchema`): a SQL aggregate
  *    serialised via `str(Decimal)` WITHOUT re-quantisation. The
  *    backend computes these as `COALESCE(SUM(...), 0)` (e.g.
- *    application/dashboard.py DEPOSIT_TOTAL_SQL / SHARE_TOTAL_SQL /
+ *    application/dashboard.py DEPOSIT_TOTAL_SQL, SHARE_TOTAL_SQL and
  *    GUARANTEE_TOTALS_SQL, application/loans.py portfolio_summary,
  *    application/guarantees.py live_pledged_total): with rows the sum
  *    keeps the column's two-place scale ("150.00"); with NO rows the
@@ -52,8 +52,8 @@ import { z } from "zod";
  *    (application/dashboard.py MONTHLY_FLOWS_SQL — reversal rows
  *    subtract in the month they were POSTED, so a month holding only
  *    reversals nets negative) and `free_capacity`
- *    (dashboard.py GuarantorCapacity — an ADVISORY balance-minus-
- *    pledged difference read without the P9 locks, negative when the
+ *    (dashboard.py GuarantorCapacity — an ADVISORY "balance less
+ *    pledged" difference read without the P9 locks, negative when the
  *    balance dropped after pledging or no deposit account exists).
  *
  * 5. ISO timestamp (`isoTimestampSchema`): exactly what the backend's

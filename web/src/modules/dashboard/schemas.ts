@@ -21,7 +21,7 @@ import {
  * The SIGNED aggregate shape is taken ONLY where the backend documents
  * a negative branch: the monthly flow series (reversal rows subtract
  * in the month they were POSTED — MONTHLY_FLOWS_SQL) and
- * free_capacity (an ADVISORY balance-minus-pledged difference read
+ * free_capacity (an ADVISORY "balance less pledged" difference read
  * without the P9 locks). Everything else REJECTS a '-'.
  */
 export const memberTypeCountSchema = z.object({
@@ -36,8 +36,8 @@ export const membersOverviewSchema = z.object({
 });
 
 export const depositTotalsSchema = z.object({
-    /** DEPOSIT_TOTAL_SQL / SHARE_TOTAL_SQL — COALESCE(SUM(balance), 0)
-     * over CHECK (balance >= 0) columns: non-negative aggregates,
+    /** DEPOSIT_TOTAL_SQL and SHARE_TOTAL_SQL — COALESCE(SUM(balance),
+     * 0) over CHECK (balance >= 0) columns: non-negative aggregates,
      * fmtKes-fed (issue #30 A2/S2 retrofit). */
     total_deposits: aggregateMoneySchema,
     total_share_capital: aggregateMoneySchema,
@@ -47,7 +47,7 @@ export const classificationSliceSchema = z.object({
     classification: z.string(),
     count: z.number().int(),
     /** Grouped COALESCE(SUM(...), 0) aggregates (loans.py
-     * portfolio_summary) — fmtAmount-fed (A2/S2 retrofit). */
+     * portfolio_summary), fed to fmtAmount (A2/S2 retrofit). */
     balance: aggregateMoneySchema,
     provisions: aggregateMoneySchema,
 });
@@ -75,7 +75,7 @@ export const guarantorCapacitySchema = z.object({
     /** live_pledged_total — a COALESCE'd SUM of CHECK (amount > 0)
      * pledges: non-negative aggregate, fmtKes-fed (A2/S2 retrofit). */
     pledged_total: aggregateMoneySchema,
-    /** ADVISORY balance-minus-pledged difference (dashboard.py
+    /** ADVISORY "balance less pledged" difference (dashboard.py
      * GuarantorCapacity), read without the P9 locks — legitimately
      * NEGATIVE when the balance dropped after pledging or no deposit
      * account exists; fmtKes-fed with its sign (A2/S2 retrofit). */
@@ -100,8 +100,8 @@ export const monthlyFlowSchema = z.object({
     /** MONTHLY_FLOWS_SQL — reversal rows SUBTRACT in the month they
      * were posted, so a reversal-only month legitimately nets
      * negative; zero-filled silent months arrive as "0.00" and an
-     * all-other-types month as the SQL bare "0". fmtAmount-fed with
-     * the sign (A2/S2 retrofit). */
+     * all-other-types month as the SQL bare "0"; fed to fmtAmount
+     * with the sign (A2/S2 retrofit). */
     deposits: signedAggregateMoneySchema,
     disbursements: signedAggregateMoneySchema,
 });

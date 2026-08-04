@@ -123,7 +123,7 @@ describe("dashboard contract (Zod — FM: contract-violation response)", () => {
     // The sign: total_deposits sums CHECK (balance >= 0) columns — a
     // '-' is a contract violation there. The monthly flow series nets
     // NEGATIVE when a month holds only reversals (MONTHLY_FLOWS_SQL)
-    // and free_capacity is the advisory balance-minus-pledged
+    // and free_capacity is the advisory "balance less pledged"
     // difference — both keep their sign.
     expect(withDeposits("-1.00")).toBe(false);
     expect(withFlow("-200000.00")).toBe(true);

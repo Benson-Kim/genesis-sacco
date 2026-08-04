@@ -139,10 +139,10 @@ export type Disbursement = z.infer<typeof disbursementSchema>;
 export const repaymentResultSchema = z.object({
   txn_id: z.string(),
   txn_ref: z.string(),
-  /** Allocation buckets (domain allocate_repayment: min/to_cents over
-   * non-negative dues) and the post-write balances (to_cents;
-   * loans.balance/penalty_due CHECKs >= 0) — canonical non-negative
-   * shapes, all fmtKes-fed (issue #30 A2/S2 retrofit). */
+  /** Allocation buckets (domain allocate_repayment: min and to_cents
+   * over non-negative dues) and the post-write balances (to_cents;
+   * the loans balance and penalty_due CHECKs >= 0) — canonical
+   * non-negative shapes, all fmtKes-fed (issue #30 A2/S2 retrofit). */
   penalties: moneySchema,
   interest: moneySchema,
   principal: moneySchema,
