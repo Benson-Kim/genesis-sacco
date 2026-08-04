@@ -101,7 +101,7 @@ def test_expires_at_is_server_set_from_retention_config(
                         "FROM idempotency_keys "
                         "WHERE tenant_id = CAST(:tid AS uuid) AND key = :key"
                     ),
-                    {"tid": str(tid), "key": key},
+                    {"tid": str(tid), "key": _otp_storage_key(key)},
                 )
             ).one()
         window_seconds = float(row[0])
