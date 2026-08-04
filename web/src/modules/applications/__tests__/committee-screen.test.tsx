@@ -24,6 +24,11 @@ import {
   MAKER_UNKNOWN,
   recordCommitteeMaker,
 } from "../makerRegistry";
+import {
+  clearVotedApplications,
+  hasVotedOn,
+  recordVotedApplication,
+} from "../votedRegistry";
 import { voteResultSchema, type Application, type VoteResult } from "../schemas";
 import * as appsApi from "../api";
 import * as membersApi from "@/modules/members/api";
@@ -173,6 +178,7 @@ async function armVoteConfirmation(
 beforeEach(() => {
   jest.clearAllMocks();
   clearCommitteeMakers();
+  clearVotedApplications();
   clearSession();
   setSession({ accessToken: fakeJwt({ sub: VOTER_ID }), refreshToken: "refresh-1" });
   grantPermissions(APPROVER_PERMS);
@@ -349,11 +355,16 @@ test("query-path 401 tears the session down immediately (dual-cache teardown) AN
   // UNKNOWN again, so the next operator's MakerCheckerPanel SoD decision
   // never consumes a witness recorded under a previous identity.
   expect(committeeMakerOf(APP_ID)).toBe(MAKER_UNKNOWN);
+  // The voted registry (W58-6) is session-scoped through the same
+  // mechanism and dies with the session too.
+  expect(hasVotedOn(APP_ID)).toBe(false);
 });
 
 test("explicit sign-out empties the maker registry — the next operator inherits no referral attributions (W58-2)", async () => {
   recordCommitteeMaker(APP_ID, VOTER_ID);
+  recordVotedApplication(APP_ID);
   expect(committeeMakerOf(APP_ID)).toBe(VOTER_ID);
+  expect(hasVotedOn(APP_ID)).toBe(true);
 
   // Real sign-out path: local teardown must win even if the revocation
   // call cannot complete in this harness.
@@ -363,6 +374,34 @@ test("explicit sign-out empties the maker registry — the next operator inherit
 
   expect(hasSession()).toBe(false);
   expect(committeeMakerOf(APP_ID)).toBe(MAKER_UNKNOWN);
+  expect(hasVotedOn(APP_ID)).toBe(false);
+});
+
+test("spent vote affordance survives a panel remount (W58-6): a recorded vote never re-arms the buttons in this tab", async () => {
+  const user = userEvent.setup();
+  recordCommitteeMaker(APP_ID, OTHER_OFFICER_ID);
+  mocked.voteOnApplication.mockResolvedValue(TALLY_OPEN);
+  const view = mountScreen();
+
+  await user.click(await screen.findByRole("button", { name: "Vote approve" }));
+  await user.click(await armVoteConfirmation(user, "approve"));
+  expect(await screen.findByText("1 approve")).toBeInTheDocument();
+  expect(mocked.voteOnApplication).toHaveBeenCalledTimes(1);
+
+  // Simulate switching agenda items and back: the panel remounts and
+  // its component state (result) is gone — previously this RE-ARMED
+  // the buttons and steered the operator into a guaranteed 409.
+  view.unmount();
+  mountScreen();
+
+  const approve = await screen.findByRole("button", { name: "Vote approve" });
+  expect(approve).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Vote reject" })).toBeDisabled();
+  expect(
+    screen.getByText(/This tab already recorded your vote on this application/),
+  ).toBeInTheDocument();
+  // No second wire write is even possible from this tab.
+  expect(mocked.voteOnApplication).toHaveBeenCalledTimes(1);
 });
 
 test("Zod boundary: the tally is COUNTS + decision only — a payload leaking voter identities is a contract violation", () => {

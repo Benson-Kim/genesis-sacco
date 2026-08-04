@@ -36,6 +36,7 @@ import { useKeysetList } from "@/modules/table/useKeysetList";
 import { fetchMember } from "@/modules/members/api";
 import { fetchApplication, fetchApplicationsPage, voteOnApplication } from "../api";
 import { committeeMakerOf, MAKER_UNKNOWN } from "../makerRegistry";
+import { recordVotedApplication, useHasVotedOn } from "../votedRegistry";
 import { getOwnUserId } from "@/modules/auth/session";
 import type { Application, Vote, VoteResult } from "../schemas";
 import { useProducts } from "../useProducts";
@@ -115,6 +116,9 @@ function ReviewPanel({ applicationId }: Readonly<{ applicationId: string }>) {
   const products = useProducts();
   const [confirmVote, setConfirmVote] = useState<Vote | null>(null);
   const [result, setResult] = useState<VoteResult | null>(null);
+  // Spent affordance across remounts (W58-6): switching agenda items and
+  // back must not re-arm the vote buttons after a recorded vote.
+  const alreadyVoted = useHasVotedOn(applicationId);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
 
   const detail = useQuery({
@@ -148,6 +152,9 @@ function ReviewPanel({ applicationId }: Readonly<{ applicationId: string }>) {
     onSuccess: (tally) => {
       setConfirmVote(null);
       setResult(tally);
+      // The vote is SPENT for this tab (W58-6): the per-tab registry
+      // keeps the affordance withdrawn across panel remounts.
+      recordVotedApplication(applicationId);
       announce(tally.decision === null ? "Vote recorded." : "Committee decision reached.");
       // The vote may have decided the application: refresh the record and
       // every list (the agenda drops decided applications).
@@ -272,18 +279,24 @@ function ReviewPanel({ applicationId }: Readonly<{ applicationId: string }>) {
                 is resolved server-side at vote time. Approve votes are capped by
                 your approval-authority band.
               </div>
+              {alreadyVoted && result === null && (
+                <div className={styles.formNote}>
+                  This tab already recorded your vote on this application —
+                  one vote per committee member; the buttons stay spent.
+                </div>
+              )}
               <div className={styles.voteActions}>
                 <Button
                   variant="danger"
                   onClick={() => setConfirmVote("reject")}
-                  disabled={vote.isPending || result !== null}
+                  disabled={vote.isPending || result !== null || alreadyVoted}
                 >
                   Vote reject
                 </Button>
                 <Button
                   variant="primary"
                   onClick={() => setConfirmVote("approve")}
-                  disabled={vote.isPending || result !== null}
+                  disabled={vote.isPending || result !== null || alreadyVoted}
                 >
                   Vote approve
                 </Button>
