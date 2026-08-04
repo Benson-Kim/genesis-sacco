@@ -165,17 +165,24 @@ export function postMoneyWrite(
   }
 }
 
+/** The InterestRunBody contract's own documented default (@default
+ * 200) — a batch-SIZING tunable (the only caller-tunable field), never
+ * a money parameter. */
+export const INTEREST_RUN_BATCH_SIZE = 200;
+
 /**
  * Run the quarterly deposit-interest accrual for the next unaccrued
  * quarter (transactions:edit — the P11 operations catch-up route). The
- * body is EMPTY on purpose: the rate comes exclusively from tenant
- * configuration and the period is resolved server-side in strict
- * quarter order (v1.1 rule 1) — this client sends no batch size, no
- * rate, no period. An unconfigured rate surfaces as 409.
+ * body carries the batch size ONLY (the contract's sole caller-tunable
+ * field, sent at its documented default): the rate comes exclusively
+ * from tenant configuration and the period is resolved server-side in
+ * strict quarter order (v1.1 rule 1) — no rate, no period, no as-of
+ * can even be sent (extra="forbid"). An unconfigured rate surfaces as
+ * 409.
  */
 export async function runDepositInterest(idempotencyKey: string): Promise<InterestRun> {
   const { data, error, response } = await api.POST("/jobs/deposit-interest", {
-    body: {},
+    body: { batch_size: INTEREST_RUN_BATCH_SIZE },
     headers: { "Idempotency-Key": idempotencyKey },
   });
   if (error !== undefined || data === undefined) throw toApiError(error, response);

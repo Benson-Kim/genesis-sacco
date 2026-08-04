@@ -5,11 +5,12 @@
  * accrual's operations catch-up route, `POST /jobs/deposit-interest`,
  * transactions:edit).
  *
- * - The request body is EMPTY on purpose: the annual rate comes
- *   exclusively from tenant configuration and the accrued period is
- *   resolved server-side in strict quarter order (v1.1 rule 1) — this
- *   client sends no rate, no period, no batch size. Re-running a fully
- *   accrued tenant is an idempotent server-side no-op.
+ * - The request body carries the batch size ONLY (the contract's sole
+ *   caller-tunable field, sent at its documented default): the annual
+ *   rate comes exclusively from tenant configuration and the accrued
+ *   period is resolved server-side in strict quarter order (v1.1 rule
+ *   1) — no rate, no period, no as-of can even be sent. Re-running a
+ *   fully accrued tenant is an idempotent server-side no-op.
  * - Money-adjacent write: typed ConfirmDangerModal (!60 F7), ONE
  *   idempotent write (`retry: 0`, pending short-circuit), SPENT
  *   affordance (the result panel replaces the action; a fresh dialog

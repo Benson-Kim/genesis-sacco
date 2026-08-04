@@ -309,14 +309,16 @@ test("an unknown transaction type is a contract violation and is REJECTED, never
   expect(String(thrown)).toContain("type");
 });
 
-test("POST /jobs/deposit-interest: the body is EMPTY (no rate, period or batch size can be sent); the run result parses verbatim", async () => {
+test("POST /jobs/deposit-interest: the body carries the batch size ONLY (no rate, period or as-of can be sent); the run result parses verbatim", async () => {
   const result = await txnApi.runDepositInterest("key-int-1");
   expect(calls).toHaveLength(1);
   const call = calls[0]!;
   expect(new URL(call.url).pathname).toBe("/jobs/deposit-interest");
   expect(new URL(call.url).search).toBe("");
   expect(call.headers.get("idempotency-key")).toBe("key-int-1");
-  expect(JSON.parse(call.body ?? "null")).toEqual({});
+  // The sole caller-tunable field, at the contract's documented default
+  // — never a money/rate/period parameter (v1.1 rule 1).
+  expect(JSON.parse(call.body ?? "null")).toEqual({ batch_size: 200 });
 
   expect(result.period_start).toBe("2026-04-01");
   expect(result.annual_rate_pct).toBe("8.00");
