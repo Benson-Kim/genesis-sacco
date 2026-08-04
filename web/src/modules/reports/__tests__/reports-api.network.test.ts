@@ -89,7 +89,9 @@ function exportOut(status: string, withArtifact: boolean): Record<string, unknow
     status,
     filters: { member_id: MEMBER_ID },
     allowed_columns: ["member_no", "date", "txn_ref", "type"],
-    as_of: "2026-08-04T10:00:00+00:00",
+    // F-R4: a garbage timestamp on an audit surface must be REJECTED
+    // at the boundary, never rendered as "Invalid Date".
+    as_of: exportRecordShape === "garbage_timestamp" ? "yesterday-ish" : "2026-08-04T10:00:00+00:00",
     completed_at: withArtifact ? "2026-08-04T10:05:00+00:00" : null,
     created_at: "2026-08-04T10:00:00+00:00",
     artifact: withArtifact ? artifactOut() : null,
@@ -200,6 +202,7 @@ const REFRESH_VALUE = "per-tab-refresh-value";
 beforeEach(() => {
   calls.length = 0;
   exportArtifactShape = "ok";
+  exportRecordShape = "ok";
   session.clearSession();
   session.setSession({ accessToken: jwt(USER_ID, 900), refreshToken: REFRESH_VALUE });
 });
@@ -279,6 +282,48 @@ test("a fractional row count is a contract violation and is REJECTED, never sile
   expect(String(thrown)).toContain("row_count");
 });
 
+test("F-R4: a garbage export timestamp is REJECTED at the boundary — 'Invalid Date' can never reach the operator-facing audit surface", async () => {
+  exportRecordShape = "garbage_timestamp";
+  const thrown = await reportsApi.fetchExport(EXPORT_ID).catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("as_of");
+});
+
+test("F-R4: the timestamp boundary accepts exactly the backend isoformat() shapes (offset, Z, naive, microseconds) and rejects everything else", () => {
+  /* eslint-disable-next-line @typescript-eslint/no-require-imports */
+  const schemas = require("../schemas") as typeof import("../schemas");
+  const record = (as_of: string) => ({
+    id: EXPORT_ID,
+    report: "member_statement",
+    status: "queued",
+    filters: {},
+    allowed_columns: ["member_no"],
+    as_of,
+    completed_at: null,
+    created_at: "2026-08-04T10:00:00+00:00",
+    artifact: null,
+  });
+  const accepted = [
+    "2026-08-04T10:00:00+00:00", // aware isoformat (the live backend shape)
+    "2026-08-04T10:00:00Z", // zulu suffix
+    "2026-08-04T10:00:00", // naive isoformat
+    "2026-08-04T10:00:00.123456+03:00", // microseconds + offset
+  ];
+  const rejected = [
+    "yesterday-ish",
+    "2026-08-04", // date-only: ExportOut timestamps are datetimes
+    "04/08/2026 10:00",
+    "",
+  ];
+  expect(
+    accepted.filter((value) => !schemas.exportOutSchema.safeParse(record(value)).success),
+  ).toEqual([]);
+  expect(
+    rejected.filter((value) => schemas.exportOutSchema.safeParse(record(value)).success),
+  ).toEqual([]);
+});
+
 test("POST /jobs/exports: NO request body exists (the contract defines none); idempotency as a header; the cycle counts parse verbatim", async () => {
   const result = await reportsApi.runExportQueue("key-queue-1");
   expect(calls).toHaveLength(1);
@@ -328,4 +373,6 @@ test("a requester-only 404 on another operator's export id surfaces as ONE least
   expect(thrown).toBeInstanceOf(ApiError);
   expect((thrown as InstanceType<typeof ApiError>).status).toBe(404);
   expect(calls).toHaveLength(1);
+});
+t(calls).toHaveLength(1);
 });

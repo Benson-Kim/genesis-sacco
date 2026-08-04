@@ -198,13 +198,25 @@ export function validateExportDraft(
  * else is a contract violation and is REJECTED at the boundary. */
 const DOWNLOAD_PATH_RE = /^\/exports\/downloads\/[A-Za-z0-9_-]+$/;
 
+/**
+ * ISO-8601 datetime SHAPE for the export timestamps (review F-R4):
+ * exactly what the backend's `datetime.isoformat()` emits — seconds
+ * always present, optional fractional seconds, optional `Z`/`±HH:MM`
+ * offset. These fields feed `fmtDateTime` on an operator-facing audit
+ * surface; a garbage timestamp would render "Invalid Date" there, so
+ * it is REJECTED at the boundary instead (the module's reject-unknowns
+ * posture — consistent with DOWNLOAD_PATH_RE and the int assertions).
+ */
+const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/;
+const timestampSchema = z.string().regex(TIMESTAMP_RE);
+
 /** ArtifactOut — every figure (row count, cap, truncation, expiry) is
  * the SERVER's render metadata, displayed verbatim. */
 export const artifactSchema = z.object({
   row_count: z.number().int(),
   truncated: z.boolean(),
   row_limit: z.number().int(),
-  expires_at: z.string(),
+  expires_at: timestampSchema,
   csv_download: z.string().regex(DOWNLOAD_PATH_RE),
   pdf_download: z.string().regex(DOWNLOAD_PATH_RE),
 });
@@ -264,6 +276,11 @@ export const declarationPickerSchema = z.object({
   id: z.string(),
   fy_start: z.string(),
   fy_end: z.string(),
+  status: z.string(),
+});
+
+export type DeclarationPickerRow = z.infer<typeof declarationPickerSchema>;
+z.string(),
   status: z.string(),
 });
 
