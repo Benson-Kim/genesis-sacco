@@ -45,6 +45,19 @@ const MONEY_GROUP = `(?:${MONEY_FIELDS.join("|")})`;
  *  - arithmetic between money-named identifiers/properties:
  *      a.balance - b.amount, outstanding * rate
  */
+/**
+ * Arithmetic and numeric coercion cannot EXECUTE inside a string
+ * literal, but hyphenated API path literals (the generated client
+ * requires exact route keys such as the loan settlement-quote path)
+ * would otherwise read as subtraction. Each scanned line therefore has
+ * its string-literal CONTENTS blanked (quotes kept, escapes honoured)
+ * before the gates run — real code offenders are untouched, and the
+ * sanitizer itself is proven falsifiable below.
+ */
+export function stripStringLiteralContents(line: string): string {
+    return line.replace(/(["'`])(?:\\.|(?!\1).)*?\1/g, "$1$1");
+}
+
 const GATES: readonly { name: string; regex: RegExp }[] = [
     {
         name: "numeric coercion of a money field",
@@ -102,7 +115,23 @@ describe("no client-side money math (P15 blocker (a))", () => {
             const sample = samples[gate.name];
             expect(sample).toBeDefined();
             expect(gate.regex.test(sample ?? "")).toBe(true);
+            // The sanitizer must NOT swallow code-level offenders: every
+            // synthetic sample still fires after literal-blanking.
+            expect(gate.regex.test(stripStringLiteralContents(sample ?? ""))).toBe(true);
         }
+    });
+
+    it("blanks string-literal contents only: hyphenated path literals pass, code offenders still fire", () => {
+        const arithmetic = GATES.find((gate) => gate.name === "arithmetic on a money field");
+        expect(arithmetic).toBeDefined();
+        const pathLine = 'await api.GET("/loans/{loan_id}/settlement-quote", options);';
+        // Raw, the kebab-cased path literal would misread as subtraction…
+        expect(arithmetic?.regex.test(pathLine)).toBe(true);
+        // …but the sanitizer recognises it as an inert literal…
+        expect(arithmetic?.regex.test(stripStringLiteralContents(pathLine))).toBe(false);
+        // …while arithmetic OUTSIDE literals on the same line still fires.
+        const mixedLine = 'const label = "settlement-quote"; const bad = account.balance - txn.amount;';
+        expect(arithmetic?.regex.test(stripStringLiteralContents(mixedLine))).toBe(true);
     });
 
     it.each(GATES)("no source file performs $name", ({ regex }) => {
@@ -110,7 +139,7 @@ describe("no client-side money math (P15 blocker (a))", () => {
         for (const path of files) {
             const source = readFileSync(path, "utf8");
             for (const line of source.split("\n")) {
-                if (regex.test(line)) {
+                if (regex.test(stripStringLiteralContents(line))) {
                     offenders.push(`${relative(WEB_ROOT, path)}: ${line.trim()}`);
                 }
             }
