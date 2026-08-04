@@ -115,8 +115,18 @@ export function ExitDetailDrawer({
   });
 
   const vote = useMutation({
-    mutationFn: (choice: ExitVote) =>
-      voteOnExit(
+    // STRUCTURAL freshness guard (the F-M1 class, applied
+    // module-wide): the vote never fires without the loaded fresh
+    // record — its key material folds the REAL record version, never
+    // a null sentinel.
+    mutationFn: (choice: ExitVote) => {
+      const fresh = detail.data;
+      if (fresh === undefined) {
+        return Promise.reject(
+          new Error("The fresh exit record is not loaded — the vote was NOT recorded."),
+        );
+      }
+      return voteOnExit(
         exitId,
         choice,
         idempotencyKeyFor(
@@ -125,11 +135,12 @@ export function ExitDetailDrawer({
             op: "exit-vote",
             id: exitId,
             choice,
-            recordVersion: detail.data?.version ?? null,
+            recordVersion: fresh.version,
             reload_epoch: reloadEpoch,
           }),
         ),
-      ),
+      );
+    },
     onSuccess: (tally) => {
       setConfirmVote(null);
       setVoteResult(tally);
