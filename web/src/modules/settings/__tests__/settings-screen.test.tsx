@@ -297,6 +297,45 @@ test("UI affordances follow the matrix: view-only settings role sees NO save con
   expect(screen.queryByRole("button", { name: "Save matrix" })).toBeNull();
 });
 
+test("tabs follow the conforming ARIA pattern (W57-4): tabpanel association + roving arrow-key focus", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+
+  const interest = await screen.findByRole("tab", { name: "Interest" });
+  expect(interest).toHaveAttribute("aria-selected", "true");
+
+  // tab ↔ tabpanel association (aria-controls / aria-labelledby / id).
+  const panel = screen.getByRole("tabpanel");
+  expect(interest).toHaveAttribute("aria-controls", panel.id);
+  expect(panel).toHaveAttribute("aria-labelledby", interest.id);
+
+  // Roving tabindex: exactly one tab stop for the whole tablist.
+  expect(interest).toHaveAttribute("tabindex", "0");
+  expect(screen.getByRole("tab", { name: "Parameters" })).toHaveAttribute("tabindex", "-1");
+  expect(screen.getByRole("tab", { name: "Approval matrix" })).toHaveAttribute("tabindex", "-1");
+
+  // End/Home move BOTH selection and focus (automatic activation)…
+  interest.focus();
+  await user.keyboard("{End}");
+  const approval = screen.getByRole("tab", { name: "Approval matrix" });
+  expect(approval).toHaveAttribute("aria-selected", "true");
+  expect(approval).toHaveFocus();
+  expect(panel).toHaveAttribute("aria-labelledby", approval.id);
+
+  // …and ArrowLeft steps back with wrapping semantics available.
+  await user.keyboard("{ArrowLeft}");
+  const parameters = screen.getByRole("tab", { name: "Parameters" });
+  expect(parameters).toHaveAttribute("aria-selected", "true");
+  expect(parameters).toHaveFocus();
+
+  await user.keyboard("{Home}");
+  expect(screen.getByRole("tab", { name: "Interest" })).toHaveFocus();
+  expect(screen.getByRole("tab", { name: "Interest" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
 test("least-disclosure: a 403 renders the sanitized banner only, no reload affordance, session intact", async () => {
   const user = userEvent.setup();
   mocked.updateSettings.mockRejectedValue(new ApiError(403, "forbidden", "corr-f"));
