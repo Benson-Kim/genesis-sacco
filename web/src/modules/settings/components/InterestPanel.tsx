@@ -410,6 +410,7 @@ export function InterestPanel({ settings }: Readonly<{ settings: Settings }>) {
             buttonLabel="Save interest rules"
             confirmTitle="Apply interest rules"
             confirmPhrase="interest"
+            settings={settings}
           >
             <div className={styles.formNote}>
               Interest, penalty and dividend parameters drive money postings

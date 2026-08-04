@@ -210,6 +210,27 @@ test("clearing a configured field submits an explicit null (never a silent keep)
   });
 });
 
+test("typed confirmation NAMES the keys a save would CLEAR (W57-3) — never a silent config clear", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+
+  // penalty_grace_days is CONFIGURED (5) — clearing it must be disclosed.
+  const grace = await screen.findByLabelText("Penalty grace (days)");
+  await user.clear(grace);
+  await user.click(screen.getByRole("button", { name: "Save interest rules" }));
+
+  const dialog = await screen.findByRole("dialog", { name: "Apply interest rules" });
+  const disclosure = within(dialog).getByText(/This save CLEARS the stored value of:/);
+  expect(disclosure).toHaveTextContent("penalty_grace_days");
+  // A field blank because it was NEVER configured is not a clear —
+  // deposit_rebate_rate_pct is null in the loaded record and stays out.
+  expect(disclosure).not.toHaveTextContent("deposit_rebate_rate_pct");
+
+  // Cancelling the disclosure writes nothing.
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(mocked.updateSettings).not.toHaveBeenCalled();
+});
+
 test("stale edit: 409 shows the explicit reload flow with EXACTLY ONE write attempt; reload never replays", async () => {
   const user = userEvent.setup();
   mocked.updateSettings.mockRejectedValue(new ApiError(409, "conflict", "corr-stale"));

@@ -250,6 +250,7 @@ export function ParametersPanel({ settings }: Readonly<{ settings: Settings }>) 
           buttonLabel="Save parameters"
           confirmTitle="Apply parameters"
           confirmPhrase="parameters"
+          settings={settings}
         >
           <div className={styles.formNote}>
             These parameters gate registrations, deposits, exposure checks,
