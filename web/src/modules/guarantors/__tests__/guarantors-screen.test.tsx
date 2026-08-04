@@ -16,6 +16,8 @@ import { usePermissions } from "@/modules/authz/usePermissions";
 import { GuarantorsScreen } from "../components/GuarantorsScreen";
 import {
   guaranteeSchema,
+  pledgeCreateSchema,
+  substituteCreateSchema,
   substitutionSchema,
   type Guarantee,
   type Substitution,
@@ -675,4 +677,29 @@ test("Zod boundary rejects money as NUMBERS and unknown statuses; both write bou
     replacement: guarantee(),
   });
   expect("audit_trail" in swap.released).toBe(false);
+});
+
+test("money-input hygiene: leading zeros are rejected as a PURE STRING shape (no numeric coercion) — '007.10' can never reach fmtKes in the confirmation banner", () => {
+  const pledgeAmountOk = (amount: string) =>
+    pledgeCreateSchema.safeParse({ guarantor_member_id: GUARANTOR_ID, amount }).success;
+  const substituteAmountOk = (amount: string) =>
+    substituteCreateSchema.safeParse({
+      guarantor_member_id: GUARANTOR_ID,
+      consented: true,
+      consent_reference: "Signed guarantorship form GF-778",
+      amount,
+    }).success;
+
+  // Canonical decimal strings pass…
+  expect(pledgeAmountOk("50000.10")).toBe(true);
+  expect(pledgeAmountOk("0.50")).toBe(true);
+  expect(substituteAmountOk("60000.10")).toBe(true);
+  // …leading zeros are refused at the boundary (both money inputs)…
+  expect(pledgeAmountOk("007.10")).toBe(false);
+  expect(pledgeAmountOk("00")).toBe(false);
+  expect(pledgeAmountOk("01")).toBe(false);
+  expect(substituteAmountOk("007.10")).toBe(false);
+  // …and the existing non-zero refine still rejects all-zero values.
+  expect(pledgeAmountOk("0")).toBe(false);
+  expect(pledgeAmountOk("0.00")).toBe(false);
 });

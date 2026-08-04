@@ -62,7 +62,13 @@ export const substitutionSchema = z.object({
 
 export type Substitution = z.infer<typeof substitutionSchema>;
 
-const DECIMAL_RE = /^\d+(?:\.\d{1,2})?$/;
+// Canonical decimal-string shape (pure string handling, no numeric
+// coercion — blocker (a)): up to 2dp and NO leading zeros, so a typed
+// "007.10" is rejected at the boundary instead of reaching fmtKes in
+// the typed-confirmation banner (review !60 F6). A bare "0" (or
+// "0.xx") still matches the shape; the non-zero refine below rejects
+// the all-zero values.
+const DECIMAL_RE = /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/;
 const ALL_ZERO_RE = /^0+(?:\.0{1,2})?$/;
 const AMOUNT_SHAPE_MESSAGE = "Enter a positive amount (up to 2 decimal places).";
 const AMOUNT_ZERO_MESSAGE = "Enter an amount greater than zero.";
