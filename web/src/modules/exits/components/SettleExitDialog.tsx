@@ -185,6 +185,14 @@ export function SettleExitDialog({
   const conflict = settle.isError && isConflict(settle.error);
   const settleable = record.status === "approved" && result === null;
 
+  // F-M3: resolve the confirmation banner's channel label through the
+  // SHARED cash-channel vocabulary (cashChannelSchema + CHANNEL_LABELS)
+  // instead of a hardcoded two-value check — a future cash channel can
+  // never render as its raw enum value here. The raw draft only shows
+  // while nothing valid is selected (the confirmation cannot arm then).
+  const parsedChannel = cashChannelSchema.safeParse(channel);
+  const channelLabel = parsedChannel.success ? CHANNEL_LABELS[parsedChannel.data] : channel;
+
   const makerId = exitMakerOf(record.id);
   const ownId = getOwnUserId();
   const makerLabel =
@@ -366,7 +374,7 @@ export function SettleExitDialog({
           <Banner>
             This TERMINALLY exits the member: the server atomically posts the
             approved snapshot (net payable {fmtKes(record.net_payable)}) via{" "}
-            {channel === "mpesa" || channel === "bank" ? CHANNEL_LABELS[channel] : channel},
+            {channelLabel},
             zeroes their balances, releases guarantees and marks them exited.
             It cannot be undone from this screen. The write pins record
             version {record.version} — any drift posts NOTHING.
