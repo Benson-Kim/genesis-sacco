@@ -325,9 +325,9 @@ async def _activate_guarantee(
     updated = (
         await session.execute(
             text(
-                "UPDATE guarantees SET status = 'active', "
+                "UPDATE guarantees SET status = 'active', "  # noqa: S608
                 "version = version + 1, updated_at = now()"
-                f"{principal_fragment} "  # noqa: S608
+                f"{principal_fragment} "
                 "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
                 "AND version = :ver RETURNING version"
             ),

@@ -487,7 +487,7 @@ def test_concurrent_releases_that_jointly_strip_cover_exactly_one_wins() -> None
     """
 
     async def run() -> None:
-        tid, uid, role_id, _ = await _seed_actor()
+        tid, uid, _role_id, _ = await _seed_actor()
         borrower = await _seed_member(tid)
         g1 = await _seed_member(tid, deposit="10000.00")
         g2 = await _seed_member(tid, deposit="10000.00")
@@ -901,7 +901,7 @@ def test_substitution_of_pledged_or_undisbursed_guarantee_refused() -> None:
 
 def test_double_release_concurrent_and_idempotency_key_replay() -> None:
     async def run() -> None:
-        tid, uid, role_id, token = await _seed_actor()
+        tid, uid, _role_id, token = await _seed_actor()
         borrower = await _seed_member(tid)
         guarantor = await _seed_member(tid, deposit="10000.00")
         pid = await _seed_product(tid)
@@ -1325,7 +1325,7 @@ def test_release_and_substitute_refuse_foreign_tenant_argument() -> None:
     refuse the row -> zero rows, zero mutations."""
 
     async def run() -> None:
-        tid, uid, role_id, _ = await _seed_actor()
+        tid, uid, _role_id, _ = await _seed_actor()
         foreign = uuid.uuid4()
         borrower = await _seed_member(tid)
         guarantor = await _seed_member(tid, deposit="10000.00")
