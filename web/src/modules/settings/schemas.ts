@@ -107,6 +107,11 @@ export const CHARGED_ON_LABELS: Record<(typeof PENALTY_CHARGED_ON)[number], stri
  * Mirrored here as UX convenience only, the same precedent as
  * authz/modules.ts mirroring the Module enum; the server validates the
  * vocabulary regardless (an unknown authority is a 422).
+ *
+ * DRIFT TRIPWIRE (W57-5): the contract exposes no role-name enum, so
+ * __tests__/authority-vocabulary.test.ts pins this list to the backend
+ * source of truth (genesis/domain/rbac.py ROLE_NAMES) — order and
+ * content; a backend vocabulary change fails the web suite.
  */
 export const AUTHORITY_ROLE_NAMES = [
   "System Admin",
