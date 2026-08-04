@@ -386,3 +386,26 @@ test("mutation 401 tears the session down (re-login flow)", async () => {
   // session after a revoked-token mutation.
   await waitFor(() => expect(hasSession()).toBe(false));
 });
+
+test("status boundary (W56-2): UserOut.status is contract-typed as STRING — an unknown vocabulary parses and renders as INERT TEXT, never a styled affordance", async () => {
+  // The generated contract types UserOut.status as plain `string` (the
+  // UserStatus enum exists only on the write body), so an unknown value
+  // is CONTRACT-CONFORMING and must not be rejected at the boundary —
+  // the sanctioned inert-text fallback (the enum vocabulary itself is
+  // compile-time pinned to the generated contract in schemas.ts).
+  const { userSchema } = jest.requireActual<typeof import("../schemas")>("../schemas");
+  const degraded = userSchema.safeParse(baseUser({ status: "frozen" }));
+  expect(degraded.success).toBe(true);
+
+  mocked.fetchUsersPage.mockResolvedValue({
+    items: [baseUser({ status: "frozen" })],
+    nextCursor: null,
+  });
+  mountScreen();
+
+  // Renders verbatim as inert text (StatusPill fallback branch)…
+  expect(await screen.findByText("frozen")).toBeInTheDocument();
+  // …not as one of the styled known-status labels.
+  expect(screen.queryByText("Active")).toBeNull();
+  expect(screen.queryByText("Suspended")).toBeNull();
+});
