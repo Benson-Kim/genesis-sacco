@@ -15,7 +15,12 @@ import { clearSession, hasSession, setSession } from "@/modules/auth/session";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { ApplicationsScreen } from "../components/ApplicationsScreen";
 import { clearCommitteeMakers } from "../makerRegistry";
-import { applicationSchema, type Application, type Product } from "../schemas";
+import {
+  applicationCreateSchema,
+  applicationSchema,
+  type Application,
+  type Product,
+} from "../schemas";
 import * as appsApi from "../api";
 import * as membersApi from "@/modules/members/api";
 
@@ -406,4 +411,25 @@ test("Zod boundary rejects money as NUMBERS and unknown stages — contract viol
   expect(
     applicationSchema.safeParse({ ...baseApplication(), stage: "fast_tracked" }).success,
   ).toBe(false);
+});
+
+test("intake amount rejects leading zeros and zero amounts (W58-5, the !60 F6 class) — pure string shape", () => {
+  const base = {
+    member_id: MEMBER_ID,
+    product_id: PRODUCT_ID,
+    term_months: 24,
+    purpose: null,
+  };
+  const parse = (amount: string) => applicationCreateSchema.safeParse({ ...base, amount });
+  // Well-formed decimal strings pass…
+  expect(parse("250000").success).toBe(true);
+  expect(parse("250000.10").success).toBe(true);
+  expect(parse("0.50").success).toBe(true);
+  // …leading zeros are rejected (never rendered as "KES 007.10")…
+  expect(parse("007.10").success).toBe(false);
+  expect(parse("012").success).toBe(false);
+  expect(parse("00.10").success).toBe(false);
+  // …and zero is not a loan amount.
+  expect(parse("0").success).toBe(false);
+  expect(parse("0.00").success).toBe(false);
 });
