@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # package-private to application/, shared by both principals so the
 # hashing, TTLs and family-revocation semantics can never diverge.
 from genesis.application.auth import (
+    ACCESS_TOKEN_TTL_SECONDS,
     REFRESH_TOKEN_TTL_SECONDS,
     AuthFailure,
     MemberAuthContext,
@@ -339,6 +340,4 @@ async def _issue_member_token_pair(
         access_token=issue_member_access_token(ctx),
         refresh_token=refresh_token,
         expires_in=ACCESS_TOKEN_TTL_SECONDS,
-    )
-0,
     )
