@@ -53,7 +53,11 @@ async def _seed_actor(role_name: str = "System Admin") -> tuple[uuid.UUID, uuid.
     return tid, uid, token
 
 
-async def _add_voter(tid: uuid.UUID) -> str:
+async def _add_staff(tid: uuid.UUID) -> tuple[uuid.UUID, str]:
+    """A second staff principal (id + token). Doubles as the committee
+    voter and as the DISBURSING principal: the issue-#30 R4 SoD check
+    refuses the application's initiator, so the multiplier/consent
+    gates under test here are exercised by a DIFFERENT user."""
     user_id = uuid.uuid4()
     async with tenant_session(factory(), tid) as session:
         role_id = (
@@ -68,7 +72,12 @@ async def _add_voter(tid: uuid.UUID) -> str:
             {"id": str(user_id), "tid": str(tid), "rid": str(role_id), "email": unique_email()},
         )
         rid = uuid.UUID(str(role_id))
-    return issue_access_token(AuthContext(user_id=user_id, tenant_id=tid, role_id=rid))
+    return user_id, issue_access_token(AuthContext(user_id=user_id, tenant_id=tid, role_id=rid))
+
+
+async def _add_voter(tid: uuid.UUID) -> str:
+    _, token = await _add_staff(tid)
+    return token
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -187,14 +196,16 @@ def test_over_multiplier_disbursement_409_zero_side_effects() -> None:
     written (no loan, no txn, stage stays approved)."""
 
     async def run() -> None:
-        tid, uid, token = await _seed_actor()
+        tid, _uid, token = await _seed_actor()
         mid = await _make_member(tid, deposit="10000.00")
         pid = await _make_product(token)  # multiplier 3.00
         app_id = await _approved_application(tid, token, mid, pid, "30000.01")
+        # A different principal disburses (issue #30 R4 SoD).
+        disburser, _ = await _add_staff(tid)
 
         with pytest.raises(ConflictError) as excinfo:
             async with tenant_session(factory(), tid) as session:
-                await disburse_loan(session, tid, app_id, Channel.BANK, uid)
+                await disburse_loan(session, tid, app_id, Channel.BANK, disburser)
         # Least disclosure: no balances, multiplier, or shortfall echoed.
         message = str(excinfo.value)
         assert "10000" not in message
@@ -224,17 +235,21 @@ def test_disbursement_at_exact_cap_succeeds_with_guarantees() -> None:
         guarantor = await _make_member(tid, deposit="6000.00")
         pid = await _make_product(token)
         app_id = await _approved_application(tid, token, mid, pid, "35000.00")
+        # A different principal disburses (issue #30 R4 SoD).
+        disburser, _ = await _add_staff(tid)
         # Pledge landed pre-approval in real flows; pledging is closed
-        # after committee, so seed the live pledge row directly.
+        # after committee, so seed the live pledge row directly. P14.5
+        # FM4: a row ENTERING 'active' carries a staff attestation.
         gid = uuid.uuid4()
         async with tenant_session(factory(), tid) as session:
             await session.execute(
                 text(
                     "INSERT INTO guarantees "
                     "(id, tenant_id, guarantor_member_id, borrower_member_id, "
-                    " application_id, amount, status) "
+                    " application_id, amount, status, consent_attested_by, consent_reference) "
                     "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:g AS uuid), "
-                    "CAST(:b AS uuid), CAST(:a AS uuid), '5000.00', 'active')"
+                    "CAST(:b AS uuid), CAST(:a AS uuid), '5000.00', 'active', "
+                    "CAST(:att AS uuid), :cref)"
                 ),
                 {
                     "id": str(gid),
@@ -242,10 +257,12 @@ def test_disbursement_at_exact_cap_succeeds_with_guarantees() -> None:
                     "g": str(guarantor),
                     "b": str(mid),
                     "a": str(app_id),
+                    "att": str(uid),
+                    "cref": "seeded fixture (P14.5 FM4)",
                 },
             )
         async with tenant_session(factory(), tid) as session:
-            result = await disburse_loan(session, tid, app_id, Channel.BANK, uid)
+            result = await disburse_loan(session, tid, app_id, Channel.BANK, disburser)
         assert await _loan_count(tid) == 1
         # The pledge is now linked to the loan and active.
         assert await _guarantee_row(tid, gid) == (str(result.loan_id), "active")
@@ -274,6 +291,8 @@ def test_disbursement_blocks_unconsented_pledged_guarantees() -> None:
         guarantor = await _make_member(tid, deposit="6000.00")
         pid = await _make_product(token)  # multiplier 3.00
         app_id = await _approved_application(tid, token, mid, pid, "35000.00")
+        # A different principal disburses (issue #30 R4 SoD).
+        disburser, _ = await _add_staff(tid)
         gid = uuid.uuid4()
         async with tenant_session(factory(), tid) as session:
             await session.execute(
@@ -295,7 +314,7 @@ def test_disbursement_blocks_unconsented_pledged_guarantees() -> None:
 
         with pytest.raises(ConflictError) as excinfo:
             async with tenant_session(factory(), tid) as session:
-                await disburse_loan(session, tid, app_id, Channel.BANK, uid)
+                await disburse_loan(session, tid, app_id, Channel.BANK, disburser)
         message = str(excinfo.value)
         assert "consented" in message
         # Least disclosure: no amounts or guarantor identity echoed.
@@ -327,7 +346,7 @@ def test_disbursement_blocks_unconsented_pledged_guarantees() -> None:
                 session, tid, uid, gid, version=1, consent_reference="signed form GF-P7"
             )
         async with tenant_session(factory(), tid) as session:
-            result = await disburse_loan(session, tid, app_id, Channel.BANK, uid)
+            result = await disburse_loan(session, tid, app_id, Channel.BANK, disburser)
         assert await _guarantee_row(tid, gid) == (str(result.loan_id), "active")
 
     asyncio.run(run())
@@ -365,7 +384,12 @@ def test_max_eligible_surfaced_on_application_read() -> None:
                 amount=Decimal("5000.00"),
             )
             await consent_guarantee_override(
-                session, tid, uid, record.id, version=record.version, consent_reference="signed form GF-P7"
+                session,
+                tid,
+                uid,
+                record.id,
+                version=record.version,
+                consent_reference="signed form GF-P7",
             )
         async with api_client() as client:
             fetched = await client.get(f"/applications/{app_id}", headers=_headers(token))
@@ -389,10 +413,12 @@ def test_concurrent_withdrawal_blocks_over_multiplier_disbursement() -> None:
     """
 
     async def run() -> None:
-        tid, uid, token = await _seed_actor()
+        tid, _uid, token = await _seed_actor()
         mid = await _make_member(tid, deposit="10000.00")
         pid = await _make_product(token)
         app_id = await _approved_application(tid, token, mid, pid, "30000.00")
+        # A different principal disburses (issue #30 R4 SoD).
+        disburser, _ = await _add_staff(tid)
 
         locked = asyncio.Event()
 
@@ -422,7 +448,7 @@ def test_concurrent_withdrawal_blocks_over_multiplier_disbursement() -> None:
             await locked.wait()
             try:
                 async with tenant_session(factory(), tid) as session:
-                    await disburse_loan(session, tid, app_id, Channel.BANK, uid)
+                    await disburse_loan(session, tid, app_id, Channel.BANK, disburser)
             except ConflictError:
                 return False
             return True
@@ -475,7 +501,12 @@ def test_linked_guarantee_released_on_loan_closure_end_to_end() -> None:
                 amount=Decimal("4000.00"),
             )
             await consent_guarantee_override(
-                session, tid, uid, pledge.id, version=pledge.version, consent_reference="signed form GF-P7"
+                session,
+                tid,
+                uid,
+                pledge.id,
+                version=pledge.version,
+                consent_reference="signed form GF-P7",
             )
         second_token = await _add_voter(tid)
         async with api_client() as client:
@@ -495,11 +526,12 @@ def test_linked_guarantee_released_on_loan_closure_end_to_end() -> None:
                 )
                 assert voted.status_code == 200, voted.text
             # Cap check (hand-computed): 2000.00 x 3.00 + 4000.00
-            # = 10000.00 >= 5000.00 -> disburses.
+            # = 10000.00 >= 5000.00 -> disburses. The second principal
+            # posts it: the initiator is refused (issue #30 R4 SoD).
             disbursed = await client.post(
                 f"/applications/{app_id}/disburse",
                 json={"channel": "bank"},
-                headers=_headers(token),
+                headers=_headers(second_token),
             )
             assert disbursed.status_code == 201, disbursed.text
             loan_id = disbursed.json()["loan_id"]
