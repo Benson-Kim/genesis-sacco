@@ -86,7 +86,17 @@ export function InterestRunDialog({ onClose }: Readonly<{ onClose: () => void }>
   const conflicted = run.isError && isConflict(run.error);
 
   return (
-    <Modal title="Run deposit interest" onClose={onClose} closeDisabled={run.isPending} variant="dialog">
+    <Modal
+      title="Run deposit interest"
+      onClose={onClose}
+      closeDisabled={run.isPending}
+      variant="dialog"
+      // W56-3: a stray overlay click must never silently discard the armed
+      // money-write flow (typed confirmation + conflict-epoch state) —
+      // dismissal is the explicit ✕ or Escape. (This module predates the
+      // !62 W56-3 sweep; convention completed here.)
+      dismissOnOverlay={false}
+    >
       {run.isError && <ErrorBanner error={run.error} />}
       {conflicted && (
         <div className={styles.formNote}>

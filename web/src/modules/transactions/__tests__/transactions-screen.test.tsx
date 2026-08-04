@@ -727,3 +727,34 @@ test("Zod boundary rejects money as NUMBERS, unknown enums and leading-zero inpu
   expect(moneyEntrySchema.safeParse({ ...entry, amount: "0.50" }).success).toBe(true);
   expect(moneyEntrySchema.safeParse({ ...entry, amount: "5000.10" }).success).toBe(true);
 });
+
+test("W56-3 inheritance (post-!62 merge): a stray overlay click never discards a dirty teller posting or the armed interest-run dialog; the read-only detail drawer keeps the light dismissal", async () => {
+  const user = userEvent.setup();
+  const { container } = mountScreen();
+
+  // Money-form drawer: the half-completed entry SURVIVES the stray click…
+  const drawer = await fillEntry(user);
+  await user.click(container.querySelector('[role="presentation"]') as HTMLElement);
+  expect(screen.getByRole("dialog", { name: "Post transaction" })).toBeInTheDocument();
+  expect(within(drawer).getByLabelText("Amount (KES)")).toHaveValue("5000.10");
+  // …and the explicit ✕ still closes.
+  await user.click(within(drawer).getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog", { name: "Post transaction" })).toBeNull();
+
+  // Money-write dialog: the interest-run flow is NOT discarded by a
+  // stray click outside the dialog.
+  await user.click(screen.getByRole("button", { name: "Run deposit interest" }));
+  const dialog = await screen.findByRole("dialog", { name: "Run deposit interest" });
+  await user.click(container.querySelector('[role="presentation"]') as HTMLElement);
+  expect(screen.getByRole("dialog", { name: "Run deposit interest" })).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog", { name: "Run deposit interest" })).toBeNull();
+
+  // The read-only detail drawer is NOT form-bearing — the default light
+  // overlay dismissal is the convention there (falsifiable: a blanket
+  // opt-out would fail this branch).
+  await user.click(screen.getByText("KES 8,000.10"));
+  await screen.findByRole("dialog", { name: "Transaction detail" });
+  await user.click(container.querySelector('[role="presentation"]') as HTMLElement);
+  expect(screen.queryByRole("dialog", { name: "Transaction detail" })).toBeNull();
+});

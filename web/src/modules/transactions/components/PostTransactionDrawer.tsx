@@ -217,7 +217,16 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
   const memberExited = freshMember !== undefined && freshMember.status === "exited";
 
   return (
-    <Modal title="Post transaction" onClose={onClose} closeDisabled={post.isPending}>
+    <Modal
+      title="Post transaction"
+      onClose={onClose}
+      closeDisabled={post.isPending}
+      // W56-3: a stray overlay click must never discard a half-completed
+      // teller posting — dismissal is the explicit ✕ or Escape. (This
+      // module was written before the !62 W56-3 sweep and inherited the
+      // mechanism via the post-!62 main-merge; convention completed here.)
+      dismissOnOverlay={false}
+    >
       {notice !== "" && <Banner>{notice}</Banner>}
 
       {/* One copy of the 409 reload-and-re-enter flow (gate 1.1). */}
