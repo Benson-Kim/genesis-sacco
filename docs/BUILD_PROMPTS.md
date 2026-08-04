@@ -116,6 +116,20 @@ preserved; combined-state pipeline 2726361694 green) and !54 merged
 2726403180 green on head `75e7c94`). Alembic head on main is **0034**;
 the next free number stays **0035**.
 
+Registry delta update (2026-08-04, the issue-#30 follow-up claim):
+**0035 is the open P14.5 MR's (!65)** (`0035_member_identity.py`,
+`down_revision = '0034'`, declared on !65 at its branch time). **0036
+is the issue-#30 audit-contract-follow-ups MR's**
+(`0036_actor_attribution.py`, `down_revision = '0035'` — the chained
+claim, declared in that MR's description at branch time per rule 14;
+head 0034 + the single in-flight 0035 claim re-verified against main's
+`migrations/versions/` and the open-MR list at branch time). Declared
+merge order (rule 12): **!65 merges FIRST**, then the issue-#30 MR;
+the chain is exercised on the later branch by carrying !65's commits
+via a merge commit (the !46-carries-!44 precedent, no rebase). If !65
+closes instead of merging, 0036 re-chains to `'0034'` (the !26/0017
+re-chain discipline). The next free number is **0037**.
+
 ### Post-P13 hardening follow-up batch (issues #21/#24/#23) — status
 
 | Issue | Scope | Status |
