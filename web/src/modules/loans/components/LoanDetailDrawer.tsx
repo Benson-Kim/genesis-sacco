@@ -84,6 +84,12 @@ export function LoanDetailDrawer({
   const [quoteRequested, setQuoteRequested] = useState(false);
   const [notice, setNotice] = useState<string>("");
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
+  // Per-posting intent counter (W59-3, the !61 T2 class): bumped on every
+  // SUCCESSFUL posting so a teller re-entering an IDENTICAL repayment
+  // (routine — e.g. two equal instalment payments the same day) is a NEW
+  // posting intent with a NEW key. Stability across retries of one
+  // UNPOSTED intent is untouched (the counter only moves on success).
+  const postingSeq = useRef(0);
 
   const detail = useQuery({
     queryKey: ["loans", "detail", loanId],
@@ -132,6 +138,9 @@ export function LoanDetailDrawer({
             op: "repayment",
             id: loanId,
             recordVersion: detail.data?.version ?? null,
+            // W59-3: identical legitimate re-postings are distinct
+            // intents — the server must never dedup them silently.
+            postingSeq: postingSeq.current,
             input,
           }),
         ),
@@ -139,9 +148,11 @@ export function LoanDetailDrawer({
     onSuccess: (recorded) => {
       setConfirmRepay(null);
       setResult(recorded);
-      // Entry cleared: composing the next repayment is a NEW intent (a
-      // resubmitted IDENTICAL entry would reuse the same key and be
-      // deduplicated server-side rather than double-posting).
+      // The posting landed: the NEXT posting — even a byte-identical
+      // re-entry — is a NEW intent and must carry a NEW key (W59-3);
+      // otherwise the server dedups it and the ledger silently omits a
+      // legitimate second payment while the screen shows success.
+      postingSeq.current += 1;
       setAmount("");
       setChannel("");
       setClientErrors({});

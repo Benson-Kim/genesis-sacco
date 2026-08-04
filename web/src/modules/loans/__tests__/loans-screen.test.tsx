@@ -607,6 +607,56 @@ test("repayment key freshness (W59-2, the !60 F3 class): after 409 + explicit re
   expect(mocked.recordRepayment.mock.calls[1]?.[2]).not.toBe(key1);
 });
 
+test("per-posting intent counter (W59-3, the !61 T2 class): an IDENTICAL legitimate re-entry after success ROTATES the key — a second wire write is observed, never a silent dedup", async () => {
+  const user = userEvent.setup();
+  const recorded: RepaymentResult = {
+    txn_id: "ffffffff-1111-2222-3333-444444444444",
+    txn_ref: "TXN-0007",
+    penalties: "0.00",
+    interest: "0.00",
+    principal: "5000.00",
+    balance_after: "1229567.10",
+    penalty_due_after: "0.00",
+    status: "active",
+  };
+  mocked.recordRepayment.mockResolvedValue(recorded);
+  mountScreen();
+
+  await user.click(await screen.findByText("KES 1,234,567.10"));
+  const drawer = await screen.findByRole("dialog", { name: "Loan detail" });
+  const phrase = LOAN_ID.slice(0, 8);
+
+  // First posting: 5000.00 via mpesa.
+  await user.type(within(drawer).getByLabelText("Amount (KES)"), "5000.00");
+  await user.selectOptions(within(drawer).getByLabelText("Channel"), "mpesa");
+  await user.click(within(drawer).getByRole("button", { name: "Record repayment…" }));
+  const confirm1 = await screen.findByRole("dialog", { name: "Record repayment" });
+  await user.type(within(confirm1).getByLabelText(`Type "${phrase}" to confirm`), phrase);
+  await user.click(within(confirm1).getByRole("button", { name: "Record repayment" }));
+  await waitFor(() => expect(mocked.recordRepayment).toHaveBeenCalledTimes(1));
+  const key1 = mocked.recordRepayment.mock.calls[0]?.[2];
+
+  // The teller records a SECOND, byte-identical repayment (routine —
+  // e.g. two equal instalment payments the same day). The loan version
+  // is unchanged in this harness, so ONLY the per-posting intent
+  // counter distinguishes the intents.
+  await user.type(within(drawer).getByLabelText("Amount (KES)"), "5000.00");
+  await user.selectOptions(within(drawer).getByLabelText("Channel"), "mpesa");
+  await user.click(within(drawer).getByRole("button", { name: "Record repayment…" }));
+  const confirm2 = await screen.findByRole("dialog", { name: "Record repayment" });
+  await user.type(within(confirm2).getByLabelText(`Type "${phrase}" to confirm`), phrase);
+  await user.click(within(confirm2).getByRole("button", { name: "Record repayment" }));
+
+  // A SECOND wire write is observed with a ROTATED key — the server can
+  // never silently dedup the legitimate second payment.
+  await waitFor(() => expect(mocked.recordRepayment).toHaveBeenCalledTimes(2));
+  expect(mocked.recordRepayment.mock.calls[1]?.[1]).toEqual({
+    amount: "5000.00",
+    channel: "mpesa",
+  });
+  expect(mocked.recordRepayment.mock.calls[1]?.[2]).not.toBe(key1);
+});
+
 test("least-disclosure: a 403 on disbursement renders the sanitized banner only, session intact", async () => {
   const user = userEvent.setup();
   mocked.disburseApplication.mockRejectedValue(new ApiError(403, "forbidden", "corr-f"));
