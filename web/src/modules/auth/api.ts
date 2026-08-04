@@ -5,6 +5,7 @@
 import { newIdempotencyKey, toApiError } from "@genesis/api-client";
 import { tokenResponseSchema, type TokenResponse } from "./schemas";
 import { clearSession, getRefreshToken, setSession } from "./session";
+import { clearSessionScopedStores } from "./sessionScopedStores";
 import { api } from "@/lib/api";
 
 export async function requestOtp(email: string): Promise<void> {
@@ -43,5 +44,9 @@ export async function logout(): Promise<void> {
   } finally {
     // Local sign-out must never be blocked by a failed revocation call.
     clearSession();
+    // Every per-tab witnessed registry dies with the session (W58-2,
+    // the !60 F2 class): the next operator inherits no witnessed
+    // attributions and no armed affordances.
+    clearSessionScopedStores();
   }
 }

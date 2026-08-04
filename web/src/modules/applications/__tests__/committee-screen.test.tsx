@@ -10,14 +10,20 @@
  * authority bands); these tests pin the UI so it never offers what the
  * API forbids.
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiError } from "@genesis/api-client";
 import { Providers } from "@/app/providers";
+import { logout } from "@/modules/auth/api";
 import { clearSession, hasSession, setSession } from "@/modules/auth/session";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { CommitteeScreen } from "../components/CommitteeScreen";
-import { clearCommitteeMakers, recordCommitteeMaker } from "../makerRegistry";
+import {
+  clearCommitteeMakers,
+  committeeMakerOf,
+  MAKER_UNKNOWN,
+  recordCommitteeMaker,
+} from "../makerRegistry";
 import { voteResultSchema, type Application, type VoteResult } from "../schemas";
 import * as appsApi from "../api";
 import * as membersApi from "@/modules/members/api";
@@ -306,11 +312,31 @@ test("least-disclosure: a 403 on the vote renders the sanitized banner only, ses
   expect(hasSession()).toBe(true);
 });
 
-test("query-path 401 tears the session down immediately (dual-cache teardown)", async () => {
+test("query-path 401 tears the session down immediately (dual-cache teardown) AND empties the maker registry (W58-2)", async () => {
+  // A previous operator's referral attribution is armed in this tab…
+  recordCommitteeMaker(APP_ID, VOTER_ID);
   mocked.fetchApplicationsPage.mockRejectedValue(new ApiError(401, "unauthenticated", "corr-q"));
   mountScreen();
 
   await waitFor(() => expect(hasSession()).toBe(false), { timeout: 4000 });
+  // …and dies WITH the session (W58-2, the !60 F2 class): the maker is
+  // UNKNOWN again, so the next operator's MakerCheckerPanel SoD decision
+  // never consumes a witness recorded under a previous identity.
+  expect(committeeMakerOf(APP_ID)).toBe(MAKER_UNKNOWN);
+});
+
+test("explicit sign-out empties the maker registry — the next operator inherits no referral attributions (W58-2)", async () => {
+  recordCommitteeMaker(APP_ID, VOTER_ID);
+  expect(committeeMakerOf(APP_ID)).toBe(VOTER_ID);
+
+  // Real sign-out path: local teardown must win even if the revocation
+  // call cannot complete in this harness.
+  await act(async () => {
+    await logout().catch(() => undefined);
+  });
+
+  expect(hasSession()).toBe(false);
+  expect(committeeMakerOf(APP_ID)).toBe(MAKER_UNKNOWN);
 });
 
 test("Zod boundary: the tally is COUNTS + decision only — a payload leaking voter identities is a contract violation", () => {
