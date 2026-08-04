@@ -3161,7 +3161,8 @@
           "reports",
           "settings",
           "access_control",
-          "corrections"
+          "corrections",
+          "member_identity"
         ],
         "title": "Module",
         "type": "string"

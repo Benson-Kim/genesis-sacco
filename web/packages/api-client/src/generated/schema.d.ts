@@ -3033,7 +3033,7 @@ export interface components {
          * Module
          * @enum {string}
          */
-        Module: "members" | "applications" | "loan_book" | "transactions" | "reports" | "settings" | "access_control" | "corrections";
+        Module: "members" | "applications" | "loan_book" | "transactions" | "reports" | "settings" | "access_control" | "corrections" | "member_identity";
         /** ModulePermissionsOut */
         ModulePermissionsOut: {
             /** Can Approve */
