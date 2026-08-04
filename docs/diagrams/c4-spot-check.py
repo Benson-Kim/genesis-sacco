@@ -120,6 +120,15 @@ PINNED_CLAIMS: dict[str, tuple[str, ...]] = {
     ),
     "genesis/domain/recovery.py": ("transition",),
     "genesis/application/arrears.py": ("run_arrears_for_tenant",),
+    # Diagram 11 — the P13.10 report builders (!40; !38 review R3 refresh)
+    "genesis/application/reports.py": (
+        "_build_par_aging",
+        "_build_membership_register",
+        "_build_income_statement",
+        "_build_sasra_return",
+    ),
+    "genesis/domain/ledger.py": ("account_class",),
+    "genesis/domain/sasra.py": ("line_for_account",),
     # Cross-cutting seams cited by diagram 0 and the L1/L2 files
     "genesis/api/idempotency.py": ("IdempotencyMiddleware",),
     "genesis/infrastructure/tenancy.py": (

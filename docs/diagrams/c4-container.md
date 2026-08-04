@@ -8,6 +8,9 @@
   (P-DIAG drift MR: head 0022 -> 0032; fourth worker loop P13.17c;
   domain modules recovery/sasra; new append-only / write-once store
   properties from 0025-0032).
+  Reconciled to main @ 4ea6bf288460e121a42815b67965adc1854a6320
+  (docs/CI follow-up MR, !38 review R3: migration head 0032 -> 0034
+  — 0033/0034 landed by !53/!54 after the previous reconciliation).
   Traceability: every box cites its module; `c4-spot-check.py` verifies
   every cited module path exists at the authoring SHA.
 -->
@@ -47,7 +50,7 @@ flowchart TB
         IDW["idempotency purge — P13.17c<br/>genesis/infrastructure/idempotency_worker.py"]
     end
 
-    MIG["Migration runner — alembic upgrade head<br/>backend/alembic.ini + backend/migrations/<br/>versions 0001..0032 (head 0032 verified at reconciliation)"]
+    MIG["Migration runner — alembic upgrade head<br/>backend/alembic.ini + backend/migrations/<br/>versions 0001..0034 (head 0034 verified at reconciliation)"]
 
     PG[("PostgreSQL 16 — FORCED RLS (ADR-0002)<br/>append-only: ledger_entries + transactions (0004 triggers),<br/>audit_log (0001), repayments (0032), loan_recoveries (0030)<br/>write-once: dividend_declarations (0020), loan_write_offs (0025),<br/>repayment_adjustments (0025/0031), portfolio_month_snapshots (0027),<br/>period rollups (0028)<br/>closed-period posting barrier (0012/0014)<br/>advisory-lock tier: lock-order.md §6")]
     RD[("Redis<br/>rate limiting + readyz")]
@@ -83,7 +86,7 @@ flowchart TB
 | export renderer | `genesis/infrastructure/export_worker.py` → `genesis/application/exports.py` (`run_export_job` L381, claim `CLAIM_SQL` L82) |
 | dormancy worker | `genesis/infrastructure/dormancy_worker.py` (`run_dormancy_cycle` L65 — fail-closed per tenant, per-tenant error isolation per !37) → `genesis/application/dormancy.py` (`run_dormancy_for_tenant` L370) |
 | idempotency purge worker | `genesis/infrastructure/idempotency_worker.py` (`run_worker`) → `genesis/application/idempotency_purge.py` (`purge_expired_idempotency_keys` — shared batch runner, `FOR UPDATE SKIP LOCKED` subquery; P13.17c/DSA-3) |
-| migration runner | `backend/alembic.ini`, `backend/migrations/env.py`, `backend/migrations/versions/0001..0032` — head `0032` (`0032_repayments_append_only.py`, `down_revision = "0031"`), verified at reconciliation (an in-flight !53 claims 0033) |
+| migration runner | `backend/alembic.ini`, `backend/migrations/env.py`, `backend/migrations/versions/0001..0034` — head `0034` (`0034_recovery_claim_cap_lock.py`, `down_revision = "0033"`), verified at reconciliation (0033/0034 landed by !53/!54; nothing claims `0034` as parent) |
 | PostgreSQL 16 | forced RLS per ADR-0002; store properties below |
 | Redis | `genesis/infrastructure/redis_client.py` (`ping_redis` — `/readyz`), `genesis/infrastructure/rate_limit.py` (auth endpoints) |
 

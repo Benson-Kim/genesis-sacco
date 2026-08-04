@@ -4,6 +4,11 @@
   Reconciled to main @ 8f46aa54250ff1a066af423924f3eb54a9c72fb7
   (P-DIAG drift MR: !46 corrections + !47 recovery routers added as
   diagrams 19/20; the arrears close-pass seam added to diagram 7).
+  Reconciled to main @ 4ea6bf288460e121a42815b67965adc1854a6320
+  (docs/CI follow-up MR, !38 review R3: the four P13.10 report
+  builders (!40) join diagram 11 with their domain seams — the drift
+  !40 could not fix itself because docs/diagrams/** was owned by a
+  concurrent session).
   Router groups enumerated from genesis/api/app.py create_app at the
   reconciliation SHA (20 include_router calls). Every box names a REAL
   module: node labels carry the genesis/... path; the checked-in
@@ -162,9 +167,10 @@ flowchart LR
 ```mermaid
 flowchart LR
     R11["genesis/api/reports.py<br/>POST /exports, GET /exports/id,<br/>GET /exports/downloads/token, POST /jobs/exports"] --> S11A["genesis/application/exports.py<br/>registry, claim (CLAIM_SQL), run_export_job —<br/>REPEATABLE READ, truncation headers, export audit"]
-    S11A --> S11B["genesis/application/reports.py<br/>report queries: statements, trial balance,<br/>loan book, NPL trend"]
+    S11A --> S11B["genesis/application/reports.py<br/>report queries: statements, trial balance,<br/>loan book, NPL trend + P13.10 (!40):<br/>_build_par_aging, _build_membership_register,<br/>_build_income_statement, _build_sasra_return"]
     S11A --> D11A["genesis/domain/documents.py<br/>CSV/PDF rendering, formula-injection escaping"]
-    S11B --> D11B["genesis/domain/ledger.py"]
+    S11B --> D11B["genesis/domain/ledger.py<br/>ACCOUNT_CLASS chart map + fail-loud<br/>account_class (P13.10 income statement)"]
+    S11B --> D11C["genesis/domain/sasra.py<br/>SASRA_LINES (SASRA-DS versioned, code-owned),<br/>fail-loud line_for_account (P13.10 return)"]
 ```
 
 ## 12. tenant settings — `genesis/api/tenant_settings.py`
