@@ -32,6 +32,11 @@ export function recordVotedExit(exitId: string): void {
   emit();
 }
 
+/** Whether THIS TAB already voted on exit `exitId`. */
+export function hasVotedOnExit(exitId: string): boolean {
+  return voted.has(exitId);
+}
+
 /** Session-teardown hygiene (W58-2): registered as a session-scoped
  * store below. Also test hygiene. */
 export function clearVotedExits(): void {
