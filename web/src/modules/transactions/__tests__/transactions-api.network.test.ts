@@ -13,8 +13,10 @@
  * - Money travels as decimal STRINGS byte-identically in JSON bodies
  *   (blocker (a)) — never re-encoded as numbers; response money as
  *   numbers is REJECTED at the Zod boundary.
- * - The interest-run body is EMPTY — no rate, period or batch size can
- *   even be sent from this client (v1.1 rule 1).
+ * - The interest-run body carries the contract-required `batch_size`
+ *   at its documented default ONLY (a server-bounded operational tuning
+ *   value — T1/479fb5d5). No money parameter exists in the body: rate
+ *   and period remain server-owned (v1.1 rule 1).
  * - A 409 (overdraw under the account row lock) surfaces as a typed
  *   ApiError from ONE request (no transport-level retry).
  */
