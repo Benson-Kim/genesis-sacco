@@ -327,13 +327,18 @@ def test_full_repayment_closes_loan_and_releases_guarantees() -> None:
         loan_id, mid = await _disburse(tid, Decimal("5000.00"), term=6)
         guarantor = await _seed_member(tid)
         async with tenant_session(factory(), tid) as session:
+            # P14.5 FM4: the 0035 trigger refuses a row ENTERING
+            # 'active' without a principal, so seeded active fixtures
+            # carry a staff attestation (any tenant user).
+            attestor = (await session.execute(text("SELECT id FROM users LIMIT 1"))).scalar_one()
             await session.execute(
                 text(
                     "INSERT INTO guarantees "
                     "(id, tenant_id, guarantor_member_id, borrower_member_id, loan_id, "
-                    " amount, status) "
+                    " amount, status, consent_attested_by, consent_reference) "
                     "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:g AS uuid), "
-                    "CAST(:b AS uuid), CAST(:lid AS uuid), 2000.00, 'active')"
+                    "CAST(:b AS uuid), CAST(:lid AS uuid), 2000.00, 'active', "
+                    "CAST(:att AS uuid), :cref)"
                 ),
                 {
                     "id": str(uuid.uuid4()),
@@ -341,6 +346,8 @@ def test_full_repayment_closes_loan_and_releases_guarantees() -> None:
                     "g": str(guarantor),
                     "b": str(mid),
                     "lid": str(loan_id),
+                    "att": str(attestor),
+                    "cref": "seeded fixture (P14.5 FM4)",
                 },
             )
 

@@ -26,7 +26,7 @@ from sqlalchemy import text
 from db_helpers import api_client, factory, latest_otp_code, unique_email
 from export_helpers import add_user, count, seed_actor
 from genesis.application import users as users_service
-from genesis.application.auth import AuthContext, issue_access_token
+from genesis.application.auth import STAFF_AUDIENCE, AuthContext, issue_access_token
 from genesis.domain.rbac import ROLE_NAMES, Action, Module, seed_matrix
 from genesis.errors import ConflictError, NotFoundError
 from genesis.infrastructure.tenancy import tenant_session
@@ -607,10 +607,12 @@ def test_role_assignment_is_audited_and_propagates_on_refresh() -> None:
                 headers={"x-tenant-id": str(tid)},
             )
             assert refreshed.status_code == 200
+            # P14.5 FM1: staff tokens carry the code-owned staff audience.
             claims = jwt.decode(
                 refreshed.json()["access_token"],
                 os.environ["JWT_SIGNING_KEY"],
                 algorithms=["HS256"],
+                audience=STAFF_AUDIENCE,
             )
             assert claims["rid"] == str(accountant_rid)
         async with tenant_session(factory(), tid) as session:

@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import text
 
 from db_helpers import api_client, factory, latest_otp_code, seed_user, unique_email
+from genesis.application.auth import STAFF_AUDIENCE
 from genesis.infrastructure.tenancy import tenant_session
 
 pytestmark = pytest.mark.skipif(
@@ -30,8 +31,12 @@ def test_otp_flow_issues_short_lived_tokens() -> None:
             )
             assert res.status_code == 200
             tokens = res.json()
+        # P14.5 FM1: staff tokens carry the code-owned staff audience.
         claims = jwt.decode(
-            tokens["access_token"], os.environ["JWT_SIGNING_KEY"], algorithms=["HS256"]
+            tokens["access_token"],
+            os.environ["JWT_SIGNING_KEY"],
+            algorithms=["HS256"],
+            audience=STAFF_AUDIENCE,
         )
         assert claims["tid"] == str(tid)
         assert claims["exp"] - claims["iat"] <= 900

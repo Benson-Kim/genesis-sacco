@@ -313,13 +313,18 @@ async def _seed_active_guarantee(tid: uuid.UUID, loan_id: uuid.UUID, borrower: u
     member — the state the P9 disbursement linkage leaves behind."""
     guarantor = await _seed_member(tid)
     async with tenant_session(factory(), tid) as session:
+        # P14.5 FM4: the 0035 trigger refuses a row ENTERING 'active'
+        # without a principal, so seeded active fixtures carry a staff
+        # attestation (any tenant user).
+        attestor = (await session.execute(text("SELECT id FROM users LIMIT 1"))).scalar_one()
         await session.execute(
             text(
                 "INSERT INTO guarantees "
                 "(id, tenant_id, guarantor_member_id, borrower_member_id, "
-                " loan_id, amount, status) "
+                " loan_id, amount, status, consent_attested_by, consent_reference) "
                 "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:g AS uuid), "
-                "CAST(:b AS uuid), CAST(:l AS uuid), '5000.00', 'active')"
+                "CAST(:b AS uuid), CAST(:l AS uuid), '5000.00', 'active', "
+                "CAST(:att AS uuid), :cref)"
             ),
             {
                 "id": str(uuid.uuid4()),
@@ -327,6 +332,8 @@ async def _seed_active_guarantee(tid: uuid.UUID, loan_id: uuid.UUID, borrower: u
                 "g": str(guarantor),
                 "b": str(borrower),
                 "l": str(loan_id),
+                "att": str(attestor),
+                "cref": "seeded fixture (P14.5 FM4)",
             },
         )
 
