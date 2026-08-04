@@ -106,10 +106,22 @@ export function SettleExitDialog({
   });
 
   const settle = useMutation({
-    mutationFn: (chosen: CashChannel) =>
-      postExitSettlement(
+    // STRUCTURAL freshness guard (review F-M1): the TERMINAL money
+    // write refuses to fire without the loaded fresh record — the
+    // pinned version is read from the fresh detail data or the
+    // mutation rejects before anything reaches the wire. No sentinel
+    // (version 0, null) can ever be pinned into the body or the key
+    // material.
+    mutationFn: (chosen: CashChannel) => {
+      const fresh = detail.data;
+      if (fresh === undefined) {
+        return Promise.reject(
+          new Error("The fresh exit record is not loaded — the settlement was NOT posted."),
+        );
+      }
+      return postExitSettlement(
         exitId,
-        detail.data?.version ?? 0,
+        fresh.version,
         chosen,
         idempotencyKeyFor(
           keySlot.current,
@@ -123,12 +135,13 @@ export function SettleExitDialog({
           JSON.stringify({
             op: "exit-settle",
             id: exitId,
-            recordVersion: detail.data?.version ?? null,
+            recordVersion: fresh.version,
             channel: chosen,
             reload_epoch: reloadEpoch,
           }),
         ),
-      ),
+      );
+    },
     onSuccess: (posted) => {
       setConfirming(false);
       // SPENT affordance: the result panel replaces the action; the
@@ -197,6 +210,9 @@ export function SettleExitDialog({
 
   function armConfirmation() {
     if (settle.isPending) return;
+    // F-M1: the typed confirmation cannot even ARM without the loaded
+    // fresh record (belt to the mutationFn's structural braces).
+    if (detail.data === undefined) return;
     const parsed = cashChannelSchema.safeParse(channel);
     if (!parsed.success) {
       setChannelError("Select the payout channel.");
