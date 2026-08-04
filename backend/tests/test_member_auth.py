@@ -82,10 +82,7 @@ async def _member_challenge_count(tid: uuid.UUID) -> int:
     async with tenant_session(factory(), tid) as session:
         count = (
             await session.execute(
-                text(
-                    "SELECT count(*) FROM otp_challenges "
-                    "WHERE member_credential_id IS NOT NULL"
-                )
+                text("SELECT count(*) FROM otp_challenges WHERE member_credential_id IS NOT NULL")
             )
         ).scalar_one()
     return int(count)

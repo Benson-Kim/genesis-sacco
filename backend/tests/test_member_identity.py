@@ -189,9 +189,7 @@ async def _seed_pledged_guarantee(
     return gid
 
 
-async def _guarantee_row(
-    tid: uuid.UUID, gid: uuid.UUID
-) -> tuple[str, int, str | None, str | None]:
+async def _guarantee_row(tid: uuid.UUID, gid: uuid.UUID) -> tuple[str, int, str | None, str | None]:
     """(status, version, consented_by_credential_id, consent_attested_by)."""
     async with tenant_session(factory(), tid) as session:
         row = (
@@ -592,10 +590,7 @@ def test_fm4_consent_without_principal_fails_db_constraint() -> None:
         with pytest.raises(DBAPIError):
             async with tenant_session(factory(), tid) as session:
                 await session.execute(
-                    text(
-                        "UPDATE guarantees SET status = 'active' "
-                        "WHERE id = CAST(:g AS uuid)"
-                    ),
+                    text("UPDATE guarantees SET status = 'active' WHERE id = CAST(:g AS uuid)"),
                     {"g": str(gid)},
                 )
         assert (await _guarantee_row(tid, gid))[0] == "pledged"

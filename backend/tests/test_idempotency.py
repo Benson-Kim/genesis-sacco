@@ -126,9 +126,7 @@ def test_fm5_cross_actor_replay_is_a_miss() -> None:
         token_a = issue_access_token(
             AuthContext(user_id=uuid.UUID(str(actor_a)), tenant_id=tid, role_id=role_id)
         )
-        token_b = issue_access_token(
-            AuthContext(user_id=actor_b, tenant_id=tid, role_id=role_id)
-        )
+        token_b = issue_access_token(AuthContext(user_id=actor_b, tenant_id=tid, role_id=role_id))
         key = uuid.uuid4().hex
         body = {"type": "person", "name": "FM5 Member"}
         async with api_client() as client:

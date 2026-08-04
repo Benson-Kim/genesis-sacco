@@ -329,9 +329,7 @@ def test_full_repayment_closes_loan_and_releases_guarantees() -> None:
         async with tenant_session(factory(), tid) as session:
             # P14.5 FM4: a row born 'active' must carry a consent
             # principal — seeded fixtures attest via any tenant user.
-            attestor = (
-                await session.execute(text("SELECT id FROM users LIMIT 1"))
-            ).scalar_one()
+            attestor = (await session.execute(text("SELECT id FROM users LIMIT 1"))).scalar_one()
             await session.execute(
                 text(
                     "INSERT INTO guarantees "
