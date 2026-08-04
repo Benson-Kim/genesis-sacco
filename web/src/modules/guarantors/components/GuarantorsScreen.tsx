@@ -34,7 +34,7 @@ import { can } from "@/modules/authz/schemas";
 import { fmtDateTime, fmtKes } from "@/lib/format";
 import { STALE_TIME } from "@/lib/query";
 import { fetchDashboardSummary } from "@/modules/dashboard/api";
-import { useProducts } from "@/modules/applications/components/ApplicationsScreen";
+import { useProducts } from "@/modules/applications/useProducts";
 import { fetchApplicationsPage } from "@/modules/applications/api";
 import {
   STAGE_LABELS,
