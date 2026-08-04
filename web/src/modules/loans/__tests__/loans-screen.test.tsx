@@ -19,6 +19,7 @@ import {
   disbursementSchema,
   loanSchema,
   portfolioSummarySchema,
+  repaymentCreateSchema,
   type Disbursement,
   type Loan,
   type PortfolioSummary,
@@ -743,4 +744,21 @@ test("Zod boundary rejects money as NUMBERS and unknown statuses/classes; the di
     internal_gl_account: "GL-SECRET-01",
   });
   expect("internal_gl_account" in parsed).toBe(false);
+});
+
+test("repayment amount rejects leading zeros and zero amounts (W59-5, the !60 F6 class) — pure string shape", () => {
+  const parse = (amount: string) =>
+    repaymentCreateSchema.safeParse({ amount, channel: "mpesa" });
+  // Well-formed decimal strings pass…
+  expect(parse("5000").success).toBe(true);
+  expect(parse("5000.10").success).toBe(true);
+  expect(parse("0.50").success).toBe(true);
+  // …leading zeros are rejected (the typed-confirmation banner can
+  // never render "KES 007.10")…
+  expect(parse("007.10").success).toBe(false);
+  expect(parse("050").success).toBe(false);
+  expect(parse("00.10").success).toBe(false);
+  // …and the existing non-zero refine still holds.
+  expect(parse("0").success).toBe(false);
+  expect(parse("0.00").success).toBe(false);
 });
