@@ -350,4 +350,30 @@ test("Zod boundary: the tally is COUNTS + decision only — a payload leaking vo
   // counts/decision/stage — nothing else can reach the DOM.
   const parsed = voteResultSchema.parse({ ...TALLY_OPEN, voters: ["someone"] });
   expect(parsed).toEqual(TALLY_OPEN);
+  // Enum strictness (W58-4): unknown decision/stage vocabulary is a
+  // contract violation REJECTED at the boundary — matching this
+  // module's own applicationSchema, never silently rendered.
+  expect(
+    voteResultSchema.safeParse({ ...TALLY_OPEN, decision: "escalated" }).success,
+  ).toBe(false);
+  expect(
+    voteResultSchema.safeParse({ ...TALLY_OPEN, stage: "fast_tracked" }).success,
+  ).toBe(false);
+  // The decided shapes remain valid.
+  expect(
+    voteResultSchema.safeParse({
+      approvals: 3,
+      rejections: 1,
+      decision: "approved",
+      stage: "approved",
+    }).success,
+  ).toBe(true);
+  expect(
+    voteResultSchema.safeParse({
+      approvals: 1,
+      rejections: 3,
+      decision: "rejected",
+      stage: "rejected",
+    }).success,
+  ).toBe(true);
 });

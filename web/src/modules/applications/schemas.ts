@@ -58,12 +58,15 @@ export const applicationSchema = z.object({
 export type Application = z.infer<typeof applicationSchema>;
 
 /** Committee tally after a vote (VoteResultOut) — COUNTS + decision only;
- * the server never discloses who voted which way through this endpoint. */
+ * the server never discloses who voted which way through this endpoint.
+ * Boundary strictness (W58-4): `decision` and `stage` REJECT unknown
+ * vocabulary, matching this module's own applicationSchema — an unknown
+ * value is a contract violation, never silently rendered. */
 export const voteResultSchema = z.object({
   approvals: z.number().int(),
   rejections: z.number().int(),
-  decision: z.string().nullable(),
-  stage: z.string(),
+  decision: z.enum(["approved", "rejected"]).nullable(),
+  stage: applicationStageSchema,
 });
 
 export type VoteResult = z.infer<typeof voteResultSchema>;
