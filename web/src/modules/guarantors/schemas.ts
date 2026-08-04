@@ -46,6 +46,13 @@ export const guaranteeSchema = z.object({
 
 export type Guarantee = z.infer<typeof guaranteeSchema>;
 
+/** Application stages the P9 contract accepts pledges in — a pledge
+ * against approved/disbursed/rejected is refused server-side (409).
+ * Kept here (not in the drawer) so the screen's static import does not
+ * defeat the drawer-level code splitting. */
+export const PLEDGEABLE_STAGES = ["submitted", "appraisal", "committee"] as const;
+export type PledgeableStage = (typeof PLEDGEABLE_STAGES)[number];
+
 /** SubstitutionOut — the P13.14 atomic swap returns BOTH sides; extra
  * keys are STRIPPED at this boundary. */
 export const substitutionSchema = z.object({

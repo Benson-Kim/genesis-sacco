@@ -208,6 +208,12 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* Numeric column alignment shared by the capacity/session tables. */
+.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
 .miniTable td {
     padding: 8px 10px;
     border-bottom: 1px solid var(--panel);
@@ -253,4 +259,16 @@
     font-size: 13px;
     font-weight: 800;
     margin-bottom: 8px;
+}
+
+/* Stage filter row inside the queue card. */
+.queueToolbar {
+    padding: 14px 14px 0;
+}
+
+/* Empty-state note inside a padded:false card. */
+.panelNote {
+    font-size: 12px;
+    color: var(--sub);
+    padding: 12px 14px 14px;
 }

@@ -59,13 +59,14 @@ import type { Product } from "@/modules/products/schemas";
 import { fetchDashboardSummary } from "@/modules/dashboard/api";
 import { pledgeGuarantee } from "../api";
 import { recordWitnessedGuarantee } from "../sessionRegistry";
-import { pledgeCreateSchema, type Guarantee, type PledgeCreateInput } from "../schemas";
+import {
+  PLEDGEABLE_STAGES,
+  pledgeCreateSchema,
+  type Guarantee,
+  type PledgeCreateInput,
+} from "../schemas";
 import { guaranteeStatusPill } from "./pills";
 import styles from "./Guarantors.module.css";
-
-/** Application stages the P9 contract accepts pledges in — a pledge
- * against approved/disbursed/rejected is refused server-side (409). */
-export const PLEDGEABLE_STAGES = ["submitted", "appraisal", "committee"] as const;
 
 function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
   return (

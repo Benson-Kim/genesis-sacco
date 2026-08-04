@@ -15,7 +15,8 @@ export type NavIconShape =
   | "settings"
   | "access_control"
   | "audit_log"
-  | "committee";
+  | "committee"
+  | "guarantors";
 
 const ICON_PATHS: Record<NavIconShape, string> = {
   dashboard: "M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z",
@@ -32,6 +33,9 @@ const ICON_PATHS: Record<NavIconShape, string> = {
   audit_log: "M6 3h12v18H6zM9 8h6M9 12h6M9 16h4",
   // Ballot box with a cast slip — the committee-vote metaphor.
   committee: "M4 11h16v9H4zM8 11V8h8v3M10 4h4v4h-4zM4 15h16",
+  // Shield over a person — the pledged-security metaphor.
+  guarantors:
+    "M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5zM12 7.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM7.5 17c.9-1.9 2.6-3 4.5-3s3.6 1.1 4.5 3",
 };
 
 export function NavIcon({ shape, active }: { shape: NavIconShape; active: boolean }) {
