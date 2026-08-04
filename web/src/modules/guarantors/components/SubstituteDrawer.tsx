@@ -182,7 +182,16 @@ export function SubstituteDrawer({
   const chosenSubstitute = substituteOptions.find((member) => member.id === guarantorId);
 
   return (
-    <Modal title="Substitute guarantee" onClose={onClose} closeDisabled={substitute.isPending}>
+    <Modal
+      title="Substitute guarantee"
+      onClose={onClose}
+      closeDisabled={substitute.isPending}
+      // W56-3: a stray overlay click must never discard a half-completed
+      // substitution form (attestation + evidence reference) — dismissal
+      // is the explicit ✕ or Escape. (This drawer arrived via the !60
+      // main-merge after the W56-3 sweep; convention completed here.)
+      dismissOnOverlay={false}
+    >
       {/* Informational, NOT success styling: the notice reports a
           CONFLICTED/WITHDRAWN record (!60 F5). */}
       {notice !== "" && <Banner variant="info">{notice}</Banner>}
