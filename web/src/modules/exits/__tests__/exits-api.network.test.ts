@@ -436,4 +436,3 @@ test("GET statement: the canonical document parses VERBATIM (server equity line 
   expect(statement.net_payable).toBe("134500.20");
   expect("internal_gl_breakdown" in statement).toBe(false);
 });
-;
