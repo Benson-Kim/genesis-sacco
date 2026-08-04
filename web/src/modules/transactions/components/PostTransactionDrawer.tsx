@@ -308,6 +308,12 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
             <div className={styles.formNote}>Verifying the member record…</div>
           )}
           {memberId !== "" && memberDetail.isError && <ErrorBanner error={memberDetail.error} />}
+          {freshMember !== undefined && !memberExited && (
+            <div className={styles.formNote}>
+              Member verified: {freshMember.name} · {freshMember.member_no} (record
+              version {freshMember.version}) — read fresh before this posting.
+            </div>
+          )}
           {memberExited && (
             <Banner variant="error">
               This member has EXITED — the ledger accepts no further teller
