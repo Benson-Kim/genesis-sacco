@@ -23,6 +23,7 @@
  * from the registry is a SERVER response rendered verbatim.
  */
 import { useSyncExternalStore } from "react";
+import { registerSessionScopedStore } from "@/modules/auth/sessionScopedStores";
 import type { Guarantee } from "./schemas";
 
 export interface WitnessedGuarantee {
@@ -63,14 +64,20 @@ export function markWitnessedConflict(guaranteeId: string): void {
   emit();
 }
 
-/** Session-teardown hygiene (!60 F2): invoked by the query-path 401
- * dual-cache teardown (app providers) AND explicit sign-out (auth
- * logout) so witnessed financial records and the affordances armed on
- * them never survive an in-tab operator switch. Also test hygiene. */
+/** Session-teardown hygiene (!60 F2, wired structurally per W58-2):
+ * registered as a session-scoped store below, so BOTH teardown paths —
+ * the query-path 401 dual-cache teardown (app providers) and explicit
+ * sign-out (auth logout) — clear it. Witnessed financial records and
+ * the affordances armed on them never survive an in-tab operator
+ * switch. Also test hygiene. */
 export function clearWitnessedGuarantees(): void {
   entries = [];
   emit();
 }
+
+// Teardown wiring by construction (W58-2): registration at module scope
+// means the registry cannot exist without dying on session teardown.
+registerSessionScopedStore(clearWitnessedGuarantees);
 
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);

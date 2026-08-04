@@ -68,7 +68,14 @@ export function MemberCreateDrawer({
     }
 
     return (
-        <Modal title="Register member" onClose={onClose} closeDisabled={create.isPending}>
+        <Modal
+            title="Register member"
+            onClose={onClose}
+            closeDisabled={create.isPending}
+            // W56-3: a stray overlay click must never discard a half-completed
+            // registration form — dismissal is the explicit ✕ or Escape.
+            dismissOnOverlay={false}
+        >
             <form onSubmit={submit} noValidate>
                 <Field label="Member type" htmlFor="member-type">
                     <select

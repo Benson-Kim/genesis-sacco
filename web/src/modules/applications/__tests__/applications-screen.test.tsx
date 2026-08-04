@@ -13,9 +13,15 @@ import { ApiError } from "@genesis/api-client";
 import { Providers } from "@/app/providers";
 import { clearSession, hasSession, setSession } from "@/modules/auth/session";
 import { usePermissions } from "@/modules/authz/usePermissions";
+import { announce } from "@/modules/layout/announcer";
 import { ApplicationsScreen } from "../components/ApplicationsScreen";
 import { clearCommitteeMakers } from "../makerRegistry";
-import { applicationSchema, type Application, type Product } from "../schemas";
+import {
+  applicationCreateSchema,
+  applicationSchema,
+  type Application,
+  type Product,
+} from "../schemas";
 import * as appsApi from "../api";
 import * as membersApi from "@/modules/members/api";
 
@@ -41,9 +47,20 @@ jest.mock("@/modules/authz/usePermissions", () => ({
   usePermissions: jest.fn(),
 }));
 
+// The live-region announcer is a spy so the suites can prove every
+// async outcome — including the post-conflict reload (W59-4) — is
+// announced.
+jest.mock("@/modules/layout/announcer", () => {
+  const actual = jest.requireActual<typeof import("@/modules/layout/announcer")>(
+    "@/modules/layout/announcer",
+  );
+  return { ...actual, announce: jest.fn() };
+});
+
 const mocked = jest.mocked(appsApi);
 const mockedMembers = jest.mocked(membersApi);
 const mockedPermissions = jest.mocked(usePermissions);
+const mockedAnnounce = jest.mocked(announce);
 
 const ADMIN_ID = "99999999-9999-9999-9999-999999999999";
 const MEMBER_ID = "11111111-1111-1111-1111-111111111111";
@@ -321,6 +338,14 @@ test("stale stage move: 409 shows the explicit reload flow with EXACTLY ONE writ
   expect(await screen.findByRole("button", { name: "Recommend to committee" })).toBeInTheDocument();
   // …and NEVER replays the stale submission.
   expect(mocked.transitionApplication).toHaveBeenCalledTimes(1);
+  // The reload notice reports a post-conflict state: informational
+  // styling, NEVER the success variant — and it is announced (W59-4).
+  const reloadNotice = screen.getByText(/Record reloaded — re-check the stage/);
+  expect(reloadNotice).toHaveClass("info");
+  expect(reloadNotice).not.toHaveClass("ok");
+  expect(mockedAnnounce).toHaveBeenCalledWith(
+    "Record reloaded after the conflict — re-check the stage.",
+  );
 });
 
 test("terminal reject flows through the typed confirmation: NO write until the byte-identical phrase is typed", async () => {
@@ -406,4 +431,25 @@ test("Zod boundary rejects money as NUMBERS and unknown stages — contract viol
   expect(
     applicationSchema.safeParse({ ...baseApplication(), stage: "fast_tracked" }).success,
   ).toBe(false);
+});
+
+test("intake amount rejects leading zeros and zero amounts (W58-5, the !60 F6 class) — pure string shape", () => {
+  const base = {
+    member_id: MEMBER_ID,
+    product_id: PRODUCT_ID,
+    term_months: 24,
+    purpose: null,
+  };
+  const parse = (amount: string) => applicationCreateSchema.safeParse({ ...base, amount });
+  // Well-formed decimal strings pass…
+  expect(parse("250000").success).toBe(true);
+  expect(parse("250000.10").success).toBe(true);
+  expect(parse("0.50").success).toBe(true);
+  // …leading zeros are rejected (never rendered as "KES 007.10")…
+  expect(parse("007.10").success).toBe(false);
+  expect(parse("012").success).toBe(false);
+  expect(parse("00.10").success).toBe(false);
+  // …and zero is not a loan amount.
+  expect(parse("0").success).toBe(false);
+  expect(parse("0.00").success).toBe(false);
 });

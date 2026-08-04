@@ -64,8 +64,38 @@ describe("toApiError", () => {
     expect(err.category).toBe("validation_error");
     expect(err.fields).toEqual([
       { field: "email", message: "value is not a valid email" },
-      { field: "query.limit", message: "too large" },
+      // Canonical key (W56-5): the location head is stripped for EVERY
+      // location, so body and query verdicts address the same form
+      // field identically and form-errors matching cannot miss one.
+      { field: "limit", message: "too large" },
       { field: "", message: "invalid value" },
+    ]);
+  });
+
+  test("W56-5: every location head normalizes to the same canonical key; nested paths and head-named nested segments survive", () => {
+    const err = toApiError(
+      {
+        detail: [
+          { loc: ["body", "loan_rate_bands", 0, "rate_pct"], msg: "must be positive" },
+          { loc: ["path", "member_id"], msg: "not a uuid" },
+          { loc: ["header", "Idempotency-Key"], msg: "missing" },
+          { loc: ["cookie", "session"], msg: "expired" },
+          // Head stripping applies to POSITION 0 ONLY: a nested segment
+          // that happens to be named like a head is part of the key.
+          { loc: ["body", "payload", "query"], msg: "invalid" },
+          // No recognised head: the path is already canonical.
+          { loc: ["amount"], msg: "required" },
+        ],
+      },
+      response(422),
+    );
+    expect(err.fields).toEqual([
+      { field: "loan_rate_bands.0.rate_pct", message: "must be positive" },
+      { field: "member_id", message: "not a uuid" },
+      { field: "Idempotency-Key", message: "missing" },
+      { field: "session", message: "expired" },
+      { field: "payload.query", message: "invalid" },
+      { field: "amount", message: "required" },
     ]);
   });
 

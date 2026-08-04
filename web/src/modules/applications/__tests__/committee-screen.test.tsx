@@ -10,14 +10,25 @@
  * authority bands); these tests pin the UI so it never offers what the
  * API forbids.
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiError } from "@genesis/api-client";
 import { Providers } from "@/app/providers";
+import { logout } from "@/modules/auth/api";
 import { clearSession, hasSession, setSession } from "@/modules/auth/session";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { CommitteeScreen } from "../components/CommitteeScreen";
-import { clearCommitteeMakers, recordCommitteeMaker } from "../makerRegistry";
+import {
+  clearCommitteeMakers,
+  committeeMakerOf,
+  MAKER_UNKNOWN,
+  recordCommitteeMaker,
+} from "../makerRegistry";
+import {
+  clearVotedApplications,
+  hasVotedOn,
+  recordVotedApplication,
+} from "../votedRegistry";
 import { voteResultSchema, type Application, type VoteResult } from "../schemas";
 import * as appsApi from "../api";
 import * as membersApi from "@/modules/members/api";
@@ -142,9 +153,32 @@ const TALLY_OPEN: VoteResult = {
   stage: "committee",
 };
 
+/** The typed phrase for the vote confirmation (W58-3): the application
+ * id prefix, same convention as the other money-adjacent writes. */
+const CONFIRM_PHRASE = APP_ID.slice(0, 8);
+
+/** Arm the ConfirmDangerModal (W58-3): type the byte-identical phrase
+ * and return the danger confirm button. */
+async function armVoteConfirmation(
+  user: ReturnType<typeof userEvent.setup>,
+  kind: "approve" | "reject",
+) {
+  const dialog = await screen.findByRole("dialog", {
+    name: kind === "approve" ? "Cast approve vote" : "Cast reject vote",
+  });
+  await user.type(
+    within(dialog).getByLabelText(`Type "${CONFIRM_PHRASE}" to confirm`),
+    CONFIRM_PHRASE,
+  );
+  return within(dialog).getByRole("button", {
+    name: kind === "approve" ? "Confirm approve vote" : "Confirm reject vote",
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   clearCommitteeMakers();
+  clearVotedApplications();
   clearSession();
   setSession({ accessToken: fakeJwt({ sub: VOTER_ID }), refreshToken: "refresh-1" });
   grantPermissions(APPROVER_PERMS);
@@ -207,7 +241,11 @@ test("an eligible checker (different known principal) votes ONCE through the con
   mountScreen();
 
   await user.click(await screen.findByRole("button", { name: "Vote approve" }));
-  const confirm = await screen.findByRole("button", { name: "Confirm approve vote" });
+  // Typed confirmation (W58-3): the confirm button stays disarmed until
+  // the byte-identical phrase is typed — a reflex click writes nothing.
+  const disarmed = await screen.findByRole("button", { name: "Confirm approve vote" });
+  expect(disarmed).toBeDisabled();
+  const confirm = await armVoteConfirmation(user, "approve");
 
   // Double-click the confirmation: the pending short-circuit yields ONE call.
   await user.click(confirm);
@@ -237,7 +275,7 @@ test("a quorum decision renders from the SERVER verdict — nothing tallied clie
   mountScreen();
 
   await user.click(await screen.findByRole("button", { name: "Vote approve" }));
-  await user.click(await screen.findByRole("button", { name: "Confirm approve vote" }));
+  await user.click(await armVoteConfirmation(user, "approve"));
 
   expect(await screen.findByText("Decision: approved")).toBeInTheDocument();
   expect(screen.getByText("3 approve")).toBeInTheDocument();
@@ -251,7 +289,7 @@ test("already-voted / stage-moved: 409 shows the explicit reload flow with EXACT
   mountScreen();
 
   await user.click(await screen.findByRole("button", { name: "Vote reject" }));
-  await user.click(await screen.findByRole("button", { name: "Confirm reject vote" }));
+  await user.click(await armVoteConfirmation(user, "reject"));
 
   expect(await screen.findByText(/Your change was NOT applied/)).toBeInTheDocument();
   expect(mocked.voteOnApplication).toHaveBeenCalledTimes(1);
@@ -296,7 +334,7 @@ test("least-disclosure: a 403 on the vote renders the sanitized banner only, ses
   mountScreen();
 
   await user.click(await screen.findByRole("button", { name: "Vote approve" }));
-  await user.click(await screen.findByRole("button", { name: "Confirm approve vote" }));
+  await user.click(await armVoteConfirmation(user, "approve"));
 
   expect(await screen.findByText(/Not permitted\./)).toBeInTheDocument();
   expect(screen.getByText(/ref: corr-f/)).toBeInTheDocument();
@@ -306,11 +344,64 @@ test("least-disclosure: a 403 on the vote renders the sanitized banner only, ses
   expect(hasSession()).toBe(true);
 });
 
-test("query-path 401 tears the session down immediately (dual-cache teardown)", async () => {
+test("query-path 401 tears the session down immediately (dual-cache teardown) AND empties the maker registry (W58-2)", async () => {
+  // A previous operator's referral attribution is armed in this tab…
+  recordCommitteeMaker(APP_ID, VOTER_ID);
   mocked.fetchApplicationsPage.mockRejectedValue(new ApiError(401, "unauthenticated", "corr-q"));
   mountScreen();
 
   await waitFor(() => expect(hasSession()).toBe(false), { timeout: 4000 });
+  // …and dies WITH the session (W58-2, the !60 F2 class): the maker is
+  // UNKNOWN again, so the next operator's MakerCheckerPanel SoD decision
+  // never consumes a witness recorded under a previous identity.
+  expect(committeeMakerOf(APP_ID)).toBe(MAKER_UNKNOWN);
+  // The voted registry (W58-6) is session-scoped through the same
+  // mechanism and dies with the session too.
+  expect(hasVotedOn(APP_ID)).toBe(false);
+});
+
+test("explicit sign-out empties the maker registry — the next operator inherits no referral attributions (W58-2)", async () => {
+  recordCommitteeMaker(APP_ID, VOTER_ID);
+  recordVotedApplication(APP_ID);
+  expect(committeeMakerOf(APP_ID)).toBe(VOTER_ID);
+  expect(hasVotedOn(APP_ID)).toBe(true);
+
+  // Real sign-out path: local teardown must win even if the revocation
+  // call cannot complete in this harness.
+  await act(async () => {
+    await logout().catch(() => undefined);
+  });
+
+  expect(hasSession()).toBe(false);
+  expect(committeeMakerOf(APP_ID)).toBe(MAKER_UNKNOWN);
+  expect(hasVotedOn(APP_ID)).toBe(false);
+});
+
+test("spent vote affordance survives a panel remount (W58-6): a recorded vote never re-arms the buttons in this tab", async () => {
+  const user = userEvent.setup();
+  recordCommitteeMaker(APP_ID, OTHER_OFFICER_ID);
+  mocked.voteOnApplication.mockResolvedValue(TALLY_OPEN);
+  const view = mountScreen();
+
+  await user.click(await screen.findByRole("button", { name: "Vote approve" }));
+  await user.click(await armVoteConfirmation(user, "approve"));
+  expect(await screen.findByText("1 approve")).toBeInTheDocument();
+  expect(mocked.voteOnApplication).toHaveBeenCalledTimes(1);
+
+  // Simulate switching agenda items and back: the panel remounts and
+  // its component state (result) is gone — previously this RE-ARMED
+  // the buttons and steered the operator into a guaranteed 409.
+  view.unmount();
+  mountScreen();
+
+  const approve = await screen.findByRole("button", { name: "Vote approve" });
+  expect(approve).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Vote reject" })).toBeDisabled();
+  expect(
+    screen.getByText(/This tab already recorded your vote on this application/),
+  ).toBeInTheDocument();
+  // No second wire write is even possible from this tab.
+  expect(mocked.voteOnApplication).toHaveBeenCalledTimes(1);
 });
 
 test("Zod boundary: the tally is COUNTS + decision only — a payload leaking voter identities is a contract violation", () => {
@@ -324,4 +415,30 @@ test("Zod boundary: the tally is COUNTS + decision only — a payload leaking vo
   // counts/decision/stage — nothing else can reach the DOM.
   const parsed = voteResultSchema.parse({ ...TALLY_OPEN, voters: ["someone"] });
   expect(parsed).toEqual(TALLY_OPEN);
+  // Enum strictness (W58-4): unknown decision/stage vocabulary is a
+  // contract violation REJECTED at the boundary — matching this
+  // module's own applicationSchema, never silently rendered.
+  expect(
+    voteResultSchema.safeParse({ ...TALLY_OPEN, decision: "escalated" }).success,
+  ).toBe(false);
+  expect(
+    voteResultSchema.safeParse({ ...TALLY_OPEN, stage: "fast_tracked" }).success,
+  ).toBe(false);
+  // The decided shapes remain valid.
+  expect(
+    voteResultSchema.safeParse({
+      approvals: 3,
+      rejections: 1,
+      decision: "approved",
+      stage: "approved",
+    }).success,
+  ).toBe(true);
+  expect(
+    voteResultSchema.safeParse({
+      approvals: 1,
+      rejections: 3,
+      decision: "rejected",
+      stage: "rejected",
+    }).success,
+  ).toBe(true);
 });

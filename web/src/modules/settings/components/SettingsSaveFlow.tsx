@@ -20,7 +20,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Button, ConfirmDangerModal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal } from "@genesis/design-system";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { announce } from "@/modules/layout/announcer";
@@ -30,6 +30,22 @@ import type { Settings } from "../schemas";
 import styles from "./Settings.module.css";
 
 export const SETTINGS_QUERY_KEY = ["settings", "record"] as const;
+
+/**
+ * The keys a pending WYSIWYG body would CLEAR (W57-3): submitted as an
+ * explicit null while the loaded record still holds a value. Null-ness
+ * comparison ONLY — no money value is ever compared or computed. The
+ * names surface inside the typed confirmation so the operator's typed
+ * phrase covers explicit knowledge of every clear.
+ */
+export function clearedKeyNames(input: UpdateSettingsInput, current: Settings): string[] {
+  const cleared: string[] = [];
+  for (const [key, value] of Object.entries(input)) {
+    if (key === "version" || value !== null) continue;
+    if (current[key as keyof Settings] !== null) cleared.push(key);
+  }
+  return cleared;
+}
 
 export interface SettingsSaveFlow {
   save: UseMutationResult<Settings, Error, UpdateSettingsInput>;
@@ -87,6 +103,7 @@ export function SettingsSaveControls({
   buttonLabel,
   confirmTitle,
   confirmPhrase,
+  settings,
   children,
 }: Readonly<{
   flow: SettingsSaveFlow;
@@ -95,11 +112,16 @@ export function SettingsSaveControls({
   confirmTitle: string;
   /** The exact phrase the operator must type (tab-specific). */
   confirmPhrase: string;
+  /** The loaded record backing this tab — used to name the keys a
+   * pending body would CLEAR (W57-3). */
+  settings: Settings;
   /** Modal summary copy (operator-facing only). */
   children?: ReactNode;
 }>) {
   const queryClient = useQueryClient();
   const conflict = flow.save.isError && isConflict(flow.save.error);
+  const clearedKeys =
+    flow.pendingInput === null ? [] : clearedKeyNames(flow.pendingInput, settings);
 
   return (
     <>
@@ -133,6 +155,14 @@ export function SettingsSaveControls({
             }
           }}
         >
+          {/* Explicit-clear disclosure (W57-3): the typed confirmation
+              names every stored key this save would CLEAR, so a blank
+              field never clears config without the operator knowing. */}
+          {clearedKeys.length > 0 && (
+            <Banner variant="error">
+              This save CLEARS the stored value of: {clearedKeys.join(", ")}.
+            </Banner>
+          )}
           {children}
         </ConfirmDangerModal>
       )}

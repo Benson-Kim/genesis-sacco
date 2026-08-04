@@ -109,7 +109,14 @@ export function ApplicationCreateDrawer({
     Object.keys(serverErrors).length > 0;
 
   return (
-    <Modal title="New loan application" onClose={onClose} closeDisabled={create.isPending}>
+    <Modal
+      title="New loan application"
+      onClose={onClose}
+      closeDisabled={create.isPending}
+      // W56-3: a stray overlay click must never discard a half-completed
+      // intake form — dismissal is the explicit ✕ or Escape.
+      dismissOnOverlay={false}
+    >
       <form onSubmit={submit} noValidate>
         <FormField id="app-member" label="Member" error={fieldErrors["member_id"]}>
           {(control) => (

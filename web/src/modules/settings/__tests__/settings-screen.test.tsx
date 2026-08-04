@@ -210,6 +210,27 @@ test("clearing a configured field submits an explicit null (never a silent keep)
   });
 });
 
+test("typed confirmation NAMES the keys a save would CLEAR (W57-3) — never a silent config clear", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+
+  // penalty_grace_days is CONFIGURED (5) — clearing it must be disclosed.
+  const grace = await screen.findByLabelText("Penalty grace (days)");
+  await user.clear(grace);
+  await user.click(screen.getByRole("button", { name: "Save interest rules" }));
+
+  const dialog = await screen.findByRole("dialog", { name: "Apply interest rules" });
+  const disclosure = within(dialog).getByText(/This save CLEARS the stored value of:/);
+  expect(disclosure).toHaveTextContent("penalty_grace_days");
+  // A field blank because it was NEVER configured is not a clear —
+  // deposit_rebate_rate_pct is null in the loaded record and stays out.
+  expect(disclosure).not.toHaveTextContent("deposit_rebate_rate_pct");
+
+  // Cancelling the disclosure writes nothing.
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(mocked.updateSettings).not.toHaveBeenCalled();
+});
+
 test("stale edit: 409 shows the explicit reload flow with EXACTLY ONE write attempt; reload never replays", async () => {
   const user = userEvent.setup();
   mocked.updateSettings.mockRejectedValue(new ApiError(409, "conflict", "corr-stale"));
@@ -276,6 +297,45 @@ test("UI affordances follow the matrix: view-only settings role sees NO save con
   expect(screen.queryByRole("button", { name: "Save matrix" })).toBeNull();
 });
 
+test("tabs follow the conforming ARIA pattern (W57-4): tabpanel association + roving arrow-key focus", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+
+  const interest = await screen.findByRole("tab", { name: "Interest" });
+  expect(interest).toHaveAttribute("aria-selected", "true");
+
+  // tab ↔ tabpanel association (aria-controls / aria-labelledby / id).
+  const panel = screen.getByRole("tabpanel");
+  expect(interest).toHaveAttribute("aria-controls", panel.id);
+  expect(panel).toHaveAttribute("aria-labelledby", interest.id);
+
+  // Roving tabindex: exactly one tab stop for the whole tablist.
+  expect(interest).toHaveAttribute("tabindex", "0");
+  expect(screen.getByRole("tab", { name: "Parameters" })).toHaveAttribute("tabindex", "-1");
+  expect(screen.getByRole("tab", { name: "Approval matrix" })).toHaveAttribute("tabindex", "-1");
+
+  // End/Home move BOTH selection and focus (automatic activation)…
+  interest.focus();
+  await user.keyboard("{End}");
+  const approval = screen.getByRole("tab", { name: "Approval matrix" });
+  expect(approval).toHaveAttribute("aria-selected", "true");
+  expect(approval).toHaveFocus();
+  expect(panel).toHaveAttribute("aria-labelledby", approval.id);
+
+  // …and ArrowLeft steps back with wrapping semantics available.
+  await user.keyboard("{ArrowLeft}");
+  const parameters = screen.getByRole("tab", { name: "Parameters" });
+  expect(parameters).toHaveAttribute("aria-selected", "true");
+  expect(parameters).toHaveFocus();
+
+  await user.keyboard("{Home}");
+  expect(screen.getByRole("tab", { name: "Interest" })).toHaveFocus();
+  expect(screen.getByRole("tab", { name: "Interest" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
 test("least-disclosure: a 403 renders the sanitized banner only, no reload affordance, session intact", async () => {
   const user = userEvent.setup();
   mocked.updateSettings.mockRejectedValue(new ApiError(403, "forbidden", "corr-f"));
@@ -324,4 +384,31 @@ test("Zod boundary rejects money as NUMBERS — a contract-violating response ne
   };
   expect(settingsSchema.safeParse(violating).success).toBe(false);
   expect(settingsSchema.safeParse(baseSettings()).success).toBe(true);
+});
+
+test("Zod boundary rejects unknown enum vocabulary (W57-2) — a degraded value can never be silently re-saved as null", () => {
+  // Fleet standard: unknown enum values are contract violations REJECTED
+  // at the boundary, closing the silent-config-clear hazard (a value the
+  // select can't represent would render "not configured" and be NULLED —
+  // config CLEARED — by the next WYSIWYG save of the tab).
+  expect(
+    settingsSchema.safeParse({ ...baseSettings(), loan_interest_method: "exotic_method" })
+      .success,
+  ).toBe(false);
+  expect(
+    settingsSchema.safeParse({ ...baseSettings(), loan_interest_basis: "actual_360" }).success,
+  ).toBe(false);
+  expect(
+    settingsSchema.safeParse({ ...baseSettings(), penalty_charged_on: "everything" }).success,
+  ).toBe(false);
+  // null (genuinely not configured) remains valid — rejection targets
+  // unknown vocabulary only, never the contract's explicit null.
+  expect(
+    settingsSchema.safeParse({
+      ...baseSettings(),
+      loan_interest_method: null,
+      loan_interest_basis: null,
+      penalty_charged_on: null,
+    }).success,
+  ).toBe(true);
 });
