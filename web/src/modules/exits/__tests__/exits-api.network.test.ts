@@ -1,0 +1,345 @@
+/**
+ * @jest-environment node
+ *
+ * Network-layer proofs for the member-exit API layer through the REAL
+ * generated client + middleware (node environment: real Request/
+ * Response/Headers; fetch stubbed at the network boundary), mirroring
+ * the transactions/reports reference harnesses:
+ * - Bearer/tenant/Idempotency-Key travel as HEADERS; nothing secret
+ *   ever enters a URL.
+ * - Keyset pagination ONLY: the opaque cursor is echoed back verbatim
+ *   as a query parameter; no offset/page parameter exists (gate 1.3);
+ *   the status filter is a server-side query parameter.
+ * - NO money parameter can even be SENT (P12: fees from tenant config,
+ *   figures computed server-side under locks): every wire body is
+ *   asserted key-by-key — create carries {member_id, reason}, vote
+ *   {vote}, void {version}, settlement {version, channel} and nothing
+ *   else.
+ * - Response money arrives as decimal STRINGS byte-identically; money
+ *   as numbers, unknown statuses and garbage timestamps are REJECTED
+ *   at the Zod boundary (blocker (a) + the !63 F-R4 lesson); extra
+ *   keys are STRIPPED.
+ * - A 409 (settlement snapshot drift under the full lock set) surfaces
+ *   as a typed ApiError from ONE request (no transport-level retry).
+ */
+
+// Module scope (the users reference harness stays a global script; two
+// scripts would collide on shared global declarations under tsc).
+export {};
+
+type FetchCall = { url: string; method: string; headers: Headers; body: string | null };
+
+const TENANT = "22222222-2222-2222-2222-222222222222";
+const USER_ID = "55555555-5555-5555-5555-555555555555";
+const MEMBER_ID = "11111111-1111-1111-1111-111111111111";
+const EXIT_ID = "eeeeeeee-aaaa-bbbb-cccc-444444444444";
+
+const calls: FetchCall[] = [];
+let settlementStatus = 201;
+let listMoneyAsNumbers = false;
+let listUnknownStatus = false;
+let listGarbageTimestamp = false;
+
+function b64url(value: object): string {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function jwt(sub: string, expInSeconds: number): string {
+  const exp = Math.floor(Date.now() / 1000) + expInSeconds;
+  return `${b64url({ alg: "HS256" })}.${b64url({ sub, exp })}.sig`;
+}
+
+const exitOut = {
+  id: EXIT_ID,
+  member_id: MEMBER_ID,
+  status: "requested",
+  reason: "Relocation",
+  shares_amount: "25000.10",
+  deposits_amount: "150000.10",
+  loan_balance: "40000.00",
+  fees: "500.00",
+  net_payable: "134500.20",
+  decided_at: null,
+  settled_at: null,
+  settlement_txn_id: null,
+  version: 1,
+  created_at: "2026-08-01T09:00:00+00:00",
+};
+
+function json(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+async function fetchStub(input: Request | string | URL, init?: RequestInit): Promise<Response> {
+  const request = input instanceof Request ? input : new Request(input, init);
+  const body = request.method === "GET" ? null : await request.clone().text();
+  calls.push({ url: request.url, method: request.method, headers: request.headers, body });
+  const path = new URL(request.url).pathname;
+  if (request.headers.get("authorization") === null) {
+    return json(401, { category: "unauthenticated", correlation_id: "corr-a" });
+  }
+  if (path === "/member-exits" && request.method === "GET") {
+    if (listMoneyAsNumbers) {
+      return json(200, { items: [{ ...exitOut, net_payable: 134500.2 }], next_cursor: null });
+    }
+    if (listUnknownStatus) {
+      return json(200, { items: [{ ...exitOut, status: "escalated" }], next_cursor: null });
+    }
+    if (listGarbageTimestamp) {
+      return json(200, {
+        items: [{ ...exitOut, created_at: "yesterday-ish" }],
+        next_cursor: null,
+      });
+    }
+    return json(200, { items: [exitOut], next_cursor: "cursor-page-2" });
+  }
+  if (path === "/member-exits" && request.method === "POST") {
+    return json(201, { ...exitOut, internal_lock_note: "ROW-LOCK-SECRET" });
+  }
+  if (path === `/member-exits/${EXIT_ID}` && request.method === "GET") {
+    return json(200, exitOut);
+  }
+  if (path === `/member-exits/${EXIT_ID}/votes` && request.method === "POST") {
+    return json(201, { approvals: 1, rejections: 0, decision: null, status: "requested" });
+  }
+  if (path === `/member-exits/${EXIT_ID}/void` && request.method === "POST") {
+    return json(200, { ...exitOut, status: "rejected", version: 2 });
+  }
+  if (path === `/member-exits/${EXIT_ID}/settlement` && request.method === "POST") {
+    if (settlementStatus !== 201) {
+      return json(settlementStatus, { category: "conflict", correlation_id: "corr-drift" });
+    }
+    return json(201, {
+      exit: {
+        ...exitOut,
+        status: "settled",
+        settled_at: "2026-08-02T10:00:00+00:00",
+        settlement_txn_id: "dddddddd-1111-2222-3333-444444444444",
+        version: 3,
+      },
+      txn_ref: "EX-0001",
+    });
+  }
+  if (path === `/member-exits/${EXIT_ID}/statement` && request.method === "GET") {
+    return json(200, {
+      exit_id: EXIT_ID,
+      member_id: MEMBER_ID,
+      member_no: "M-0001",
+      member_name: "Jane Wanjiku",
+      member_status: "active",
+      exit_status: "requested",
+      reason: "Relocation",
+      shares_amount: "25000.10",
+      deposits_amount: "150000.10",
+      equity: "175000.20",
+      loan_balance: "40000.00",
+      fees: "500.00",
+      net_payable: "134500.20",
+      requested_at: "2026-08-01T09:00:00+00:00",
+      decided_at: null,
+      settled_at: null,
+      settlement_txn_ref: null,
+      internal_gl_breakdown: "GL-SECRET-02",
+    });
+  }
+  return json(404, { category: "not_found", correlation_id: "corr-n" });
+}
+
+// The generated client captures globalThis.fetch at creation time, so the
+// stub must be installed BEFORE the modules under test are imported.
+globalThis.fetch = fetchStub as typeof globalThis.fetch;
+
+// Tenant scope is build-time configuration (src/lib/env reads
+// NEXT_PUBLIC_TENANT_ID at module load) — set BEFORE requiring modules.
+process.env.NEXT_PUBLIC_TENANT_ID = TENANT;
+
+// Node has no window: back the single per-tab custody site with a Map
+// (the real storage read/write path still runs) — reference-harness model.
+const tabStorage = new Map<string, string>();
+(globalThis as { window?: unknown }).window = {
+  sessionStorage: {
+    getItem: (key: string): string | null => tabStorage.get(key) ?? null,
+    setItem: (key: string, value: string): void => {
+      tabStorage.set(key, String(value));
+    },
+    removeItem: (key: string): void => {
+      tabStorage.delete(key);
+    },
+    clear: (): void => {
+      tabStorage.clear();
+    },
+    get length(): number {
+      return tabStorage.size;
+    },
+  },
+};
+
+/* eslint-disable @typescript-eslint/no-require-imports */
+const session = require("@/modules/auth/session") as typeof import("@/modules/auth/session");
+const exitsApi = require("../api") as typeof import("../api");
+const { ApiError } = require("@genesis/api-client") as typeof import("@genesis/api-client");
+/* eslint-enable @typescript-eslint/no-require-imports */
+
+const REFRESH_VALUE = "per-tab-refresh-value";
+
+beforeEach(() => {
+  calls.length = 0;
+  settlementStatus = 201;
+  listMoneyAsNumbers = false;
+  listUnknownStatus = false;
+  listGarbageTimestamp = false;
+  session.clearSession();
+  session.setSession({ accessToken: jwt(USER_ID, 900), refreshToken: REFRESH_VALUE });
+});
+
+afterEach(() => {
+  session.clearSession();
+});
+
+test("GET /member-exits: keyset params ONLY (no offset/page); the opaque cursor echoes back VERBATIM; an empty status filter sends NOTHING", async () => {
+  await exitsApi.fetchExitsPage(exitsApi.EMPTY_EXIT_FILTERS, null);
+  const page = await exitsApi.fetchExitsPage(exitsApi.EMPTY_EXIT_FILTERS, "cursor-page-2");
+  expect(calls).toHaveLength(2);
+
+  const first = new URL(calls[0]!.url);
+  expect(first.pathname).toBe("/member-exits");
+  expect(first.searchParams.get("limit")).toBe(String(exitsApi.EXITS_PAGE_SIZE));
+  expect(first.searchParams.has("cursor")).toBe(false);
+  expect(first.searchParams.has("offset")).toBe(false);
+  expect(first.searchParams.has("page")).toBe(false);
+  expect(first.searchParams.has("status")).toBe(false);
+
+  const second = new URL(calls[1]!.url);
+  expect(second.searchParams.get("cursor")).toBe("cursor-page-2");
+  expect(second.searchParams.has("offset")).toBe(false);
+
+  // Bearer + tenant as headers; the refresh secret never enters a URL.
+  expect(calls[0]!.headers.get("authorization")).toMatch(/^Bearer /);
+  expect(calls[0]!.headers.get("x-tenant-id")).toBe(TENANT);
+  expect(calls[0]!.url).not.toContain(REFRESH_VALUE);
+
+  // The boundary transform yields the client-side page shape verbatim —
+  // trailing cents survive because the value never becomes a number.
+  expect(page.items[0]?.net_payable).toBe("134500.20");
+  expect(page.nextCursor).toBe("cursor-page-2");
+});
+
+test("GET /member-exits: the status filter is a SERVER-side query parameter", async () => {
+  await exitsApi.fetchExitsPage({ status: "approved" }, null);
+  const url = new URL(calls[0]!.url);
+  expect(url.searchParams.get("status")).toBe("approved");
+  expect(url.searchParams.has("offset")).toBe(false);
+  expect(url.searchParams.has("page")).toBe(false);
+});
+
+test("POST /member-exits: the body carries {member_id, reason} and NOTHING else — no money field can even be sent; EXTRA response keys are STRIPPED", async () => {
+  const record = await exitsApi.createExitRequest(MEMBER_ID, "Relocation", "key-exit-1");
+  expect(calls).toHaveLength(1);
+  const call = calls[0]!;
+  expect(call.method).toBe("POST");
+  expect(new URL(call.url).pathname).toBe("/member-exits");
+  expect(new URL(call.url).search).toBe("");
+  expect(call.headers.get("idempotency-key")).toBe("key-exit-1");
+  const body = JSON.parse(call.body ?? "{}") as Record<string, unknown>;
+  expect(body["member_id"]).toBe(MEMBER_ID);
+  expect(body["reason"]).toBe("Relocation");
+  // Nothing beyond the ExitRequestBody contract can even be sent —
+  // falsifiable: add an amount/fee key to the API layer and this fails.
+  expect(Object.keys(body).sort()).toEqual(["member_id", "reason"]);
+
+  // The SERVER's snapshot comes back verbatim; the stubbed internal
+  // field can never reach a screen (stripped at the boundary).
+  expect(record.net_payable).toBe("134500.20");
+  expect(record.shares_amount).toBe("25000.10");
+  expect("internal_lock_note" in record).toBe(false);
+});
+
+test("POST votes: the body is exactly {vote}; the tally parses verbatim (server counts, never client-derived)", async () => {
+  const tally = await exitsApi.voteOnExit(EXIT_ID, "approve", "key-vote-1");
+  const call = calls[0]!;
+  expect(new URL(call.url).pathname).toBe(`/member-exits/${EXIT_ID}/votes`);
+  expect(new URL(call.url).search).toBe("");
+  expect(call.headers.get("idempotency-key")).toBe("key-vote-1");
+  expect(JSON.parse(call.body ?? "null")).toEqual({ vote: "approve" });
+  expect(tally.approvals).toBe(1);
+  expect(tally.rejections).toBe(0);
+  expect(tally.decision).toBeNull();
+  expect(tally.status).toBe("requested");
+});
+
+test("POST void: the body is exactly {version} pinning the acted-on record state (1.4)", async () => {
+  const record = await exitsApi.voidExit(EXIT_ID, 1, "key-void-1");
+  const call = calls[0]!;
+  expect(new URL(call.url).pathname).toBe(`/member-exits/${EXIT_ID}/void`);
+  expect(call.headers.get("idempotency-key")).toBe("key-void-1");
+  expect(JSON.parse(call.body ?? "null")).toEqual({ version: 1 });
+  expect(record.status).toBe("rejected");
+  expect(record.version).toBe(2);
+});
+
+test("POST settlement: the body is exactly {version, channel} — the pinned snapshot version and the CASH rail; every result figure is the server's, verbatim", async () => {
+  const posted = await exitsApi.postExitSettlement(EXIT_ID, 1, "mpesa", "key-settle-1");
+  const call = calls[0]!;
+  expect(new URL(call.url).pathname).toBe(`/member-exits/${EXIT_ID}/settlement`);
+  expect(new URL(call.url).search).toBe("");
+  expect(call.headers.get("idempotency-key")).toBe("key-settle-1");
+  expect(JSON.parse(call.body ?? "null")).toEqual({ version: 1, channel: "mpesa" });
+  expect(posted.txn_ref).toBe("EX-0001");
+  expect(posted.exit.status).toBe("settled");
+  expect(posted.exit.net_payable).toBe("134500.20");
+  expect(posted.exit.settlement_txn_id).toBe("dddddddd-1111-2222-3333-444444444444");
+});
+
+test("a drifted settlement (snapshot re-verification failed under the lock set) surfaces as ONE 409 ApiError — no transport-level retry, no replay", async () => {
+  settlementStatus = 409;
+  const thrown = await exitsApi
+    .postExitSettlement(EXIT_ID, 1, "bank", "key-settle-stale")
+    .catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(ApiError);
+  expect((thrown as InstanceType<typeof ApiError>).status).toBe(409);
+  expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
+});
+
+test("a contract-violating response (numeric money) is REJECTED at the boundary — it can never reach a screen", async () => {
+  listMoneyAsNumbers = true;
+  const thrown = await exitsApi
+    .fetchExitsPage(exitsApi.EMPTY_EXIT_FILTERS, null)
+    .catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("net_payable");
+});
+
+test("an unknown exit status is a contract violation and is REJECTED — it can never arm a lifecycle write", async () => {
+  listUnknownStatus = true;
+  const thrown = await exitsApi
+    .fetchExitsPage(exitsApi.EMPTY_EXIT_FILTERS, null)
+    .catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("status");
+});
+
+test("a garbage timestamp is REJECTED at the boundary (the !63 F-R4 lesson) — 'Invalid Date' can never render on the financial record", async () => {
+  listGarbageTimestamp = true;
+  const thrown = await exitsApi
+    .fetchExitsPage(exitsApi.EMPTY_EXIT_FILTERS, null)
+    .catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("created_at");
+});
+
+test("GET statement: the canonical document parses VERBATIM (server equity line included); EXTRA keys are STRIPPED", async () => {
+  const statement = await exitsApi.fetchExitStatement(EXIT_ID);
+  expect(new URL(calls[0]!.url).pathname).toBe(`/member-exits/${EXIT_ID}/statement`);
+  expect(statement.member_no).toBe("M-0001");
+  // The equity line is the SERVER's — the client never re-derives it
+  // from shares/deposits (blocker (a)); trailing cents survive.
+  expect(statement.equity).toBe("175000.20");
+  expect(statement.net_payable).toBe("134500.20");
+  expect("internal_gl_breakdown" in statement).toBe(false);
+});
