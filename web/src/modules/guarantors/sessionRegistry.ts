@@ -25,7 +25,18 @@
 import { useSyncExternalStore } from "react";
 import type { Guarantee } from "./schemas";
 
-let records: readonly Guarantee[] = [];
+export interface WitnessedGuarantee {
+  /** The server's record, verbatim (the last write response this tab saw). */
+  record: Guarantee;
+  /**
+   * Set when a versioned act on this record returned 409: the record
+   * moved OUTSIDE this tab and — with no read endpoint to refresh it —
+   * its affordances are structurally withdrawn (reload-never-replay).
+   */
+  conflicted: boolean;
+}
+
+let entries: readonly WitnessedGuarantee[] = [];
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -33,15 +44,28 @@ function emit(): void {
 }
 
 /** Record (or update in place) a guarantee exactly as the server
- * returned it. Newest activity first; one row per guarantee id. */
+ * returned it. Newest activity first; one row per guarantee id; a fresh
+ * server response clears any prior conflict marking. */
 export function recordWitnessedGuarantee(guarantee: Guarantee): void {
-  records = [guarantee, ...records.filter((record) => record.id !== guarantee.id)];
+  entries = [
+    { record: guarantee, conflicted: false },
+    ...entries.filter((entry) => entry.record.id !== guarantee.id),
+  ];
+  emit();
+}
+
+/** Withdraw a record's affordances after a 409 (the tab's copy is stale
+ * and cannot be re-read — acting again requires a fresh server response). */
+export function markWitnessedConflict(guaranteeId: string): void {
+  entries = entries.map((entry) =>
+    entry.record.id === guaranteeId ? { ...entry, conflicted: true } : entry,
+  );
   emit();
 }
 
 /** Test/sign-out hygiene. */
 export function clearWitnessedGuarantees(): void {
-  records = [];
+  entries = [];
   emit();
 }
 
@@ -52,11 +76,11 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-function snapshot(): readonly Guarantee[] {
-  return records;
+function snapshot(): readonly WitnessedGuarantee[] {
+  return entries;
 }
 
 /** The guarantees this tab witnessed, newest activity first. */
-export function useWitnessedGuarantees(): readonly Guarantee[] {
+export function useWitnessedGuarantees(): readonly WitnessedGuarantee[] {
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
