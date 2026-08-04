@@ -114,11 +114,16 @@ async def _live_credential_by_email(
     return _LiveCredential(credential_id=uuid.UUID(str(row[0])), member_id=uuid.UUID(str(row[1])))
 
 
-async def _live_credential_by_id(
+async def live_credential_by_id(
     session: AsyncSession, tenant_id: uuid.UUID, credential_id: uuid.UUID
 ) -> _LiveCredential | None:
     """Use-time re-check of the link (FM2): the LINK row, not any email,
-    decides whether the principal is still live."""
+    decides whether the principal is still live.
+
+    Public on purpose (gate 1.1 — ONE implementation): refresh
+    rotation, the per-request member gate (api/authz.py) and the
+    member consent/release transactions (application/guarantees.py)
+    all re-verify the link through this exact query."""
     row = (
         await session.execute(
             text(
@@ -269,7 +274,7 @@ async def rotate_member_refresh_token(
     ).first()
     if peek is None:
         return AuthFailure("unknown refresh token")
-    credential = await _live_credential_by_id(session, tenant_id, uuid.UUID(str(peek[0])))
+    credential = await live_credential_by_id(session, tenant_id, uuid.UUID(str(peek[0])))
     if credential is None:
         # The link was revoked or the member exited since issue: the
         # session is dead (least disclosure — no reason detail).
