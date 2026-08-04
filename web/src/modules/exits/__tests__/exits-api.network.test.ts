@@ -37,6 +37,7 @@ const EXIT_ID = "eeeeeeee-aaaa-bbbb-cccc-444444444444";
 const calls: FetchCall[] = [];
 let settlementStatus = 201;
 let listMoneyAsNumbers = false;
+let listGarbageMoney = false;
 let listUnknownStatus = false;
 let listGarbageTimestamp = false;
 
@@ -84,6 +85,11 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
   if (path === "/member-exits" && request.method === "GET") {
     if (listMoneyAsNumbers) {
       return json(200, { items: [{ ...exitOut, net_payable: 134500.2 }], next_cursor: null });
+    }
+    if (listGarbageMoney) {
+      // A STRING, so it passes a naive z.string() — the F-M2 shape
+      // assertion is the only thing standing between it and fmtKes.
+      return json(200, { items: [{ ...exitOut, fees: "007.10" }], next_cursor: null });
     }
     if (listUnknownStatus) {
       return json(200, { items: [{ ...exitOut, status: "escalated" }], next_cursor: null });
@@ -180,6 +186,7 @@ const tabStorage = new Map<string, string>();
 /* eslint-disable @typescript-eslint/no-require-imports */
 const session = require("@/modules/auth/session") as typeof import("@/modules/auth/session");
 const exitsApi = require("../api") as typeof import("../api");
+const exitSchemas = require("../schemas") as typeof import("../schemas");
 const { ApiError } = require("@genesis/api-client") as typeof import("@genesis/api-client");
 /* eslint-enable @typescript-eslint/no-require-imports */
 
@@ -189,6 +196,7 @@ beforeEach(() => {
   calls.length = 0;
   settlementStatus = 201;
   listMoneyAsNumbers = false;
+  listGarbageMoney = false;
   listUnknownStatus = false;
   listGarbageTimestamp = false;
   session.clearSession();
@@ -333,6 +341,91 @@ test("a garbage timestamp is REJECTED at the boundary (the !63 F-R4 lesson) — 
   expect(String(thrown)).toContain("created_at");
 });
 
+test("a garbage money STRING is REJECTED at the wire boundary (review F-M2) — a value that passes z.string() can still never reach fmtKes", async () => {
+  listGarbageMoney = true;
+  const thrown = await exitsApi
+    .fetchExitsPage(exitsApi.EMPTY_EXIT_FILTERS, null)
+    .catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("fees");
+});
+
+test("F-M2 accept/reject matrix: money fields assert the CANONICAL server decimal shape (numeric(18,2) via str(Decimal)); the sign survives ONLY on net_payable", () => {
+  const exitWith = (field: string, value: string) =>
+    exitSchemas.exitSchema.safeParse({ ...exitOut, [field]: value }).success;
+
+  // Canonical shapes ACCEPTED — exactly the backend serialisation.
+  expect(exitWith("shares_amount", "0.00")).toBe(true);
+  expect(exitWith("shares_amount", "25000.10")).toBe(true);
+  expect(exitWith("fees", "500.00")).toBe(true);
+  expect(exitWith("net_payable", "134500.20")).toBe(true);
+  // The DOCUMENTED negative branch: net_payable keeps its sign.
+  expect(exitWith("net_payable", "-4000.00")).toBe(true);
+
+  // Garbage shapes REJECTED on every money field — none of these is a
+  // str(Decimal) of a numeric(18,2) value, and each would previously
+  // have flowed into fmtKes on a financial document.
+  const garbage = [
+    "abc",
+    "1e5",
+    "007.10", // leading zeros beyond a lone 0
+    "25000.1", // wrong scale (the server always emits two places)
+    "25000.100",
+    "25000", // missing scale
+    "25,000.10", // grouped — grouping is fmtKes's job, never the wire's
+    " 25000.10",
+    "25000.10 ",
+    "NaN",
+    "Infinity",
+    "0x10",
+    "",
+  ];
+  for (const field of ["shares_amount", "deposits_amount", "loan_balance", "fees", "net_payable"]) {
+    for (const value of garbage) {
+      expect(exitWith(field, value)).toBe(false);
+    }
+  }
+
+  // A '-' is a CONTRACT VIOLATION on every CHECK (>= 0) column — only
+  // net_payable (no CHECK, migration 0010) legitimately carries it.
+  for (const field of ["shares_amount", "deposits_amount", "loan_balance", "fees"]) {
+    expect(exitWith(field, "-1.00")).toBe(false);
+  }
+
+  // The statement document boundary mirrors the same posture — equity
+  // (the server sum of two non-negative components) rejects the sign.
+  const statement = {
+    exit_id: EXIT_ID,
+    member_id: MEMBER_ID,
+    member_no: "M-0001",
+    member_name: "Jane Wanjiku",
+    member_status: "active",
+    exit_status: "requested",
+    reason: null,
+    shares_amount: "25000.10",
+    deposits_amount: "150000.10",
+    equity: "175000.20",
+    loan_balance: "40000.00",
+    fees: "500.00",
+    net_payable: "-4000.00",
+    requested_at: "2026-08-01T09:00:00+00:00",
+    decided_at: null,
+    settled_at: null,
+    settlement_txn_ref: null,
+  };
+  expect(exitSchemas.exitStatementSchema.safeParse(statement).success).toBe(true);
+  expect(
+    exitSchemas.exitStatementSchema.safeParse({ ...statement, equity: "-175000.20" }).success,
+  ).toBe(false);
+  expect(
+    exitSchemas.exitStatementSchema.safeParse({ ...statement, equity: "1e5" }).success,
+  ).toBe(false);
+  expect(
+    exitSchemas.exitStatementSchema.safeParse({ ...statement, net_payable: "abc" }).success,
+  ).toBe(false);
+});
+
 test("GET statement: the canonical document parses VERBATIM (server equity line included); EXTRA keys are STRIPPED", async () => {
   const statement = await exitsApi.fetchExitStatement(EXIT_ID);
   expect(new URL(calls[0]!.url).pathname).toBe(`/member-exits/${EXIT_ID}/statement`);
@@ -343,3 +436,4 @@ test("GET statement: the canonical document parses VERBATIM (server equity line 
   expect(statement.net_payable).toBe("134500.20");
   expect("internal_gl_breakdown" in statement).toBe(false);
 });
+;
