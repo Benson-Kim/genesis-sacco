@@ -400,9 +400,11 @@ export function RequestExportDrawer({
               type="button"
               variant="primary"
               onClick={() => {
-                // A NEW intent: the result clears; an identical re-request
+                // A NEW intent: the entry clears; an identical re-request
                 // still rotates its key via the intent counter (T2).
                 setResult(null);
+                setDraft(EMPTY_FILTER_DRAFT);
+                setClientErrors({});
                 request.reset();
               }}
             >
