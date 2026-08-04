@@ -72,6 +72,40 @@ def test_p125_hot_path_queries_are_index_backed() -> None:
                 year=prev.year,
                 month=prev.month,
             )
+        # A few real heap pages of live pledges pin the plan choice:
+        # 0035 added two more (tenant_id, ...) indexes on guarantees,
+        # and on a zero-page table every index scan cost-ties, so the
+        # winner was an arbitrary catalog-order pick (flaked in CI).
+        # With real pages the planner's size-based estimate makes the
+        # two-column (tenant_id, application_id) index-cond decisively
+        # cheapest — exactly the at-scale claim this capture pins. The
+        # rows are pledged (no consent principal needed, P14.5 FM4)
+        # with application_id NULL, so no FK fixtures beyond two
+        # members and no effect on the probed aggregate.
+        async with tenant_session(factory(), tid) as session:
+            m1, m2 = uuid.uuid4(), uuid.uuid4()
+            for mid, name in ((m1, "Explain Guarantor"), (m2, "Explain Borrower")):
+                await session.execute(
+                    text(
+                        "INSERT INTO members (id, tenant_id, member_no, type, name) "
+                        "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :no, 'person', :name)"
+                    ),
+                    {
+                        "id": str(mid),
+                        "tid": str(tid),
+                        "no": f"GP-{mid.hex[:8].upper()}",
+                        "name": name,
+                    },
+                )
+            await session.execute(
+                text(
+                    "INSERT INTO guarantees "
+                    "(tenant_id, guarantor_member_id, borrower_member_id, amount, status) "
+                    "SELECT CAST(:tid AS uuid), CAST(:g AS uuid), CAST(:b AS uuid), "
+                    "10.00, 'pledged' FROM generate_series(1, 400)"
+                ),
+                {"tid": str(tid), "g": str(m1), "b": str(m2)},
+            )
         async with tenant_session(factory(), tid) as session:
             await session.execute(text("SET LOCAL enable_seqscan = off"))
             period_plan = await _explain(

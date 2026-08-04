@@ -891,11 +891,12 @@ def test_fm9_cross_tenant_probes_and_idempotent_replay() -> None:
     SQL under its session and 404s on tenant A's write-off through the
     API. Idempotency: replaying the SAME actor's key returns the
     stored response and records exactly ONE receipt (side-effect
-    count, never the return value alone); a DIFFERENT actor replaying
-    the same key MISSES the stored response — the actor rides the
-    request hash, so the cross-actor replay gets the 409 conflict
-    envelope and ZERO new side effects (the !29 scoping rule, the
-    test_a5 house semantics), never the first actor's response."""
+    count, never the return value alone); a DIFFERENT actor reusing
+    the same key MISSES the stored claim entirely — the actor
+    principal rides the claim KEY (P14.5 FM5, the !65 rescope of the
+    !29 lesson), so the second actor's request executes as its own
+    fresh attempt (its own receipt, its own response) and can never
+    read the first actor's stored response."""
 
     async def run() -> None:
         tid_a, actor_a, token_a = await _seed_actor()
@@ -922,10 +923,11 @@ def test_fm9_cross_tenant_probes_and_idempotent_replay() -> None:
         _, _, receipts, _ = await _counts(tid_a)
         assert receipts == 1  # side-effect count, not the response
 
-        # Cross-actor replay MISSES (the !29 scoping lesson): the
-        # actor rides the request hash, so the second actor's identical
-        # key + body gets the 409 conflict envelope — never the stored
-        # response — and no receipt lands (side-effect count unmoved).
+        # Cross-actor reuse MISSES the stored claim (P14.5 FM5, the
+        # !65 rescope): the actor principal rides the claim key, so
+        # the second actor's identical key + body is that actor's OWN
+        # fresh attempt — a new receipt by side-effect count, never a
+        # replay of (nor a collision with) the first actor's response.
         _actor2, token2 = await _seed_extra_user(tid_a, "Accountant")
         async with api_client() as client:
             other = await client.post(
@@ -933,11 +935,12 @@ def test_fm9_cross_tenant_probes_and_idempotent_replay() -> None:
                 json={"amount": "100.00", "channel": "bank"},
                 headers=_headers(token2, idem=key),
             )
-            assert other.status_code == 409
+            assert other.status_code == 201, other.text
             assert other.headers.get("idempotency-replayed") != "true"
-            assert other.json()["category"] == "conflict"
+            # Its own posting, not the first actor's stored response.
+            assert other.json()["txn_id"] != first.json()["txn_id"]
         _, _, receipts, _ = await _counts(tid_a)
-        assert receipts == 1
+        assert receipts == 2
 
         # Cross-tenant: zero rows under tenant B's session; 404 via API.
         async with tenant_session(factory(), tid_b) as session:
