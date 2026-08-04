@@ -156,6 +156,13 @@ class ExitStatementDoc:
     loan_balance: Decimal
     fees: Decimal
     net_payable: Decimal
+    #: Initiator attribution (issue #30 R3, the !64 honest-limitation
+    #: row): the staff principal who created the request, on the
+    #: statement document itself — an examiner reading a settlement
+    #: sees WHO requested it without a context switch to the audit log.
+    #: Bare user UUID only (least disclosure); None for legacy rows
+    #: written without an actor (attribution is never invented).
+    requested_by: uuid.UUID | None
     requested_at: datetime
     decided_at: datetime | None
     settled_at: datetime | None
@@ -980,7 +987,7 @@ async def exit_statement(
                 "SELECT e.id, e.member_id, m.member_no, m.name, m.status, "
                 "e.status, e.reason, e.shares_amount, e.deposits_amount, "
                 "e.loan_balance, e.fees, e.net_payable, e.created_at, "
-                "e.decided_at, e.settled_at, t.txn_ref "
+                "e.decided_at, e.settled_at, t.txn_ref, e.requested_by "
                 "FROM member_exits e "
                 "JOIN members m ON m.id = e.member_id "
                 "AND m.tenant_id = e.tenant_id "
@@ -1009,6 +1016,7 @@ async def exit_statement(
         loan_balance=Decimal(str(row[9])),
         fees=Decimal(str(row[10])),
         net_payable=Decimal(str(row[11])),
+        requested_by=uuid.UUID(str(row[16])) if row[16] is not None else None,
         requested_at=row[12],
         decided_at=row[13],
         settled_at=row[14],

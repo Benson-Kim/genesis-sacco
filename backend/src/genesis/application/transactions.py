@@ -35,7 +35,9 @@ from genesis.errors import ConflictError, InvalidInputError, NotFoundError
 #: taken from this mapping (never from user input) before interpolation.
 _ACCOUNT_TABLES = {"deposit": "deposit_accounts", "share": "share_accounts"}
 
-_TXN_COLS = "id, txn_ref, member_id, type, amount, channel, occurred_at, reversal_of_id"
+_TXN_COLS = (
+    "id, txn_ref, member_id, type, amount, channel, occurred_at, reversal_of_id, created_by"
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,12 @@ class TransactionRecord:
     occurred_at: datetime
     direction: Side
     is_reversal: bool
+    #: Posting-actor attribution (issue #30 R3, migration 0036): the
+    #: acting principal recorded at INSERT in ledger._post and pinned
+    #: immutable by the 0004 append-only fence. None for system/job
+    #: postings and for pre-0036 rows without unambiguous audit history
+    #: — attribution is never invented.
+    created_by: uuid.UUID | None
 
 
 async def _require_member(
@@ -313,6 +321,7 @@ def _row_to_txn(row: object) -> TransactionRecord:
         occurred_at=row[6],  # type: ignore[index]
         direction=member_direction(txn_type, is_reversal=is_reversal),
         is_reversal=is_reversal,
+        created_by=uuid.UUID(str(row[8])) if row[8] is not None else None,  # type: ignore[index]
     )
 
 

@@ -152,6 +152,13 @@ class ExitStatementOut(BaseModel):
     loan_balance: str
     fees: str
     net_payable: str
+    #: Initiator attribution on the statement document itself (issue
+    #: #30 R3; the !64 honest-limitation row): who requested this
+    #: settlement, next to the figures it produced. Least disclosure
+    #: (gate 1.6): the bare user UUID only — never a name or email;
+    #: resolving it stays behind access_control:view. null only for
+    #: legacy rows written without an actor (never invented).
+    requested_by: str | None
     requested_at: str
     decided_at: str | None
     settled_at: str | None
@@ -286,6 +293,7 @@ async def get_exit_statement(exit_id: uuid.UUID, ctx: ViewCtx) -> ExitStatementO
         loan_balance=str(doc.loan_balance),
         fees=str(doc.fees),
         net_payable=str(doc.net_payable),
+        requested_by=str(doc.requested_by) if doc.requested_by else None,
         requested_at=doc.requested_at.isoformat(),
         decided_at=doc.decided_at.isoformat() if doc.decided_at else None,
         settled_at=doc.settled_at.isoformat() if doc.settled_at else None,

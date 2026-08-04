@@ -36,7 +36,8 @@ API_TRANSITION_TARGETS = frozenset(
 )
 
 _COLS = (
-    "id, member_id, product_id, amount, term_months, rate_pct, purpose, stage, cover_pct, version"
+    "id, member_id, product_id, amount, term_months, rate_pct, purpose, stage, cover_pct, "
+    "created_by, version"
 )
 
 #: cover_pct is stored as NUMERIC(6,2); values above this cap carry no
@@ -56,6 +57,13 @@ class ApplicationRecord:
     purpose: str | None
     stage: ApplicationStage
     cover_pct: Decimal
+    #: Initiator attribution (issue #30 R4, migration 0036): the acting
+    #: principal recorded at INSERT. Drives the disbursement SoD check
+    #: (the initiator can never post their own disbursement) and rides
+    #: the read model as the bare UUID. None ONLY for pre-0036 rows
+    #: whose audit history was not unambiguous, or system-created rows
+    #: — attribution is never invented.
+    created_by: uuid.UUID | None
     version: int
 
 
@@ -78,7 +86,8 @@ def _row_to_application(row: Any) -> ApplicationRecord:
         purpose=str(row[6]) if row[6] is not None else None,
         stage=ApplicationStage(str(row[7])),
         cover_pct=Decimal(str(row[8])),
-        version=int(row[9]),
+        created_by=uuid.UUID(str(row[9])) if row[9] is not None else None,
+        version=int(row[10]),
     )
 
 
@@ -249,11 +258,16 @@ async def create_application(
     application_id = uuid.uuid4()
     await session.execute(
         text(
+            # created_by records the acting principal at INSERT (issue
+            # #30 R4, migration 0036): the attribution that powers the
+            # disbursement SoD check. NULL for system callers — an
+            # absent actor is recorded as absent, never fabricated.
             "INSERT INTO loan_applications "
             "(id, tenant_id, member_id, product_id, amount, term_months, "
-            " rate_pct, purpose, cover_pct) "
+            " rate_pct, purpose, cover_pct, created_by) "
             "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:mid AS uuid), "
-            "CAST(:pid AS uuid), :amount, :term, :rate, :purpose, :cover)"
+            "CAST(:pid AS uuid), :amount, :term, :rate, :purpose, :cover, "
+            "CAST(:actor AS uuid))"
         ),
         {
             "id": str(application_id),
@@ -265,6 +279,7 @@ async def create_application(
             "rate": str(product.rate_pct),
             "purpose": purpose,
             "cover": str(cover),
+            "actor": str(actor_id) if actor_id else None,
         },
     )
     await record_audit(
@@ -304,6 +319,7 @@ async def create_application(
         purpose=purpose,
         stage=ApplicationStage.SUBMITTED,
         cover_pct=cover,
+        created_by=actor_id,
         version=1,
     )
 
