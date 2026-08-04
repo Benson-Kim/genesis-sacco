@@ -48,40 +48,19 @@ export function isTerminalExitStatus(status: ExitStatus): boolean {
 
 /**
  * ISO-8601 datetime SHAPE for the exit timestamps (the !63 F-R4
- * lesson): exactly what the backend's `datetime.isoformat()` emits —
- * seconds always present, optional fractional seconds, optional
- * `Z`/`±HH:MM` offset. These fields feed `fmtDateTime` on an
- * operator-facing financial document; a garbage timestamp would render
- * "Invalid Date" there, so it is REJECTED at the boundary instead.
- */
-const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/;
-const timestampSchema = z.string().regex(TIMESTAMP_RE);
-
-/**
- * Canonical SERVER money decimal SHAPE (review F-M2), mirroring the
- * backend serialisation honestly: every exit money column is
- * `numeric(18,2)` serialised via `str(Decimal)` after `to_cents`
- * quantisation (backend api/member_exits.py `_out` / domain/money), so
- * the wire value is ALWAYS digits with exactly two decimal places and
- * no leading zeros beyond a lone 0. A plain z.string() would let
- * garbage ('abc', '1e5', '007.10') flow into fmtKes on the register,
- * the settlement dialog and the CANONICAL exit statement — asserted
- * away here, consistent with this module's reject-unknowns posture.
+ * lesson) and canonical SERVER money decimal SHAPE (review F-M2):
+ * SHARED shapes from `@/lib/schemas` — the single copy (gate 1.1,
+ * issue #30 A2/S2); this module was their reference implementation.
  *
  * The sign: shares_amount, deposits_amount, loan_balance and fees
  * carry DB CHECK (>= 0) constraints (migrations 0001/0010) and equity
  * is the server sum of two non-negative components — a '-' on any of
- * them is a contract violation and is REJECTED. net_payable
- * deliberately has NO such CHECK (migration 0010: the documented
- * loan-exceeds-assets branch) — it alone accepts a leading '-' and
- * renders verbatim with its sign.
+ * them is a contract violation and is REJECTED (`moneySchema`).
+ * net_payable deliberately has NO such CHECK (migration 0010: the
+ * documented loan-exceeds-assets branch) — it alone accepts a leading
+ * '-' (`signedMoneySchema`) and renders verbatim with its sign.
  */
-const MONEY_RE = /^(?:0|[1-9]\d*)\.\d{2}$/;
-const SIGNED_MONEY_RE = /^-?(?:0|[1-9]\d*)\.\d{2}$/;
-/** Non-negative server decimal (two-place scale, canonical shape). */
-const moneySchema = z.string().regex(MONEY_RE);
-/** net_payable ONLY: the documented negative branch keeps its sign. */
-const signedMoneySchema = z.string().regex(SIGNED_MONEY_RE);
+const timestampSchema = isoTimestampSchema;
 
 /** One exit request with its settlement SNAPSHOT (ExitOut). Every
  * money field is a decimal string in the CANONICAL server shape
