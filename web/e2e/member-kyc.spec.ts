@@ -95,7 +95,9 @@ const PROFILE_OUT = {
   member_type: "person",
   category: "Ordinary",
   profile: PERSON_PROFILE_PAYLOAD,
-  dpa_consent_at: "2026-08-01T09:00:00+00:00",
+  // Widened: the wizard mock rewrites this branch (null when consent
+  // was not captured with the create).
+  dpa_consent_at: "2026-08-01T09:00:00+00:00" as string | null,
   version: 3,
   created_at: "2026-08-01T09:00:00+00:00",
 };
