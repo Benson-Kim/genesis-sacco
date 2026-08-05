@@ -16,9 +16,12 @@
  *   configuration, every total from the persisted approval snapshot;
  *   `extra="forbid"` server-side turns a caller-supplied rate, period
  *   or total into a 422. The ONLY caller-chosen value in this module
- *   is the committee vote. Declare and distribute send an EMPTY body
- *   ({}): the contract's lone optional knob, batch_size, is a server
- *   tuning default this console deliberately never overrides.
+ *   is the committee vote. Declare and distribute carry NO
+ *   operator-chosen value either: the contract's lone knob,
+ *   batch_size, is a server tuning parameter — the generated type
+ *   requires the key, so this console sends the SERVER's own
+ *   documented default verbatim (SERVER_DEFAULT_BATCH_SIZE below),
+ *   never a client-chosen tuning.
  * - Ids travel as path parameters serialized by the generated client;
  *   bearer/tenant/idempotency secrets travel as HEADERS ONLY (1.6).
  * - MONEY (blocker (a)): every response figure is a server-computed
@@ -38,6 +41,14 @@ import {
 } from "./schemas";
 
 export const DIVIDENDS_PAGE_SIZE = 20;
+
+/** The SERVER's documented batch-size default (DeclareBody /
+ * DistributeBody `@default 200` — backend
+ * application/dividends.py:DEFAULT_BATCH_SIZE). The generated client
+ * type requires the key on the wire, so it is sent VERBATIM as the
+ * server documents it; this console never offers it as an operator
+ * choice (it is a paging tuning, not a business parameter). */
+export const SERVER_DEFAULT_BATCH_SIZE = 200;
 
 const declarationPageSchema = keysetPageSchema(declarationSchema);
 
@@ -69,14 +80,16 @@ export async function fetchDeclaration(declarationId: string): Promise<Declarati
 /**
  * Declare a dividend for the last completed financial year
  * (transactions:edit — back-office ledger governance, the P13.11 gate
- * decision). The body is EMPTY: rates and the FY period are resolved
+ * decision). Rates and the FY period are resolved
  * server-side from tenant configuration (v1.1 rule 1); an
  * unconfigured tenant, an existing live declaration for the FY, or a
- * zero payout each refuse with 409 — nothing is defaulted.
+ * zero payout each refuse with 409 — nothing is defaulted. The body
+ * carries only the server's own documented batch-size default (see
+ * SERVER_DEFAULT_BATCH_SIZE).
  */
 export async function declareDividend(idempotencyKey: string): Promise<DeclarationRecord> {
   const { data, error, response } = await api.POST("/dividends/declarations", {
-    body: {},
+    body: { batch_size: SERVER_DEFAULT_BATCH_SIZE },
     headers: { "Idempotency-Key": idempotencyKey },
   });
   if (error !== undefined || data === undefined) throw toApiError(error, response);
@@ -139,10 +152,11 @@ export async function voidDeclaration(
  * exits are disposed as unclaimed payables (issue #19 P3, migration
  * 0022), and concurrency-skipped members (`pending_members > 0`,
  * status still "approved") are picked up by an idempotent RE-RUN.
- * The body is EMPTY — no money field, no version: every figure
- * derives from the persisted approval snapshot, which the first run
- * re-verifies against live balances (any drift is a 409 with NOTHING
- * posted; the remedy is void + re-declare).
+ * The body carries NO money field and NO version — only the server's
+ * own documented batch-size default (see SERVER_DEFAULT_BATCH_SIZE):
+ * every figure derives from the persisted approval snapshot, which
+ * the first run re-verifies against live balances (any drift is a
+ * 409 with NOTHING posted; the remedy is void + re-declare).
  */
 export async function distributeDeclaration(
   declarationId: string,
@@ -152,7 +166,7 @@ export async function distributeDeclaration(
     "/dividends/declarations/{declaration_id}/distribution",
     {
       params: { path: { declaration_id: declarationId } },
-      body: {},
+      body: { batch_size: SERVER_DEFAULT_BATCH_SIZE },
       headers: { "Idempotency-Key": idempotencyKey },
     },
   );
