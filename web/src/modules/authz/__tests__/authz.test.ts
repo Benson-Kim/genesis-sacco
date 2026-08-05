@@ -51,8 +51,17 @@ describe("authz", () => {
       "reports",
       "settings",
       "access_control",
+      // P13.15 (#31 batch 1, audit #30 R1): the corrections fraud
+      // channel carries its OWN module, never generic transactions.
+      // The backend's member_identity (P14.5) is DELIBERATELY absent:
+      // it gates member-facing auth substrate routes with no console
+      // surface — deny-by-default means an unknown module id simply
+      // never grants anything here.
+      "corrections",
     ]);
     expect(isModuleId("members")).toBe(true);
+    expect(isModuleId("corrections")).toBe(true);
+    expect(isModuleId("member_identity")).toBe(false);
     expect(isModuleId("dashboard")).toBe(false);
   });
 });
