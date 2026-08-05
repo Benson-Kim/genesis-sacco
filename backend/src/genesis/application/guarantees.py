@@ -27,18 +27,18 @@ from typing import Any, cast
 from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from genesis.application import rbac as rbac_service
 from genesis.application.audit import record_audit
+from genesis.application.auth import MemberAuthContext
 from genesis.application.loan_applications import (
     application_max_eligible,
     get_application,
     recompute_cover,
 )
+from genesis.application.member_auth import live_credential_by_id
 from genesis.application.outbox import enqueue_event
 from genesis.domain.lending import ApplicationStage
 from genesis.domain.members import MemberStatus, MoneyOperation, member_may
 from genesis.domain.money import ZERO, to_cents
-from genesis.domain.rbac import Action, Module
 from genesis.errors import (
     ConflictError,
     ForbiddenError,
@@ -278,73 +278,202 @@ async def pledge_guarantee(
     )
 
 
-async def consent_guarantee(
+# ---------------------------------------------------------------------------
+# P14.5 — consent core (pledged -> active), ONE implementation
+# ---------------------------------------------------------------------------
+
+#: Code-owned principal fragments for the consent write (v1.1 rule 6:
+#: the fragment is chosen by the code path, never caller input; every
+#: VALUE is a bound parameter). Consent rows carry their principal at
+#: the DB level (FM4): the member path stamps the consenting
+#: credential; the staff override stamps the attesting user + the
+#: cited evidence. An UPDATE carrying NEITHER is refused by the 0035
+#: guarantee_consent_requires_principal trigger.
+_CONSENT_MEMBER_FRAGMENT = ", consented_by_credential_id = CAST(:cred AS uuid)"
+_CONSENT_ATTESTED_FRAGMENT = (
+    ", consent_attested_by = CAST(:attestor AS uuid), consent_reference = :cref"
+)
+
+
+async def _lock_pledged_guarantee(
+    session: AsyncSession, tenant_id: uuid.UUID, guarantee_id: uuid.UUID
+) -> _GuaranteeRow:
+    """Lock the guarantee row ALONE (lock-order.md §3 single-node
+    locker — the consent posture is unchanged by P14.5) and require
+    the pledged state."""
+    g = await _read_guarantee(session, tenant_id, guarantee_id, for_update=True)
+    if g is None:
+        raise NotFoundError(f"guarantee {guarantee_id} not found")
+    if g.status != "pledged":
+        raise ConflictError(f"only pledged guarantees can be consented, not '{g.status}'")
+    return g
+
+
+async def _activate_guarantee(
     session: AsyncSession,
     tenant_id: uuid.UUID,
-    actor_id: uuid.UUID | None,
+    guarantee_id: uuid.UUID,
+    *,
+    version: int,
+    principal_fragment: str,
+    principal_params: dict[str, str],
+) -> int:
+    """The single pledged->active write (gates 1.4, 1.5): optimistic
+    version fence, explicit tenant predicate on top of RLS, RETURNING
+    so the response version is the database's word. The principal
+    fragment is one of the code-owned literals above."""
+    updated = (
+        await session.execute(
+            text(
+                "UPDATE guarantees SET status = 'active', "  # noqa: S608
+                "version = version + 1, updated_at = now()"
+                f"{principal_fragment} "
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "AND version = :ver RETURNING version"
+            ),
+            {
+                "id": str(guarantee_id),
+                "tid": str(tenant_id),
+                "ver": version,
+                **principal_params,
+            },
+        )
+    ).first()
+    if updated is None:
+        raise ConflictError(f"stale version {version} for guarantee {guarantee_id}")
+    return int(updated[0])
+
+
+def _consented_record(g: _GuaranteeRow, new_version: int) -> GuaranteeRecord:
+    return GuaranteeRecord(
+        id=g.id,
+        application_id=g.application_id,
+        loan_id=g.loan_id,
+        guarantor_member_id=g.guarantor_member_id,
+        borrower_member_id=g.borrower_member_id,
+        amount=g.amount,
+        status="active",
+        version=new_version,
+    )
+
+
+async def consent_guarantee_as_member(
+    session: AsyncSession,
+    principal: MemberAuthContext,
     guarantee_id: uuid.UUID,
     *,
     version: int,
 ) -> GuaranteeRecord:
-    """Record guarantor consent: pledged -> active (gates 1.4, 1.5)."""
-    row = (
-        await session.execute(
-            text(
-                "SELECT application_id, guarantor_member_id, borrower_member_id, "
-                "amount, status, version, loan_id FROM guarantees "
-                "WHERE id = CAST(:id AS uuid) "
-                "AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
-            ),
-            {"id": str(guarantee_id), "tid": str(tenant_id)},
-        )
-    ).first()
-    if row is None:
-        raise NotFoundError(f"guarantee {guarantee_id} not found")
-    status = str(row[4])
-    if status != "pledged":
-        raise ConflictError(f"only pledged guarantees can be consented, not '{status}'")
-    result = cast(
-        CursorResult[Any],
-        await session.execute(
-            text(
-                # Explicit tenant predicate on the write, on top of RLS
-                # (defence in depth, gate 1.6).
-                "UPDATE guarantees SET status = 'active', "
-                "version = version + 1, updated_at = now() "
-                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
-                "AND version = :ver"
-            ),
-            {"id": str(guarantee_id), "tid": str(tenant_id), "ver": version},
-        ),
+    """Guarantor consent as an act of the MEMBER principal (P14.5 FM2).
+
+    The credential->member LINK is re-verified INSIDE this transaction
+    under the guarantee row lock (live_credential_by_id — the ONE
+    implementation the auth paths use), so a link revoked or re-pointed
+    after token issue can never consent: the LINK, never any email,
+    decides. Least disclosure (gate 1.6): every wrong-principal shape —
+    dead link, exited member, someone else's guarantee — gets the SAME
+    single refusal; the audit actor is the credential id.
+    """
+    tenant_id = principal.tenant_id
+    g = await _lock_pledged_guarantee(session, tenant_id, guarantee_id)
+    credential = await live_credential_by_id(session, tenant_id, principal.credential_id)
+    if credential is None or credential.member_id != g.guarantor_member_id:
+        raise ForbiddenError("only the guarantor's own live credential may consent")
+    new_version = await _activate_guarantee(
+        session,
+        tenant_id,
+        guarantee_id,
+        version=version,
+        principal_fragment=_CONSENT_MEMBER_FRAGMENT,
+        principal_params={"cred": str(principal.credential_id)},
     )
-    if result.rowcount != 1:
-        raise ConflictError(f"stale version {version} for guarantee {guarantee_id}")
     await record_audit(
         session,
         tenant_id,
-        actor_id,
+        principal.credential_id,
         action="guarantee.consent",
         entity="guarantees",
         entity_id=str(guarantee_id),
         before={"status": "pledged"},
-        after={"status": "active"},
+        after={
+            "status": "active",
+            "consented_by_credential_id": str(principal.credential_id),
+            "guarantor_member_id": str(g.guarantor_member_id),
+        },
     )
     await enqueue_event(
         session,
         tenant_id,
         event_type="guarantee.consented",
-        payload={"guarantee_id": str(guarantee_id)},
+        payload={
+            "guarantee_id": str(guarantee_id),
+            "consented_by_credential_id": str(principal.credential_id),
+            "notify_member_id": str(g.guarantor_member_id),
+        },
     )
-    return GuaranteeRecord(
-        id=guarantee_id,
-        application_id=uuid.UUID(str(row[0])) if row[0] is not None else None,
-        loan_id=uuid.UUID(str(row[6])) if row[6] is not None else None,
-        guarantor_member_id=uuid.UUID(str(row[1])),
-        borrower_member_id=uuid.UUID(str(row[2])),
-        amount=Decimal(str(row[3])),
-        status="active",
-        version=int(row[5]) + 1,
+    return _consented_record(g, new_version)
+
+
+async def consent_guarantee_override(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    guarantee_id: uuid.UUID,
+    *,
+    version: int,
+    consent_reference: str,
+) -> GuaranteeRecord:
+    """STAFF-ATTESTED consent override (P14.5 scope 4).
+
+    Consent is the member principal's act; this path exists for the
+    cases where the member cannot act (no credential yet, paper
+    consent) and is deliberately NOT the P9 staff consent: it carries
+    its own permission (member_identity:approve at the route — never
+    applications:edit), its own audit category
+    (guarantee.consent_override), a MANDATORY consent_reference citing
+    the evidence, and a confirmation notification to the guarantor so
+    an attestation made in their name never goes unseen (the !29
+    substitution-consent lesson; detection control).
+    """
+    consent_reference = consent_reference.strip()
+    if not consent_reference:
+        raise UnprocessableError("the staff-attested consent override must cite its evidence")
+    g = await _lock_pledged_guarantee(session, tenant_id, guarantee_id)
+    new_version = await _activate_guarantee(
+        session,
+        tenant_id,
+        guarantee_id,
+        version=version,
+        principal_fragment=_CONSENT_ATTESTED_FRAGMENT,
+        principal_params={"attestor": str(actor_id), "cref": consent_reference},
     )
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="guarantee.consent_override",
+        entity="guarantees",
+        entity_id=str(guarantee_id),
+        before={"status": "pledged"},
+        after={
+            "status": "active",
+            "attested_by": str(actor_id),
+            "consent_reference": consent_reference,
+            "guarantor_member_id": str(g.guarantor_member_id),
+        },
+    )
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="guarantee.consented",
+        payload={
+            "guarantee_id": str(guarantee_id),
+            "attested_by": str(actor_id),
+            "consent_reference": consent_reference,
+            "notify_member_id": str(g.guarantor_member_id),
+        },
+    )
+    return _consented_record(g, new_version)
 
 
 async def release_guarantees_for_loan(
@@ -483,101 +612,60 @@ async def _lock_release_anchor(
     return stage
 
 
-async def _actor_is_guarantor(
-    session: AsyncSession,
-    tenant_id: uuid.UUID,
-    actor_id: uuid.UUID,
-    guarantor_member_id: uuid.UUID,
-) -> bool:
-    """Whether the calling user IS the guarantor member (P13.14).
+async def _lock_release_target(
+    session: AsyncSession, tenant_id: uuid.UUID, guarantee_id: uuid.UUID
+) -> tuple[_GuaranteeRow, ApplicationStage | None]:
+    """probe -> anchor -> row lock: the ONE release lock acquisition.
 
-    Interim identity link until member-facing authentication lands
-    (BUILD_PROMPTS P14): the caller's users.email must equal the
-    guarantor member's members.email inside the same tenant. The match
-    is BYTE-EXACT (Postgres `=`, case- and whitespace-sensitive) by
-    decision: no email canonicalisation exists anywhere in this
-    codebase (users and members store emails verbatim), so a variant
-    fails CLOSED — it can only deny the self-service path, never widen
-    it (review R3; tested). The join is deny-by-default (a NULL member
-    email never matches) and cannot be steered by callers below staff
-    level: rewriting either email requires members:edit or
-    access_control:edit, and every role holding those already holds
-    applications:edit (the staff release path) — asserted against the
-    SEEDED P4 matrix by test, not by comment. Both lookups carry
-    explicit tenant predicates on top of RLS, so a user email-linked to
-    a member of ANOTHER tenant never matches (gate 1.6 v1.1; tested).
-    """
-    row = (
-        await session.execute(
-            text(
-                "SELECT 1 FROM users u JOIN members m "
-                "ON m.email = u.email AND m.tenant_id = u.tenant_id "
-                "WHERE u.id = CAST(:uid AS uuid) AND u.tenant_id = CAST(:tid AS uuid) "
-                "AND m.id = CAST(:mid AS uuid) AND m.email IS NOT NULL"
-            ),
-            {
-                "uid": str(actor_id),
-                "tid": str(tenant_id),
-                "mid": str(guarantor_member_id),
-            },
-        )
-    ).first()
-    return row is not None
-
-
-async def release_guarantee(
-    session: AsyncSession,
-    tenant_id: uuid.UUID,
-    actor_id: uuid.UUID,
-    guarantee_id: uuid.UUID,
-    *,
-    version: int,
-    actor_role_id: uuid.UUID,
-) -> GuaranteeRecord:
-    """Release one guarantee under the P13.14 rules (gates 1.4, 1.6).
-
-    Branches (all decided under the application/loan row lock):
-      * pledged (unconsented): released by staff with applications:edit
-        or by the guarantor themselves (_actor_is_guarantor).
-      * active + undisbursed application: staff-only; allowed only if
-        remaining cover still satisfies the product rule, re-verified
-        AT EXECUTION under the borrower's deposit-account row lock (the
-        P7 gate math via application_max_eligible — gate 1.1, no forked
-        cover logic). The release write happens first, so the check
-        sees exactly the post-release state; a failure rolls the whole
-        transaction back (TOCTOU-proof).
-      * active + disbursed loan: never bare-released — 409; the only
-        path is substitute_guarantee (atomic swap).
-
-    Least disclosure (gate 1.6): no rejection ever echoes cover,
-    capacity, or pledge figures; the audit row carries the numbers.
+    Lock order (lock-order.md E4/E6/E7): application/loan row first,
+    then the guarantee row FOR UPDATE, matching P9 pledging
+    (application FOR UPDATE first). Shared by the staff and member
+    release paths so the locking discipline can never diverge.
     """
     probe = await _read_guarantee(session, tenant_id, guarantee_id, for_update=False)
     if probe is None:
         raise NotFoundError(f"guarantee {guarantee_id} not found")
-    # Lock order: application/loan row -> (borrower deposit account for
-    # the cover guard). The guarantee row lock is taken after the
-    # anchor, matching P9 pledging (application FOR UPDATE first).
     stage = await _lock_release_anchor(session, tenant_id, probe)
     g = await _read_guarantee(session, tenant_id, guarantee_id, for_update=True)
     if g is None:  # pragma: no cover - the probe above already found it
         raise NotFoundError(f"guarantee {guarantee_id} not found")
     if g.status == "released":
         raise ConflictError(f"guarantee {guarantee_id} is already released")
-    staff_edit = await rbac_service.has_permission(
-        session, actor_role_id, Module.APPLICATIONS, Action.EDIT
-    )
-    if not staff_edit and (
-        g.status != "pledged"
-        or not await _actor_is_guarantor(session, tenant_id, actor_id, g.guarantor_member_id)
-    ):
-        # Wrong actor (P13.14 failure mode 7): a guarantor may withdraw
-        # only their OWN unconsented pledge; anything else needs
-        # applications:edit.
-        raise ForbiddenError(
-            "only staff with applications:edit or the guarantor of their own "
-            "unconsented pledge may release a guarantee"
-        )
+    return g, stage
+
+
+async def _release_locked_guarantee(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    g: _GuaranteeRow,
+    stage: ApplicationStage | None,
+    *,
+    version: int,
+) -> GuaranteeRecord:
+    """The single release write/guard/audit/outbox core (gate 1.1).
+
+    Caller holds the anchor + guarantee row locks
+    (_lock_release_target). Rules decided here, identically for both
+    principals:
+      * active + disbursed loan: never bare-released — 409; the only
+        path is substitute_guarantee (atomic swap).
+      * active + undisbursed application: allowed only if remaining
+        cover still satisfies the product rule, re-verified AT
+        EXECUTION under the borrower's deposit-account row lock (the
+        P7 gate math via application_max_eligible — gate 1.1, no
+        forked cover logic). The release write happens first, so the
+        check sees exactly the post-release state; a failure rolls the
+        whole transaction back (TOCTOU-proof).
+
+    ``actor_id`` is the acting principal's id — the staff user or the
+    member CREDENTIAL (P14.5): audit_log.actor_id carries whichever
+    principal acted.
+
+    Least disclosure (gate 1.6): no rejection ever echoes cover,
+    capacity, or pledge figures; the audit row carries the numbers.
+    """
+    guarantee_id = g.id
     disbursed = g.loan_id is not None or stage is ApplicationStage.DISBURSED
     if g.status == "active" and disbursed:
         # Failure mode 2: no release path exists for a disbursed loan's
@@ -668,6 +756,55 @@ async def release_guarantee(
     )
 
 
+async def release_guarantee(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    guarantee_id: uuid.UUID,
+    *,
+    version: int,
+) -> GuaranteeRecord:
+    """STAFF release (P13.14 rules; P14.5 actor model).
+
+    Gated applications:edit EXACTLY at the route — the P14.5 retirement
+    of the !29 interim email-match: a guarantor acting for themselves
+    is a MEMBER principal on the /member route
+    (release_guarantee_as_member), never a staff user with a matching
+    email. Rules and side effects live in the shared core.
+    """
+    g, stage = await _lock_release_target(session, tenant_id, guarantee_id)
+    return await _release_locked_guarantee(session, tenant_id, actor_id, g, stage, version=version)
+
+
+async def release_guarantee_as_member(
+    session: AsyncSession,
+    principal: MemberAuthContext,
+    guarantee_id: uuid.UUID,
+    *,
+    version: int,
+) -> GuaranteeRecord:
+    """Guarantor withdraws their OWN unconsented pledge (P14.5 FM2).
+
+    The credential->member link is re-verified INSIDE the transaction
+    under the guarantee row lock (the ONE live_credential_by_id
+    implementation): the LINK, never any email, decides. Scope is
+    deliberately minimal — the member's own PLEDGED guarantee only;
+    consented (active) collateral needs the staff paths. Least
+    disclosure (gate 1.6): every wrong-principal shape — dead link,
+    someone else's guarantee, an already-consented pledge — gets the
+    SAME single refusal.
+    """
+    tenant_id = principal.tenant_id
+    g, stage = await _lock_release_target(session, tenant_id, guarantee_id)
+    credential = await live_credential_by_id(session, tenant_id, principal.credential_id)
+    owner = credential is not None and credential.member_id == g.guarantor_member_id
+    if not owner or g.status != "pledged":
+        raise ForbiddenError("only the guarantor's own unconsented pledge may be withdrawn")
+    return await _release_locked_guarantee(
+        session, tenant_id, principal.credential_id, g, stage, version=version
+    )
+
+
 async def substitute_guarantee(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -676,7 +813,6 @@ async def substitute_guarantee(
     *,
     version: int,
     guarantor_member_id: uuid.UUID,
-    consented: bool,
     consent_reference: str,
     amount: Decimal | None = None,
 ) -> tuple[GuaranteeRecord, GuaranteeRecord]:
@@ -692,27 +828,27 @@ async def substitute_guarantee(
     via the single P9 capacity implementation (gate 1.1). Returns
     (released, replacement).
 
-    Consent integrity (review R1 — accepted risk, closed by P14): the
-    substitute guarantor cannot act for themselves until member-facing
-    authentication exists, so their consent is STAFF-ATTESTED here —
-    exactly the trust model of the P9 consent route, which is likewise
-    gated on applications:edit. To keep the attestation honest it is a
-    first-class audited fact, not a bare boolean: the caller must cite
-    the evidence (consent_reference, e.g. the signed guarantorship
-    form), a dedicated guarantee.consent audit row records WHO attested
-    on WHAT basis, and a consent-confirmation outbox notification goes
+    Consent integrity (review R1, completed by P14.5): the substitute's
+    consent is a STAFF-ATTESTED override — never a caller-asserted
+    boolean (the !29 lesson made structural: no `consented` field
+    exists anywhere). The attestation must cite its evidence
+    (consent_reference, e.g. the signed guarantorship form); the
+    replacement row CARRIES the attestation columns, so the 0035 FM4
+    trigger refuses an active row written without a principal; a
+    dedicated guarantee.consent_override audit row records WHO attested
+    on WHAT basis; and a consent-confirmation outbox notification goes
     to the substitute guarantor so a conscripted member finds out
     immediately (detection control).
     """
     consent_reference = consent_reference.strip()
-    if not consented or not consent_reference:
+    if not consent_reference:
         # Failure mode 4: collateral is never activated without the
         # guarantor's recorded consent (the P9 consent contract); an
         # unconsented substitute would recreate the exact hole the P7
         # step-2c gate closed. The attestation must cite its evidence.
         raise UnprocessableError(
-            "the replacement pledge requires the substitute guarantor's recorded "
-            "consent and a consent reference"
+            "the replacement pledge requires a consent reference citing the "
+            "substitute guarantor's attested consent"
         )
     probe = await _read_guarantee(session, tenant_id, guarantee_id, for_update=False)
     if probe is None:
@@ -771,11 +907,17 @@ async def substitute_guarantee(
                 text(
                     # RETURNING version: the schema default is the source
                     # of truth for the new row's version (review R5).
+                    # The row carries the staff attestation (P14.5 FM4):
+                    # the 0035 trigger refuses an active INSERT without
+                    # a principal, so a substitution that lost these
+                    # columns would fail AT THE DATABASE.
                     "INSERT INTO guarantees "
                     "(id, tenant_id, guarantor_member_id, borrower_member_id, "
-                    " application_id, loan_id, amount, status) "
+                    " application_id, loan_id, amount, status, "
+                    " consent_attested_by, consent_reference) "
                     "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:g AS uuid), "
-                    "CAST(:b AS uuid), CAST(:a AS uuid), CAST(:l AS uuid), :amount, 'active') "
+                    "CAST(:b AS uuid), CAST(:a AS uuid), CAST(:l AS uuid), :amount, 'active', "
+                    "CAST(:attestor AS uuid), :cref) "
                     "RETURNING version"
                 ),
                 {
@@ -786,6 +928,8 @@ async def substitute_guarantee(
                     "a": str(g.application_id) if g.application_id else None,
                     "l": str(g.loan_id) if g.loan_id else None,
                     "amount": str(replacement_amount),
+                    "attestor": str(actor_id),
+                    "cref": consent_reference,
                 },
             )
         ).scalar_one()
@@ -823,16 +967,16 @@ async def substitute_guarantee(
             "status": "active",
         },
     )
-    # Review R1: the consent attestation is a first-class audited fact
-    # mirroring the P9 consent trail — WHO attested, on WHAT basis —
-    # plus a confirmation notification to the substitute guarantor so
-    # an attestation made in their name never goes unseen (gates 1.5,
-    # 1.2; accepted risk closed by P14 member-facing auth).
+    # Review R1, completed by P14.5: the consent attestation is a
+    # first-class audited fact under the OVERRIDE category — WHO
+    # attested, on WHAT basis — plus a confirmation notification to
+    # the substitute guarantor so an attestation made in their name
+    # never goes unseen (gates 1.5, 1.2).
     await record_audit(
         session,
         tenant_id,
         actor_id,
-        action="guarantee.consent",
+        action="guarantee.consent_override",
         entity="guarantees",
         entity_id=str(replacement_id),
         after={

@@ -1116,7 +1116,80 @@
         "title": "ClosePeriodBody",
         "type": "object"
       },
-      "ConsentBody": {
+      "ConsentOverrideBody": {
+        "additionalProperties": false,
+        "description": "Staff-attested consent override (P14.5 scope 4): consent is the\nmember principal's act on the /member routes; this body carries the\noptimistic-lock version plus the MANDATORY evidence citation \u2014 a\nbare caller-asserted consent flag is a rejected design (the !29\nlesson; there is no boolean to assert).",
+        "properties": {
+          "consent_reference": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Consent Reference",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "consent_reference"
+        ],
+        "title": "ConsentOverrideBody",
+        "type": "object"
+      },
+      "CredentialCreateBody": {
+        "additionalProperties": false,
+        "description": "extra=\"forbid\" (gate 1.6 v1.1): the member comes from the path,\nthe status from the schema default \u2014 the email is the only input.",
+        "properties": {
+          "email": {
+            "maxLength": 254,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "CredentialCreateBody",
+        "type": "object"
+      },
+      "CredentialOut": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "member_id": {
+            "title": "Member Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "member_id",
+          "email",
+          "status",
+          "version"
+        ],
+        "title": "CredentialOut",
+        "type": "object"
+      },
+      "CredentialRevokeBody": {
         "additionalProperties": false,
         "properties": {
           "version": {
@@ -1128,7 +1201,7 @@
         "required": [
           "version"
         ],
-        "title": "ConsentBody",
+        "title": "CredentialRevokeBody",
         "type": "object"
       },
       "DashboardSummaryOut": {
@@ -2488,7 +2561,7 @@
       },
       "GuaranteeSubstituteBody": {
         "additionalProperties": false,
-        "description": "Atomic-swap request (P13.14). consented records the substitute\nguarantor's staff-attested consent and consent_reference cites the\nevidence it rests on (e.g. the signed guarantorship form) \u2014 an\nunconsented or unreferenced substitute is refused (422) and the\nattestation is written as a first-class audited fact (review R1).\namount may only meet or exceed the released amount (server-derived\nfrom the guarantee row when omitted).",
+        "description": "Atomic-swap request (P13.14; P14.5 scope 4). consent_reference\ncites the evidence the staff attestation rests on (e.g. the signed\nguarantorship form) \u2014 an unreferenced substitute is refused (422)\nand the attestation is written onto the replacement row and as a\nfirst-class guarantee.consent_override audit fact. The pre-P14.5\ncaller-asserted `consented` boolean is REMOVED (the !29 lesson):\nconsent is never a flag a caller asserts. amount may only meet or\nexceed the released amount (server-derived from the guarantee row\nwhen omitted).",
         "properties": {
           "amount": {
             "anyOf": [
@@ -2513,10 +2586,6 @@
             "title": "Consent Reference",
             "type": "string"
           },
-          "consented": {
-            "title": "Consented",
-            "type": "boolean"
-          },
           "guarantor_member_id": {
             "format": "uuid",
             "title": "Guarantor Member Id",
@@ -2531,7 +2600,6 @@
         "required": [
           "version",
           "guarantor_member_id",
-          "consented",
           "consent_reference"
         ],
         "title": "GuaranteeSubstituteBody",
@@ -2850,6 +2918,22 @@
         "title": "LoanStatus",
         "type": "string"
       },
+      "MemberActBody": {
+        "additionalProperties": false,
+        "description": "Consent/self-release body: the optimistic-lock version ONLY.\n\nextra=\"forbid\" (gate 1.6 v1.1): there is deliberately NO field for\nwho consents \u2014 the principal IS the authenticated credential; a\ncaller-asserted identity or consent flag is a rejected design (the\n!29 lesson).",
+        "properties": {
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "MemberActBody",
+        "type": "object"
+      },
       "MemberCreateBody": {
         "properties": {
           "email": {
@@ -3125,7 +3209,8 @@
           "reports",
           "settings",
           "access_control",
-          "corrections"
+          "corrections",
+          "member_identity"
         ],
         "title": "Module",
         "type": "string"
@@ -7904,6 +7989,60 @@
         ]
       }
     },
+    "/credentials/{credential_id}/revoke": {
+      "post": {
+        "description": "Revoke a credential link (FM3). The row is kept (forensic\nhistory); every live use of the credential dies at its next\nper-request or in-transaction link re-check.",
+        "operationId": "revoke_member_credential_credentials__credential_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Credential Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialRevokeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Member Credential",
+        "tags": [
+          "member-identity"
+        ]
+      }
+    },
     "/dashboard/summary": {
       "get": {
         "description": "The prototype dashboard figures, sliced per the caller's matrix.",
@@ -8361,7 +8500,8 @@
     },
     "/guarantees/{guarantee_id}/consent": {
       "post": {
-        "operationId": "consent_guarantee_guarantees__guarantee_id__consent_post",
+        "description": "Staff-attested consent OVERRIDE: pledged -> active (P14.5).\n\nConsent is an act of the MEMBER principal\n(POST /member/guarantees/{id}/consent); this staff path is an\nexplicit attested override \u2014 member_identity:approve, its own\nguarantee.consent_override audit category, a mandatory evidence\ncitation, and a confirmation notification to the guarantor.",
+        "operationId": "consent_guarantee_override_guarantees__guarantee_id__consent_post",
         "parameters": [
           {
             "in": "path",
@@ -8378,7 +8518,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ConsentBody"
+                "$ref": "#/components/schemas/ConsentOverrideBody"
               }
             }
           },
@@ -8406,7 +8546,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Consent Guarantee",
+        "summary": "Consent Guarantee Override",
         "tags": [
           "loans"
         ]
@@ -8414,7 +8554,7 @@
     },
     "/guarantees/{guarantee_id}/release": {
       "post": {
-        "description": "Release one guarantee per the P13.14 rules (prototype \"Release\").\n\nStaff (applications:edit) release pledged guarantees and \u2014 cover\nrule permitting \u2014 active ones on undisbursed applications; a\nguarantor may withdraw their own unconsented pledge. An active\nguarantee behind a disbursed loan is never bare-released (409):\nuse the substitution endpoint.",
+        "description": "Release one guarantee per the P13.14 rules (prototype \"Release\").\n\nSTAFF-only since P14.5: applications:edit EXACTLY \u2014 the interim\nemail-match self-service is retired; a guarantor withdraws their\nown unconsented pledge as a MEMBER principal\n(POST /member/guarantees/{id}/release). Staff release pledged\nguarantees and \u2014 cover rule permitting \u2014 active ones on\nundisbursed applications. An active guarantee behind a disbursed\nloan is never bare-released (409): use the substitution endpoint.",
         "operationId": "release_guarantee_guarantees__guarantee_id__release_post",
         "parameters": [
           {
@@ -9459,6 +9599,244 @@
         ]
       }
     },
+    "/member/auth/otp/request": {
+      "post": {
+        "description": "Member OTP request (the P3 policy verbatim; never reveals\nwhether a credential exists).",
+        "operationId": "request_member_otp_member_auth_otp_request_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtpRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Request Member Otp Member Auth Otp Request Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Member Otp",
+        "tags": [
+          "member"
+        ]
+      }
+    },
+    "/member/auth/otp/verify": {
+      "post": {
+        "description": "Verify the member OTP; issues MEMBER-audience tokens (FM1).",
+        "operationId": "verify_member_otp_member_auth_otp_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtpVerifyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Member Otp",
+        "tags": [
+          "member"
+        ]
+      }
+    },
+    "/member/auth/refresh": {
+      "post": {
+        "description": "Rotate a member refresh token; reuse revokes the family (P3).",
+        "operationId": "refresh_member_token_member_auth_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Member Token",
+        "tags": [
+          "member"
+        ]
+      }
+    },
+    "/member/guarantees/{guarantee_id}/consent": {
+      "post": {
+        "description": "Guarantor consent as the MEMBER principal: pledged -> active.\n\nThe link is re-verified inside the transaction under the guarantee\nrow lock (FM2); the consent row carries the credential (FM4).",
+        "operationId": "consent_guarantee_as_member_member_guarantees__guarantee_id__consent_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "guarantee_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Guarantee Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemberActBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuaranteeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Consent Guarantee As Member",
+        "tags": [
+          "member"
+        ]
+      }
+    },
+    "/member/guarantees/{guarantee_id}/release": {
+      "post": {
+        "description": "Withdraw the member's OWN unconsented pledge (P13.14 rules;\nthe member-principal replacement for the retired email-match).",
+        "operationId": "release_guarantee_as_member_member_guarantees__guarantee_id__release_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "guarantee_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Guarantee Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemberActBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuaranteeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Guarantee As Member",
+        "tags": [
+          "member"
+        ]
+      }
+    },
     "/members": {
       "get": {
         "operationId": "list_members_members_get",
@@ -9724,6 +10102,106 @@
         "summary": "Update Member",
         "tags": [
           "members"
+        ]
+      }
+    },
+    "/members/{member_id}/credentials": {
+      "get": {
+        "description": "Link history for one member (member_identity:view \u2014 the\nidentity surface is never disclosed under mere members:view).",
+        "operationId": "list_member_credentials_members__member_id__credentials_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "member_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Member Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CredentialOut"
+                  },
+                  "title": "Response List Member Credentials Members  Member Id  Credentials Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Member Credentials",
+        "tags": [
+          "member-identity"
+        ]
+      },
+      "post": {
+        "description": "Link a login email to a member (FM3: audited admin mutation;\nthe active-email claim is atomic \u2014 a lost race is a 409).",
+        "operationId": "create_member_credential_members__member_id__credentials_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "member_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Member Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialCreateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Member Credential",
+        "tags": [
+          "member-identity"
         ]
       }
     },

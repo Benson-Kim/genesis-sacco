@@ -611,6 +611,8 @@ def test_role_assignment_is_audited_and_propagates_on_refresh() -> None:
                 refreshed.json()["access_token"],
                 os.environ["JWT_SIGNING_KEY"],
                 algorithms=["HS256"],
+                # P14.5 FM1: staff tokens carry the STAFF audience.
+                audience="genesis-staff",
             )
             assert claims["rid"] == str(accountant_rid)
         async with tenant_session(factory(), tid) as session:

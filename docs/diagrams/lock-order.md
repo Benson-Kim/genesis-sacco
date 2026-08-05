@@ -181,7 +181,10 @@ and stop, or never touch it):
 | Application stage / committee vote / create | APP alone; create takes MSELF FOR SHARE alone | `loan_applications.py:transition_stage` L413, `cast_vote` L503, `create_application` L220 |
 | Exit vote / void | EXIT alone | `member_exits.py:cast_exit_vote` L498, `void_exit` L629 |
 | Dividend vote / void / distribution-open | DECL alone | `dividends.py:cast_dividend_vote` L658, `void_declaration` L784, `distribute_dividend` opening txn L1092 |
-| Guarantee consent | GUAR alone | `guarantees.py:consent_guarantee` L273 |
+| Guarantee consent (both principals, P14.5) | GUAR alone | `guarantees.py:_lock_pledged_guarantee` (via `_read_guarantee(for_update=True)`) — the ONE pledged→active lock shared by `consent_guarantee_as_member` and the staff-attested `consent_guarantee_override`; the member path's credential→member link re-check under the held row is a plain MVCC read (`member_auth.live_credential_by_id`), no lock |
+| Member OTP verify (P14.5) | member OTP challenge row alone | `member_auth.py:verify_member_otp` L211 — the E18 analogue WITHOUT the leading principal-row lock: credential revocation never writes challenge rows (unlike staff suspension), so there is no verify-vs-revoke lock ordering to defend; liveness is re-checked per use instead |
+| Member refresh rotation (P14.5) | member refresh token row alone | `member_auth.py:rotate_member_refresh_token` L287 — the E19 analogue WITHOUT the leading principal-row lock (same reasoning as the verify row; the pre-lock credential liveness check is an unlocked MVCC read) |
+| Member credential link create/revoke (P14.5) | MSELF alone (chain ROOT) | `member_identity.py:_lock_member` L87 — the recovery-case-open single-node pattern at the ROOT tier: create/revoke serialise per member under the held row and perform only plain writes on member_credentials beneath it; **nothing below T1 is acquired**. Conflicts with a terminal exit at T1 by design |
 | Repayment (P10) | LOANS alone (mid-chain entry) → E7 on payoff (closure releases guarantees) → E15 | `loans.py:record_repayment` L309 |
 | Arrears + penalty batch | LOANS alone, `ORDER BY l.id … FOR UPDATE OF l SKIP LOCKED`; **no ledger rows, no advisory** | `arrears.py:arrears_scan_sql` L223 |
 | Recovery case open (P13.16) | LOANS alone (mid-chain entry at the terminal node, the repayment pattern): NPL check + classification/dpd snapshot under the loan FOR UPDATE; the case row is INSERTed via the ON CONFLICT claim — **no case-row lock, nothing below T4, no ledger rows, no advisory** | `recovery.py:open_recovery_case` |
@@ -507,6 +510,26 @@ commit/rollback, per-tenant keys so tenants never serialise each other.
   triggers live in migration DDL and take no locking probes (the
   issue-#21 posture: the service serialises on the rows it already
   holds).
+- **P14.5 (member identity & member-facing auth) — AS-BUILT (!65):**
+  exactly three new executable lock sites, all §3 single-node lockers
+  (see the §8 delta): member OTP verify locks the newest member
+  challenge row ALONE and member refresh rotation locks the token row
+  ALONE — the E18/E19 analogues deliberately WITHOUT the leading
+  principal-row lock, because credential revocation (unlike staff
+  suspension) writes no challenge/token rows: the link's liveness is
+  re-checked at every use (`live_credential_by_id` — an unlocked MVCC
+  read at the gate, on refresh, and again INSIDE consent/release
+  transactions under the guarantee row lock), so a revoked link dies
+  within one request with no cross-table ordering to defend. Link
+  create/revoke lock the MEMBER row ALONE (chain ROOT, the
+  recovery-case-open pattern) with only plain member_credentials
+  writes beneath. Member consent/self-release ride the EXISTING P13.14
+  chains verbatim (GUAR alone for consent; E4/E6/E7 anchor →
+  guarantee, then E9 for the cover guard); the retired
+  `consent_guarantee`/`_actor_is_guarantor` sites moved into the
+  factored `_lock_pledged_guarantee`/`_lock_release_target` cores
+  without changing a single lock acquisition. **No new lock-graph
+  edges.**
 - **P19 (M-Pesa)** and later prompts: any lock they take must land as
   an edge here first-class, in the same MR.
 
@@ -712,6 +735,29 @@ path re-acquires the self-owned anchor its E22/E23 chain locked first
 test: `tests/test_loan_recoveries.py::
 test_fm2_concurrent_direct_sql_inserts_serialise_on_the_claim_anchor`
 (fails with the FOR UPDATE removed).
+
+**P14.5 delta (member identity & member-facing auth, authored on this
+branch, !65):** the member principal adds exactly **three new
+executable SQL lock sites** — the member OTP challenge row `FOR
+UPDATE` (`member_auth.py:verify_member_otp` L211), the member refresh
+token row `FOR UPDATE` (`member_auth.py:rotate_member_refresh_token`
+L287), and the member-row link-mutation anchor `FOR UPDATE`
+(`member_identity.py:_lock_member` L87) — all three §3 single-node
+lockers (rows above) — bringing the executable-site count to **76**.
+Combined grep totals: 141 / 31 / 36 / 2 / 40 = **220** (`for update` /
+`for share` / `skip locked` / `for no key update` / `advisory`; union
+of matching lines, was 136/31/36/2/40 = 215 at the !51-N1 delta) — the
+two extra lines beyond the three new sites are docstrings restating
+the chain-ROOT posture (`member_identity.py` module + `_lock_member`
+docstrings). The guarantees refactor moved the consent lock into
+`_lock_pledged_guarantee` and the release chain into
+`_lock_release_target` (one lock-keyword line removed, one added — a
+refactor, not a delta); the 0035 FM4 consent trigger lives in
+migration DDL, not `src`, and takes **no locking probe** (the
+0030/0031/0032 posture: it reads only NEW/OLD of its own row — no
+cross-row sum, so MVCC suffices; unlike 0034's cap SUM). The
+`live_credential_by_id` use-time re-checks are plain MVCC reads.
+**Zero new lock-graph edges.**
 
 ## 9. Cross-check: MR prose vs code-derived DAG (P-DIAG.0 step 3)
 

@@ -9,7 +9,13 @@ from __future__ import annotations
 from fastapi import Request
 
 from genesis.application import rbac as rbac_service
-from genesis.application.auth import AuthContext, decode_access_token
+from genesis.application.auth import (
+    AuthContext,
+    MemberAuthContext,
+    decode_access_token,
+    decode_member_access_token,
+)
+from genesis.application.member_auth import live_credential_by_id
 from genesis.domain.rbac import Action, Module
 from genesis.errors import ForbiddenError, UnauthenticatedError
 from genesis.infrastructure.db import get_sessionmaker
@@ -17,12 +23,16 @@ from genesis.infrastructure.tenancy import tenant_session
 from genesis.settings import get_settings
 
 
-def get_auth_context(request: Request) -> AuthContext:
-    """Authentication only; use RequirePermission for authorization."""
+def _bearer_token(request: Request) -> str:
     header = request.headers.get("authorization", "")
     if not header.lower().startswith("bearer "):
         raise UnauthenticatedError("missing bearer token")
-    return decode_access_token(header[7:])
+    return header[7:]
+
+
+def get_auth_context(request: Request) -> AuthContext:
+    """Authentication only; use RequirePermission for authorization."""
+    return decode_access_token(_bearer_token(request))
 
 
 class RequirePermission:
@@ -48,6 +58,36 @@ class RequirePermission:
             raise UnauthenticatedError("user is not active")
         if not access.allowed:
             raise ForbiddenError(f"{self.module.value}:{self.action.value}")
+        return ctx
+
+
+class RequireMemberPrincipal:
+    """FastAPI dependency for /member routes (P14.5 FM1/FM2).
+
+    Two fences, both deny-by-default:
+      * PRINCIPAL KIND — decode_member_access_token refuses a staff
+        token with a 403 (FM1): a staff RequirePermission grant can
+        never satisfy the member gate, in either direction.
+      * LIVE LINK — the credential->member link is re-verified against
+        the database ON EVERY REQUEST (live_credential_by_id, the ONE
+        implementation): a revoked link, a re-pointed credential, or
+        an exited member dies within one request, exactly like the
+        RequirePermission suspension re-check (review F3). 401, not
+        403 — the session is dead, not under-privileged; only the
+        error category leaves the server (least disclosure, gate 1.6).
+
+    Money-relevant member actions (consent/release) ADDITIONALLY
+    re-verify the link INSIDE their transaction under the guarantee
+    row lock — this gate is the outer fence, not the last word.
+    """
+
+    async def __call__(self, request: Request) -> MemberAuthContext:
+        ctx = decode_member_access_token(_bearer_token(request))
+        factory = get_sessionmaker(get_settings().database_url)
+        async with tenant_session(factory, ctx.tenant_id) as session:
+            credential = await live_credential_by_id(session, ctx.tenant_id, ctx.credential_id)
+        if credential is None or credential.member_id != ctx.member_id:
+            raise UnauthenticatedError("member credential is not active")
         return ctx
 
 

@@ -56,7 +56,7 @@ or test/artifact present on main).
 | P-DIAG.4 | ✅ DONE | stride.md |
 | P-DIAG.5 | ✅ DONE | sequence-committee-voting / -outbox-dispatch / -snapshot-bind-reverify |
 | P14 | ✅ DONE | !13 merged 2026-08-03; web:* jobs green (incl. spec/client drift + permanent stale-client negative proof) |
-| P14.5 | ❌ TODO | member principal absent |
+| P14.5 | ✅ DONE | 0035 member identity (!65); test_member_auth / test_member_identity FM1–FM5 + test_idempotency cross-actor MISS; combined-state pipeline 2732748398 green incl. migrate-check up→down→up (823 passed, cov 89.03%) |
 | P15 | 🔄 IN PROGRESS | batch 1 on MR !56 (Dashboard, Members, Access control + Phase B shared primitives incl. mandatory-usage blocker (f)); remaining 7 module batches + Playwright E2E follow one MR per batch |
 | P16 | ❌ TODO | no mobile/ tree |
 | P17 | ❌ TODO | depends P16, P14.5 |
@@ -115,6 +115,13 @@ preserved; combined-state pipeline 2726361694 green) and !54 merged
 2026-08-03 (merge `d517769`, squash `cd85309`; combined-state pipeline
 2726403180 green on head `75e7c94`). Alembic head on main is **0034**;
 the next free number stays **0035**.
+
+Registry delta update (2026-08-04, the P14.5 claim): **0035 is the
+P14.5 MR's** (member identity & member-facing auth:
+`0035_member_identity.py`, `down_revision = '0034'`, declared in the
+MR description at branch time per rule 14; head 0034 re-verified
+against main's `migrations/versions/` at branch time — no other
+in-flight claim exists). The next free number is **0036**.
 
 ### Post-P13 hardening follow-up batch (issues #21/#24/#23) — status
 

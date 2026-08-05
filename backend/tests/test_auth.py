@@ -31,8 +31,13 @@ def test_otp_flow_issues_short_lived_tokens() -> None:
             assert res.status_code == 200
             tokens = res.json()
         claims = jwt.decode(
-            tokens["access_token"], os.environ["JWT_SIGNING_KEY"], algorithms=["HS256"]
+            tokens["access_token"],
+            os.environ["JWT_SIGNING_KEY"],
+            algorithms=["HS256"],
+            # P14.5 FM1: staff tokens carry the STAFF audience.
+            audience="genesis-staff",
         )
+        assert claims["aud"] == "genesis-staff"
         assert claims["tid"] == str(tid)
         assert claims["exp"] - claims["iat"] <= 900
         assert tokens["expires_in"] == 900

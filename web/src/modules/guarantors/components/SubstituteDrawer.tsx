@@ -9,10 +9,12 @@
  *   CONSENTED pledge happen in ONE server transaction; any failure
  *   leaves the original fully intact — nothing is orchestrated
  *   client-side.
- * - The substitute's consent is a first-class audited attestation: the
- *   form requires the attestation checkbox AND a consent reference
- *   citing its evidence (an unconsented or unreferenced substitute is a
- *   server 422; the server verdict wins per field).
+ * - The substitute's consent is a first-class audited attestation
+ *   (P14.5): the form requires a consent reference citing its evidence
+ *   (an unreferenced substitute is a server 422; the server verdict
+ *   wins per field). The pre-P14.5 caller-asserted `consented` boolean
+ *   is REMOVED from the contract — the attestation is the staff act
+ *   plus its cited evidence, never a checkbox (the !29 lesson).
  * - The replacement amount is OPTIONAL: blank lets the server derive it
  *   from the guarantee row (it may only meet or exceed the released
  *   amount — enforced server-side, never computed here).
@@ -73,7 +75,6 @@ export function SubstituteDrawer({
 }>) {
   const queryClient = useQueryClient();
   const [guarantorId, setGuarantorId] = useState("");
-  const [consented, setConsented] = useState(false);
   const [consentReference, setConsentReference] = useState("");
   const [amount, setAmount] = useState("");
   const [clientErrors, setClientErrors] = useState<FieldErrors>({});
@@ -153,7 +154,6 @@ export function SubstituteDrawer({
   function parsedInput() {
     return substituteCreateSchema.safeParse({
       guarantor_member_id: guarantorId,
-      consented,
       consent_reference: consentReference,
       amount: amount.trim() === "" ? null : amount.trim(),
     });
@@ -273,29 +273,10 @@ export function SubstituteDrawer({
             </Button>
           )}
           <FormField
-            id="substitute-consented"
-            label="Consent attestation"
-            error={fieldErrors["consented"]}
-            hint="The substitution endpoint accepts only a CONSENTED replacement pledge."
-          >
-            {(control) => (
-              <span className={styles.checkRow}>
-                <input
-                  {...control}
-                  type="checkbox"
-                  checked={consented}
-                  onChange={(event) => setConsented(event.target.checked)}
-                  disabled={substitute.isPending}
-                />
-                <span>I attest the substitute guarantor has consented to this pledge.</span>
-              </span>
-            )}
-          </FormField>
-          <FormField
             id="substitute-consent-reference"
             label="Consent evidence reference"
             error={fieldErrors["consent_reference"]}
-            hint="Cite the evidence the attestation rests on (e.g. the signed guarantorship form) — it is written as an audited fact."
+            hint="Cite the evidence the substitute guarantor's consent rests on (e.g. the signed guarantorship form) — submitting IS the staff attestation and it is written as an audited fact (P14.5)."
           >
             {(control) => (
               <input
