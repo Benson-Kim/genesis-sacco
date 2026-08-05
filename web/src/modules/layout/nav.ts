@@ -76,6 +76,16 @@ export const NAV_SECTIONS: NavSection[] = [
         module: "members",
         icon: "exit",
       },
+      {
+        // The P13.11 dividends lifecycle console (issue #31 batch 2);
+        // lives under the transactions RBAC module (every /dividends
+        // route is gated on transactions view/edit/approve server-side
+        // — there is no dedicated dividends module in the P4 matrix).
+        label: "Dividends",
+        href: "/modules/transactions/dividends",
+        module: "transactions",
+        icon: "transactions",
+      },
     ],
   },
   {
