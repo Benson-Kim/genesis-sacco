@@ -301,20 +301,24 @@ def test_committee_voting_quorum_and_double_vote() -> None:
         headers = _headers(token)
         product_id = await _make_product(headers, "Committee Product")
         aid = await _application_in_committee(headers, tid, "Vote Target", product_id)
+        # The seeding actor referred the application to committee and is
+        # now its recommender (0037 SoD: the recommender cannot vote),
+        # so the voting cast is three OTHER committee members.
+        voter1 = _headers(await _add_actor(tid, role_id))
         voter2 = _headers(await _add_actor(tid, role_id))
         voter3 = _headers(await _add_actor(tid, role_id))
         async with api_client() as client:
             v1 = await client.post(
                 f"/applications/{aid}/vote",
                 json={"vote": "approve"},
-                headers=headers,
+                headers=voter1,
             )
             assert v1.status_code == 200
             assert v1.json()["decision"] is None
             dup = await client.post(
                 f"/applications/{aid}/vote",
                 json={"vote": "approve"},
-                headers=headers,
+                headers=voter1,
             )
             assert dup.status_code == 409  # UNIQUE: one vote per member
             v2 = await client.post(
@@ -359,12 +363,14 @@ def test_committee_rejection_quorum() -> None:
         headers = _headers(token)
         product_id = await _make_product(headers, "Reject Product")
         aid = await _application_in_committee(headers, tid, "Reject Target", product_id)
+        # The recommender cannot vote (0037 SoD) — two other members do.
+        voter1 = _headers(await _add_actor(tid, role_id))
         voter2 = _headers(await _add_actor(tid, role_id))
         async with api_client() as client:
             r1 = await client.post(
                 f"/applications/{aid}/vote",
                 json={"vote": "reject"},
-                headers=headers,
+                headers=voter1,
             )
             assert r1.status_code == 200
             r2 = await client.post(
@@ -1018,9 +1024,11 @@ def test_committee_rejection_releases_pledges() -> None:
             )
             assert pledge.status_code == 201
             gid = pledge.json()["id"]
+            # The recommender cannot vote (0037 SoD) — two others do.
+            voter1 = _headers(await _add_actor(tid, role_id))
             voter2 = _headers(await _add_actor(tid, role_id))
             r1 = await client.post(
-                f"/applications/{aid}/vote", json={"vote": "reject"}, headers=headers
+                f"/applications/{aid}/vote", json={"vote": "reject"}, headers=voter1
             )
             assert r1.status_code == 200
             r2 = await client.post(
@@ -1411,6 +1419,229 @@ def test_initiator_cannot_disburse_own_application_api_403() -> None:
                 f"/applications/{app_id}/disburse",
                 json={"channel": "bank"},
                 headers=other,
+            )
+            assert disbursed.status_code == 201, disbursed.text
+            assert disbursed.json()["loan_id"]
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Issue #30 close-out — recommender attribution (migration 0037) on the read
+# contract, and the recommender SoD 403s (vote + disburse) at the wire
+# ---------------------------------------------------------------------------
+
+
+def test_application_read_contract_exposes_recommended_by_least_disclosure() -> None:
+    """recommended_by rides ApplicationOut (issue #30 close-out, 0037):
+    NULL before any committee referral, the referring principal's bare
+    UUID from the committee transition on, on get AND list.
+
+    Falsifiable: dropping the ApplicationOut field (or the
+    _application_out mapping, or the transition_stage SET) fails the
+    equality assertions.
+
+    Least disclosure (gate 1.6, the 0036 created_by posture verbatim):
+    applications:view holders receive the bare staff user UUID ONLY —
+    the recommender's name/email never ride the application read
+    models; resolving the UUID stays behind access_control:view. FM-B
+    leg: a row that reached committee without an attributable actor
+    (the pre-0037 shape) reads back null — attribution is never
+    invented.
+    """
+
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        uid, actor_name, actor_email = await _sole_user(tid)
+        headers = _headers(token)
+        member_id = await _make_member(headers, "Recommender Borrower")
+        await _set_deposit_balance(tid, member_id, "10000.00")
+        product_id = await _make_product(headers, "Recommender Product")
+
+        created = await _make_application(headers, member_id, product_id, "1000.00")
+        assert created["recommended_by"] is None  # not yet referred
+        app_id = str(created["id"])
+
+        async with api_client() as client:
+            r1 = await client.post(
+                f"/applications/{app_id}/transition",
+                json={"version": 1, "target": "appraisal"},
+                headers=headers,
+            )
+            assert r1.status_code == 200
+            assert r1.json()["recommended_by"] is None  # appraisal is not a referral
+            r2 = await client.post(
+                f"/applications/{app_id}/transition",
+                json={"version": 2, "target": "committee"},
+                headers=headers,
+            )
+            assert r2.status_code == 200
+            assert r2.json()["recommended_by"] == str(uid)
+
+            single = await client.get(f"/applications/{app_id}", headers=headers)
+            assert single.status_code == 200
+            assert single.json()["recommended_by"] == str(uid)
+
+            listing = await client.get("/applications", headers=headers)
+            assert listing.status_code == 200
+            by_id = {a["id"]: a for a in listing.json()["items"]}
+            assert by_id[app_id]["recommended_by"] == str(uid)
+
+            # Least disclosure: the UUID only — no name/email keys and
+            # no recommender PII anywhere in the payloads.
+            for payload in (single, listing):
+                assert actor_name not in payload.text
+                assert actor_email not in payload.text
+                assert "full_name" not in payload.text
+                assert "email" not in payload.text
+
+        # FM-B: a committee-stage row without attributable history (the
+        # pre-0037 shape) stays null.
+        legacy_id = uuid.uuid4()
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO loan_applications "
+                    "(id, tenant_id, member_id, product_id, amount, term_months, "
+                    " rate_pct, stage) "
+                    "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:mid AS uuid), "
+                    "CAST(:pid AS uuid), '500.00', 6, 12.00, 'committee')"
+                ),
+                {
+                    "id": str(legacy_id),
+                    "tid": str(tid),
+                    "mid": member_id,
+                    "pid": product_id,
+                },
+            )
+        async with api_client() as client:
+            legacy = await client.get(f"/applications/{legacy_id}", headers=headers)
+            assert legacy.status_code == 200
+            assert legacy.json()["recommended_by"] is None
+
+    asyncio.run(run())
+
+
+def test_recommender_cannot_vote_on_own_referral_api_403() -> None:
+    """FM-A at the wire: the principal who referred the application to
+    committee (its recommender, 0037) may not vote on it — 403 with
+    ZERO side effects (no committee_votes row: the refusal is atomic,
+    asserted by row count, never by the response alone); a DIFFERENT
+    committee member's vote lands. The exit-requester-cannot-vote /
+    write-off-proposer posture applied to the P9 committee.
+    Falsifiable: removing the recommended_by comparison in cast_vote
+    turns the first call into a 200 and this test fails.
+    """
+
+    async def run() -> None:
+        tid, role_id, token = await _seed_actor()
+        headers = _headers(token)
+        product_id = await _make_product(headers, "Recommender SoD Product")
+        aid = await _application_in_committee(headers, tid, "SoD Vote Borrower", product_id)
+        other_voter = _headers(await _add_actor(tid, role_id))
+
+        async with api_client() as client:
+            refused = await client.post(
+                f"/applications/{aid}/vote",
+                json={"vote": "approve"},
+                headers=headers,
+            )
+            assert refused.status_code == 403, refused.text
+            assert refused.json()["category"] == "forbidden"
+
+        # Atomic refusal (FM-A): no vote row was written.
+        async with tenant_session(factory(), tid) as session:
+            votes = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM committee_votes "
+                        "WHERE application_id = CAST(:aid AS uuid)"
+                    ),
+                    {"aid": aid},
+                )
+            ).scalar_one()
+        assert int(votes) == 0, "a refused recommender vote must leave no vote row"
+
+        async with api_client() as client:
+            allowed = await client.post(
+                f"/applications/{aid}/vote",
+                json={"vote": "approve"},
+                headers=other_voter,
+            )
+            assert allowed.status_code == 200, allowed.text
+
+    asyncio.run(run())
+
+
+def test_recommender_cannot_disburse_own_referral_api_403() -> None:
+    """FM-A at the wire: POST /applications/{id}/disburse by the
+    application's RECOMMENDER is 403 (issue #30 close-out — the
+    consistent extension of the !66 initiator ban: between
+    recommendation and cash-out a different principal must act).
+
+    The recommender here is deliberately NOT the initiator, so this
+    test isolates the new 0037 leg — the !66 created_by check alone
+    would let this caller through. Falsifiable: removing the
+    recommended_by comparison in disburse_loan turns the refusal into
+    a 201 and this test fails. A third principal disburses the same
+    application.
+    """
+
+    async def run() -> None:
+        tid, role_id, initiator_token = await _seed_actor()
+        recommender_token = await _add_actor(tid, role_id)
+        third_token = await _add_actor(tid, role_id)
+        initiator = _headers(initiator_token)
+        recommender = _headers(recommender_token)
+        third = _headers(third_token)
+
+        member_id = await _make_member(initiator, "Recommender Disburse Borrower")
+        await _set_deposit_balance(tid, member_id, "100000.00")
+        product_id = await _make_product(initiator, "Recommender Disburse Product")
+        created = await _make_application(initiator, member_id, product_id, "9000.00")
+        app_id = str(created["id"])
+
+        async with api_client() as client:
+            r1 = await client.post(
+                f"/applications/{app_id}/transition",
+                json={"version": 1, "target": "appraisal"},
+                headers=recommender,
+            )
+            assert r1.status_code == 200
+            r2 = await client.post(
+                f"/applications/{app_id}/transition",
+                json={"version": 2, "target": "committee"},
+                headers=recommender,
+            )
+            assert r2.status_code == 200
+
+        # Committee quorum is P9 machinery; the SoD subject here is the
+        # cash-out, so the approved stage is seeded directly — the
+        # recommended_by written by the transition above survives.
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(
+                text(
+                    "UPDATE loan_applications SET stage = 'approved' "
+                    "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+                ),
+                {"id": app_id, "tid": str(tid)},
+            )
+
+        async with api_client() as client:
+            refused = await client.post(
+                f"/applications/{app_id}/disburse",
+                json={"channel": "bank"},
+                headers=recommender,
+            )
+            assert refused.status_code == 403, refused.text
+            assert refused.json()["category"] == "forbidden"
+            # Least disclosure: no identity, no balances in the refusal.
+            assert str(member_id) not in refused.text
+
+            disbursed = await client.post(
+                f"/applications/{app_id}/disburse",
+                json={"channel": "bank"},
+                headers=third,
             )
             assert disbursed.status_code == 201, disbursed.text
             assert disbursed.json()["loan_id"]
