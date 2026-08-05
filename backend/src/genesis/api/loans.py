@@ -144,6 +144,18 @@ class ApplicationOut(BaseModel):
     #: pre-0036 audit history was not unambiguous (attribution is never
     #: invented).
     created_by: str | None
+    #: Recommender attribution (issue #30 close-out, migration 0037):
+    #: the staff principal who moved the application INTO the committee
+    #: stage — the "refer to committee" recommendation, recorded at
+    #: that transition and now on the read contract (the server
+    #: enforces regardless: the recommender can neither vote on nor
+    #: disburse the application, 403). Least disclosure (gate 1.6): the
+    #: bare user UUID only — never a name or email; resolving it stays
+    #: behind access_control:view (the P13.5 users/audit read paths).
+    #: NULL for applications not yet referred to committee, system
+    #: moves, or pre-0037 rows whose audit history was not unambiguous
+    #: (attribution is never invented).
+    recommended_by: str | None
     #: deposits x product multiplier + live guarantees — the cap the P7
     #: disbursement gate enforces (issue #15). Computed on the single-
     #: application read only; None on listings (computing it per row
@@ -266,6 +278,7 @@ def _application_out(a: applications_service.ApplicationRecord) -> ApplicationOu
         stage=a.stage.value,
         cover_pct=str(a.cover_pct),
         created_by=str(a.created_by) if a.created_by else None,
+        recommended_by=str(a.recommended_by) if a.recommended_by else None,
         version=a.version,
     )
 

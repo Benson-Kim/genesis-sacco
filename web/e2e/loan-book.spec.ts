@@ -55,6 +55,7 @@ function applicationOut(overrides: Record<string, unknown> = {}) {
     stage: "approved",
     cover_pct: "120.00",
     created_by: null,
+    recommended_by: null,
     max_eligible: "300000.00",
     version: 5,
     ...overrides,

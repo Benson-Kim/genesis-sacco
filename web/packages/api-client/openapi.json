@@ -438,6 +438,17 @@
             "title": "Rate Pct",
             "type": "string"
           },
+          "recommended_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommended By"
+          },
           "stage": {
             "title": "Stage",
             "type": "string"
@@ -462,6 +473,7 @@
           "stage",
           "cover_pct",
           "created_by",
+          "recommended_by",
           "version"
         ],
         "title": "ApplicationOut",

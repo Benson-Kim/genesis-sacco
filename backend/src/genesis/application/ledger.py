@@ -1024,7 +1024,7 @@ async def disburse_loan(
                 # Explicit tenant predicate on the row-lock read, on top
                 # of RLS (defence in depth, gate 1.6 v1.1; issue #17).
                 "SELECT id, member_id, product_id, amount, term_months, "
-                "rate_pct, stage, version, created_by "
+                "rate_pct, stage, version, created_by, recommended_by "
                 "FROM loan_applications "
                 "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
@@ -1044,6 +1044,7 @@ async def disburse_loan(
         stage_str,
         version,
         created_by_raw,
+        recommended_by_raw,
     ) = app_row
 
     member_id = uuid.UUID(str(member_id_raw))
@@ -1066,6 +1067,21 @@ async def disburse_loan(
     # Least disclosure (gate 1.6): the refusal names no identity.
     if created_by is not None and actor_id == created_by:
         raise ForbiddenError("the initiator of a loan application cannot post its disbursement")
+
+    # Step 1c: recommender separation of duties (issue #30 close-out,
+    # migration 0037 — the consistent extension of step 1b): the
+    # principal who moved the application INTO committee shepherded it
+    # toward cash exactly like the initiator did, so the same
+    # different-principal rule applies between recommendation and
+    # cash-out. Read under the same application row lock
+    # (recommended_by is written under that lock in transition_stage).
+    # A NULL recommender (system move, pre-0037 row without unambiguous
+    # history) is not principal-comparable — the committee quorum
+    # remains the approval control, unchanged. Least disclosure: the
+    # refusal names no identity.
+    recommended_by = uuid.UUID(str(recommended_by_raw)) if recommended_by_raw is not None else None
+    if recommended_by is not None and actor_id == recommended_by:
+        raise ForbiddenError("the recommender of a loan application cannot post its disbursement")
 
     # Step 2: validate and transition stage.
     try:

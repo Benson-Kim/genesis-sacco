@@ -17,6 +17,11 @@
   recovery_case_notes (no new table); 0034 (!54) regenerates the 0030
   within-claim constraint-trigger function (no table change) — §2.F,
   §3, §4 and §5 updated accordingly (v1.2 rules 11/14).
+  Extended for 0037 by the issue-#30 close-out MR (!71), IN THE SAME
+  COMMITS as the migration: alembic head 0036 -> 0037
+  (0037_committee_recommender.py, down_revision = "0036" — alters
+  loan_applications only, no new table); diagram 2.B, §3 and §6
+  updated accordingly (v1.2 rules 11/14).
   Derived exclusively from backend/migrations/versions/*.py — every
   entity is a real table from a migration; every edge cites the FK
   that implements it. Falsifiable gate: erd-spot-check.py (§6).
@@ -27,9 +32,9 @@
 
 # Entity-relationship diagram — as-built (P-DIAG.2)
 
-The entire schema at alembic head **0036**: **47 tables** (0035
-creates `member_credentials`; 0033/0034/0036 alter existing tables and
-create none), drawn as
+The entire schema at alembic head **0037**: **47 tables** (0035
+creates `member_credentials`; 0033/0034/0036/0037 alter existing
+tables and create none), drawn as
 seven subject-area `erDiagram`s (one diagram would not render readably;
 the split follows the module boundaries in the §3 traceability table).
 An entity appearing in more than one diagram (e.g. `members`,
@@ -135,6 +140,7 @@ erDiagram
     %% main @ 08541b860f1445b16c342c39b6606d86b9dbeb17 — alembic head 0022
     %% post-merge remediation (!65/!66 drift): guarantees consent principal
     %% (0035), loan_applications.created_by (0036) — main @ eb90a80e, head 0036
+    %% issue-#30 close-out (!71): loan_applications.recommended_by (0037) — head 0037
     loan_products {
         uuid id PK
         uuid tenant_id FK "tenant spine (0001)"
@@ -148,6 +154,7 @@ erDiagram
         uuid product_id FK "-> loan_products.id (0001)"
         text stage "submitted..disbursed CHECK (0001)"
         uuid created_by FK "nullable -> users.id; acting principal, audit-log backfilled (0036)"
+        uuid recommended_by FK "nullable -> users.id; committee referrer, audit-log backfilled (0037)"
     }
     loans {
         uuid id PK
@@ -214,6 +221,7 @@ erDiagram
     users ||--o{ committee_votes : "committee_votes.voter_id (0005)"
     loans ||--o{ penalty_accruals : "penalty_accruals.loan_id (0019)"
     users |o--o{ loan_applications : "loan_applications.created_by, nullable (0036)"
+    users |o--o{ loan_applications : "loan_applications.recommended_by, nullable (0037)"
     member_credentials |o--o{ guarantees : "guarantees.consented_by_credential_id, nullable (0035)"
     users |o--o{ guarantees : "guarantees.consent_attested_by, nullable (0035)"
 ```
@@ -566,9 +574,10 @@ erDiagram
 
 ## 3. Traceability: table → migrations → owning module
 
-Every table at head 0036, its creating migration, every later
+Every table at head 0037, its creating migration, every later
 migration that altered it (columns, CHECKs, triggers, indexes or data
-backfills), and the module that owns its writes on main @ `eb90a80`.
+backfills), and the module that owns its writes on main @ `eb90a80`
+(0037 verified against the !71 branch tree that ships it).
 Both directions of the table↔migration mapping are machine-checked by
 [`erd-spot-check.py`](erd-spot-check.py) (§6).
 
@@ -588,7 +597,7 @@ Both directions of the table↔migration mapping are machine-checked by
 | `share_accounts` | 0001 | — | created by `application/members.py`; balances moved by `transactions.py`/`dividends.py`/`member_exits.py` |
 | `deposit_accounts` | 0001 | 0008 (partial scan idx), 0009 (keyset idx) | created by `application/members.py`; balances moved by `transactions.py`/`deposit_interest.py`/`dividends.py`/`member_exits.py`/`ledger.py` |
 | `loan_products` | 0001 | 0017 (`guarantors_required`) | `application/loan_products.py` |
-| `loan_applications` | 0001 | 0006 (keyset idx), 0014 (stage-keyset idx, drops 0001 stage idx), 0036 (`created_by` + audit-log backfill — issue #30 R4 disbursement SoD) | `application/loan_applications.py` |
+| `loan_applications` | 0001 | 0006 (keyset idx), 0014 (stage-keyset idx, drops 0001 stage idx), 0036 (`created_by` + audit-log backfill — issue #30 R4 disbursement SoD), 0037 (`recommended_by` + audit-log backfill — issue-#30 close-out recommender attribution + vote/disburse SoD) | `application/loan_applications.py` |
 | `committee_votes` | 0005 | — | `application/loan_applications.py` |
 | `loans` | 0001 | 0007 (`penalty_due`, `closed_at`, idxs), 0013 (disbursed idx), 0026 (`idx_loans_dpd_worklist`) | `application/loans.py` (+ `ledger.py` disburse, `arrears.py` batch; terminal write-off transition by `corrections.py`) |
 | `loan_schedules` | 0001 | 0007 (unpaid partial idx) | `application/ledger.py` (creates), `application/loans.py` (allocates) |
@@ -623,13 +632,15 @@ Both directions of the table↔migration mapping are machine-checked by
 | `member_period_balances` | 0028 (incl. write-once + late-insert-fence triggers) | — | `application/period_rollups.py` |
 
 Nothing in this file is `PLANNED`: every entity above exists at head
-0036. The formerly in-flight !53 claim (0033, issue #23 — the
+0037. The formerly in-flight !53 claim (0033, issue #23 — the
 `recovery_cases` status widening and `recovery_case_notes.is_outcome`)
 and !54's 0034 (within-claim trigger regeneration) merged to main and
 are reconciled above by the !55 as-built flip (v1.2 rules 11/14).
 0035 (`member_credentials` + consent principal, !65) and 0036 (actor
 attribution, !66) merged WITHOUT the same-MR refresh rule 11 requires;
-they are reconciled above by the post-merge remediation MR.
+they are reconciled above by the post-merge remediation MR. 0037
+(recommender attribution, !71) ships WITH its refresh in the same
+commits — this paragraph and the rows above are that refresh.
 
 ## 4. Trust-relevant store properties (by reference — v1.2 rule 11)
 
@@ -742,7 +753,10 @@ the same way for `0023*` through `0032*` at main @
 and for `0035*`/`0036*` at main @
 `eb90a80ede68aed673c317ecd833b464ac17eac4` (the post-merge remediation
 MR — 0035 creates `member_credentials`, 0036 alters only; both landed
-by !65/!66 without the same-MR refresh this procedure requires).
+by !65/!66 without the same-MR refresh this procedure requires), and
+for `0037*` on the !71 branch that ships it (the issue-#30 close-out —
+`recommended_by` on `loan_applications`, alters only; refreshed in the
+same commits as the migration, as this procedure requires).
 
 **Regeneration procedure for 0023+ MRs (v1.2 rule 11)**: a migration
 that creates a table adds it to the matching §2 subject-area diagram
