@@ -2,14 +2,18 @@
  * Per-tab exit maker registry (P15 module 7 — separation of duties,
  * UX side; the applications makerRegistry precedent).
  *
- * WHY THIS EXISTS: the P12 contract does not expose who initiated an
- * exit request (ExitOut carries no requested_by — the initiator's
- * identity lives only in the server-side audit row, which is
- * access_control-gated). The MakerCheckerPanel needs a maker principal
- * id to structurally withhold checker affordances from the maker, so
- * this registry records the maker identity THIS TAB witnessed: when
- * the signed-in operator creates an exit request, their own user id is
- * recorded against the new exit record.
+ * STATUS (issue #30 follow-up on !66 / migration 0036): the limitation
+ * this registry originally worked around is CLOSED for attributed
+ * rows — ExitOut now carries `requested_by` (the initiator, as the
+ * bare staff UUID), and SERVER TRUTH SUPERSEDES this per-tab witness
+ * wherever it is present (ExitDetailDrawer and SettleExitDialog
+ * consume `requested_by` first). Pre-0036 rows without unambiguous
+ * audit history are honestly NULL on the contract (attribution is
+ * never invented), so this registry remains the fallback witness for
+ * exactly those: when the signed-in operator creates an exit request,
+ * their own user id is recorded against the new exit record, and it
+ * is consulted only when the server record is unattributed
+ * (`requested_by === null`).
  *
  * Scope and honesty: the registry is per-tab and in-memory — it cannot
  * know a request initiated by another operator or in another tab, and
@@ -17,9 +21,9 @@
  * equals a real user id, so MakerCheckerPanel's self-check simply
  * cannot match). The ENFORCED invariants are server-side regardless
  * (gate 1.6): the initiator can never vote on their own request and
- * can never post its money-moving settlement (both 403), and the
- * decision needs a two-voter quorum (the P9 machinery). Surfacing the
- * initiator in the contract is recorded as an honest gap in the MR.
+ * can never post its money-moving settlement (both 403, keyed on the
+ * persisted requested_by), and the decision needs a two-voter quorum
+ * (the P9 machinery).
  */
 import { registerSessionScopedStore } from "@/modules/auth/sessionScopedStores";
 

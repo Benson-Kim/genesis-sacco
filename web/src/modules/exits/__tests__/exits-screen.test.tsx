@@ -98,6 +98,7 @@ function requestedExit(overrides: Partial<ExitRecord> = {}): ExitRecord {
     member_id: MEMBER_ID,
     status: "requested",
     reason: "Relocation",
+    requested_by: null,
     shares_amount: "25000.10",
     deposits_amount: "150000.10",
     loan_balance: "40000.00",
@@ -142,6 +143,7 @@ const STATEMENT: ExitStatement = {
   member_status: "active",
   exit_status: "requested",
   reason: "Relocation",
+  requested_by: null,
   shares_amount: "25000.10",
   deposits_amount: "150000.10",
   equity: "999999.99",
@@ -584,6 +586,115 @@ test("SoD STRUCTURAL (F-M4a, vote): the witnessed initiator gets NO vote afforda
   expect(mocked.voteOnExit).not.toHaveBeenCalled();
 });
 
+test("SERVER TRUTH (issue #30 / !66 follow-up): a requested_by matching the signed-in voter withholds the vote affordances STRUCTURALLY — with NO per-tab witness at all", async () => {
+  const user = userEvent.setup();
+  // No recordExitMaker call: the registry knows nothing. The CONTRACT's
+  // attribution alone establishes the maker — falsifiable: drop the
+  // requested_by precedence and the registry's UNKNOWN sentinel would
+  // mount the controls.
+  mocked.fetchExit.mockResolvedValue(requestedExit({ requested_by: ADMIN_ID }));
+  mountScreen();
+
+  await openDetail(user);
+  expect(
+    await screen.findByText(/Approval requires a DIFFERENT\s+administrator/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/You initiated this exit request \(server attribution\)/),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Vote approve" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Vote reject" })).toBeNull();
+  expect(mocked.voteOnExit).not.toHaveBeenCalled();
+});
+
+test("SERVER TRUTH SUPERSEDES the per-tab witness: a DIFFERENT server-attributed initiator renders the short-id maker label and mounts the controls, even when this tab witnessed the signed-in operator's request", async () => {
+  const user = userEvent.setup();
+  // The tab witnessed the signed-in operator requesting — but the
+  // server record attributes the INITIATOR (the maker-checker record
+  // itself) to another principal. Server truth wins; the witness is
+  // only the fallback for unattributed rows.
+  recordExitMaker(EXIT_ID, ADMIN_ID);
+  mocked.fetchExit.mockResolvedValue(requestedExit({ requested_by: OTHER_OFFICER_ID }));
+  mountScreen();
+
+  await openDetail(user);
+  // Least disclosure (FM-D): the SHORT id only — never a name/email.
+  expect(
+    await screen.findByText(
+      new RegExp(`Initiating officer ${OTHER_OFFICER_ID.slice(0, 8)} \\(server attribution\\)`),
+    ),
+  ).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Vote approve" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Vote reject" })).toBeInTheDocument();
+});
+
+test("attribution (issue #30 / !66 follow-up): the detail drawer renders requested_by as the SHORT id with the full UUID on title — and NEVER fetches a directory record for it (least disclosure, FM-D)", async () => {
+  const user = userEvent.setup();
+  mocked.fetchExit.mockResolvedValue(requestedExit({ requested_by: OTHER_OFFICER_ID }));
+  mountScreen();
+
+  await openDetail(user);
+  await screen.findByText("Record version");
+  // Short-id convention: the 8-char prefix renders; the full UUID rides
+  // the title attribute (same treatment as every other opaque id).
+  const cell = screen.getByTitle(OTHER_OFFICER_ID);
+  expect(cell).toHaveTextContent(OTHER_OFFICER_ID.slice(0, 8));
+  // Least disclosure: the staff UUID is NEVER resolved to a person —
+  // the only member fetch is the exiting member's, and no name/email
+  // for the initiator appears anywhere in the DOM.
+  for (const call of mockedMembers.fetchMember.mock.calls) {
+    expect(call[0]).not.toBe(OTHER_OFFICER_ID);
+  }
+  expect(screen.queryByText(/full_name/)).toBeNull();
+});
+
+test("attribution NULL leg (FM-B): an unattributed record renders the honest affordance — never an invented actor", async () => {
+  const user = userEvent.setup();
+  // requested_by is null in the base fixture and the registry is empty.
+  mountScreen();
+
+  await openDetail(user);
+  await screen.findByText("Record version");
+  expect(screen.getByText("— (unattributed)")).toBeInTheDocument();
+});
+
+test("attribution XSS inertness: a hostile requested_by string renders as inert TEXT in the UUID cell — no markup materialises", async () => {
+  const HOSTILE_REQUESTER = "<img src=x onerror=window.__pwned=3>";
+  const user = userEvent.setup();
+  mocked.fetchExit.mockResolvedValue(requestedExit({ requested_by: HOSTILE_REQUESTER }));
+  const { container } = mountScreen();
+
+  await openDetail(user);
+  await screen.findByText("Record version");
+  // The sliced prefix renders as literal text…
+  expect(screen.getByTitle(HOSTILE_REQUESTER)).toHaveTextContent("<img src=");
+  // …and never as an element.
+  expect(container.querySelector("img")).toBeNull();
+  expect((window as { __pwned?: unknown }).__pwned).toBeUndefined();
+});
+
+test("attribution on the CANONICAL statement document: requested_by renders via the short-id convention; the NULL leg stays the honest line", async () => {
+  const user = userEvent.setup();
+  mocked.fetchExitStatement.mockResolvedValue({
+    ...STATEMENT,
+    requested_by: OTHER_OFFICER_ID,
+  });
+  mountScreen();
+
+  await openDetail(user);
+  await user.click(screen.getByRole("button", { name: "View exit statement" }));
+  const drawer = await screen.findByRole("dialog", { name: "Exit statement" });
+  // Short id + full UUID on title; no name/email is ever fetched or
+  // rendered for the STAFF actor (member_name is the member's own
+  // document line).
+  const cell = within(drawer).getByTitle(OTHER_OFFICER_ID);
+  expect(cell).toHaveTextContent(OTHER_OFFICER_ID.slice(0, 8));
+  for (const call of mockedMembers.fetchMember.mock.calls) {
+    expect(call[0]).not.toBe(OTHER_OFFICER_ID);
+  }
+  expect(within(drawer).queryByText(/full_name/)).toBeNull();
+});
+
 test("SoD STRUCTURAL (F-M4a, settle): the witnessed initiator gets NO settle controls in the settlement dialog — zero writes possible", async () => {
   const user = userEvent.setup();
   recordExitMaker(EXIT_ID, ADMIN_ID);
@@ -612,9 +723,11 @@ test("SoD honesty (F-M4b): an UNWITNESSED maker renders the settle controls with
 
   expect(exitMakerOf(EXIT_ID)).toBe(EXIT_MAKER_UNKNOWN);
   await openSettleDialog(user);
-  // The honest label: attribution is per-tab witnessed ONLY.
+  // The honest label (issue #30 / !66 follow-up): the record is
+  // unattributed on the SERVER (requested_by null) and no request was
+  // witnessed by this tab — nothing is invented.
   expect(
-    await screen.findByText(/identity not exposed by the API contract/),
+    await screen.findByText(/unattributed on the server record/),
   ).toBeInTheDocument();
   // Controls DO render (the server remains the enforcer)…
   await attemptSettlement(user);
