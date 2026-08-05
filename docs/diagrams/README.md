@@ -55,10 +55,10 @@ inline/in companion tables.
 | Diagram | Audience | Prompt / origin | Status |
 |---|---|---|---|
 | [`lock-order.md`](lock-order.md) — **authoritative lock-ordering DAG** (the single authority for every lock-order statement; v1.2 rule 11) | engineering | P-DIAG.0 | as-built (E1–E24; §8 incl. the 0034/!51-N1 delta, landed by !54) |
-| [`c4-context.md`](c4-context.md) — C4 L1 system context (clients/providers marked PLANNED; member principal as-built since !65) | engineering | P-DIAG.1 | as-built @ head 0036 (post-merge remediation refresh — !65/!66 drift) |
-| [`c4-container.md`](c4-container.md) — C4 L2 containers (layers, four workers, migration runner, store properties) | engineering | P-DIAG.1 | as-built @ head 0036 (post-merge remediation refresh — !65/!66 drift) |
+| [`c4-context.md`](c4-context.md) — C4 L1 system context (clients/providers marked PLANNED; member principal as-built since !65) | engineering | P-DIAG.1 | as-built @ head 0037 (same-commit refresh, issue-#30 close-out !71) |
+| [`c4-container.md`](c4-container.md) — C4 L2 containers (layers, four workers, migration runner, store properties) | engineering | P-DIAG.1 | as-built @ head 0037 (same-commit refresh, issue-#30 close-out !71) |
 | [`c4-component.md`](c4-component.md) — C4 L3, one diagram per API router group (22); spot-check: [`c4-spot-check.py`](c4-spot-check.py) | engineering | P-DIAG.1 | as-built (incl. the P14.5 member-surface routers, !65) |
-| [`erd.md`](erd.md) — ERD, all 47 tables at alembic head 0036 (seven subject-area diagrams); spot-check: [`erd-spot-check.py`](erd-spot-check.py) | engineering | P-DIAG.2 | as-built @ head 0036 (0035/0036 reconciled by the post-merge remediation refresh) |
+| [`erd.md`](erd.md) — ERD, all 47 tables at alembic head 0037 (seven subject-area diagrams); spot-check: [`erd-spot-check.py`](erd-spot-check.py) | engineering | P-DIAG.2 | as-built @ head 0037 (0037 refreshed in the same commits as the migration, !71) |
 | [`dfd.md`](dfd.md) — **data-flow diagrams**: L0 context + L1 money flows F1–F14, trust boundaries TB1–TB4, source-of-truth footers | business (footers for engineers/auditors) | P-DIAG.3 | as-built incl. corrections/write-off/recovery (!46/!47/!51/!52) |
 | [`stride.md`](stride.md) — **STRIDE-per-element threat model** over the dfd.md elements; residuals with named owners or UNOWNED | engineering | P-DIAG.4 | as-built incl. F10–F14 rows |
 | [`sequence-committee-voting.md`](sequence-committee-voting.md) — committee voting (4 consumers: loans, exits, dividends, write-offs) | business | P-DIAG.5 | as-built |
@@ -68,6 +68,7 @@ inline/in companion tables.
 | [`sequence-repayment-adjustment.md`](sequence-repayment-adjustment.md) — maker-checker adjustment: request → approve-with-reverify → post; reject frees the slot | business | P-DIAG drift MR (!46/!52) | as-built |
 | [`sequence-recovery-case-lifecycle.md`](sequence-recovery-case-lifecycle.md) — case open → work → job-only closes + staff dispositions | business | P-DIAG drift MR (P13.16/!47) | as-built incl. !53 dispositions + !54 hardening (flipped by !55) |
 | [`sequence-member-exit-claim-guard.md`](sequence-member-exit-claim-guard.md) — member exit and the debts that block the door | business | P-DIAG drift MR (P12 + !51) | as-built |
+| [`sequence-guarantor-consent-principal.md`](sequence-guarantor-consent-principal.md) — guarantor consent as the MEMBER principal: link → sign-in → consent/withdraw → attested override (DFD F15) | business | issue-#30 close-out MR !71 (P14.5/!65) | as-built @ `047d4e39` |
 | [`flow-teller-money-in.md`](flow-teller-money-in.md) — teller deposits & repayments incl. every visible refusal | business | P-DIAG drift MR | as-built |
 | [`flow-loan-lifecycle.md`](flow-loan-lifecycle.md) — the life of a loan: application → committee → payout → arrears → write-off → recovery | business | P-DIAG drift MR | as-built |
 | [`flow-checker-approvals.md`](flow-checker-approvals.md) — the checker's four-eyes queue | business | P-DIAG drift MR | as-built |

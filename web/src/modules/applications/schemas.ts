@@ -66,6 +66,18 @@ export const applicationSchema = z.object({
    * unambiguous audit history / system-created rows — FM-B: an actor
    * is never invented). */
   created_by: z.string().nullable(),
+  /** Recommender attribution (issue #30 close-out, migration 0037):
+   * the staff principal who moved the application INTO committee (the
+   * "recommend to committee" referral), as the BARE user UUID only —
+   * nullable, NOT optional: a missing key is a contract violation,
+   * NULL is the honest "not yet referred / unattributed" wire value
+   * (pre-0037 rows without unambiguous audit history, system moves —
+   * FM-B: an actor is never invented). Least disclosure (FM-D): never
+   * a name or email; resolving the id stays behind access_control:view
+   * server-side, and this client NEVER fetches a directory record for
+   * it. The server enforces the SoD keyed on this column regardless:
+   * the recommender can neither vote nor disburse (403). */
+  recommended_by: z.string().nullable(),
   /** to_cents(deposits x multiplier) added to the two-place guarantee
    * sum (application_max_eligible, loan_applications.py) — Decimal
    * addition keeps the wider scale, so the wire value is ALWAYS the

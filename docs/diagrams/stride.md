@@ -5,6 +5,11 @@
   P-DIAG drift MR: the P13.15 PLANNED residuals are flipped as-built
   and §2 gains rows for the F10-F14 elements (corrections, write-off,
   recovery receipts, recovery cases — !46/!47/!51/!52).
+  Reconciled to main @ 047d4e399e3f5c5537f15a8fb73b8f1ab4a15658 by the
+  issue-#30 close-out MR (!71): §2 gains per-element rows for the F15
+  CNS_* elements (guarantor consent & self-release as the MEMBER
+  principal, P14.5 !65 — dfd.md §3.15); the TB1M boundary rows below
+  are unchanged and the CNS rows cite the same FM1-FM5 mechanisms.
   Status: as-built. Element ids reference dfd.md (P-DIAG.3); lock
   statements cite lock-order.md edge ids only (v1.2 rule 11).
   Honesty rules: every mitigation cites real code/migration on main —
@@ -29,10 +34,10 @@
   rows (deny-by-default E; idempotency S/T); every audit store
   (`TXN_S6`, `DSB_S7`, `RPY_S5`, `EXIT_S8`, `DIV_S7`, `INT_S6`,
   `DRM_S4`, `EXP_S4`, `FEE_S4`, `ADJ_S6`, `WOF_S5`, `RCV_S8`,
-  `RCS_S5`) inherits the audit_log rows; every outbox store
+  `RCS_S5`, `CNS_S5`) inherits the audit_log rows; every outbox store
   (`TXN_S7`, `DSB_S8`, `RPY_S6`, `EXIT_S9`, `DIV_S8`, `DRM_S5`,
-  `EXP_S5`, `ADJ_S7`, `WOF_S6`, `RCV_S9`, `RCS_S6`, `OBX_S1`)
-  inherits the OBX/TB4 rows; every tenant-owned
+  `EXP_S5`, `ADJ_S7`, `WOF_S6`, `RCV_S9`, `RCS_S6`, `CNS_S6`,
+  `OBX_S1`) inherits the OBX/TB4 rows; every tenant-owned
   domain store (members/accounts/loans/guarantees/config rows in each
   diagram) inherits the TB2 rows (I/E) plus its flow's T rows.
 - **Residual column.** `—` means no residual worth naming at the
@@ -75,7 +80,7 @@
 | TB4 | I | Notification payload leaks PII to a third party | `StubProvider` never logs payload contents (`providers.py` docstring + implementation); outbox payloads are written by domain services, minimal by convention | Payload-contract allow-list for real templates is **PLANNED (P20 FM3)** — until then minimality is convention, not a gate: residual owned by **P20** |
 | TB4 | D | Provider outage exhausts the system | Outbox decouples: domain txns succeed regardless (gate 1.2); exponential backoff + jitter, dead-letter at `MAX_ATTEMPTS` (`outbox_worker.py:backoff_delay`, `_record_failure`) | Per-channel circuit breakers **PLANNED (P20 FM5)** |
 
-## 2. Money-flow elements (F1–F14)
+## 2. Money-flow elements (F1–F15)
 
 | Element | STRIDE | Threat | As-built mitigation (citation) | Residual risk → owner |
 |---|---|---|---|---|
@@ -128,6 +133,12 @@
 | Guarantee consent columns (0035) | T/R | Consent forgery: collateral activated without its principal, or consent attributed to nobody | Consent rows carry their principal AT THE DATABASE (FM4): the 0035 `guarantee_consent_requires_principal` trigger refuses any row entering `active` without a member credential OR a staff attestation; an attestation without cited evidence is unrepresentable (`ck_guarantees_attested_reference`); the caller-asserted `consented` boolean is REMOVED from the contract; member consent audits under `guarantee.consent` with the CREDENTIAL as actor, the override under `guarantee.consent_override` with attestor + reference (falsifiable: `test_member_identity.py::test_fm4_*`) | — |
 | TXN_P0 (idempotency, both principals) | I | Cross-actor replay: one actor's Idempotency-Key fetches another actor's stored response | The stored claim key is scoped (tenant, actor principal, route) — `api/idempotency.py:scoped_storage_key`; members are keyed by CREDENTIAL id under a distinct kind prefix so the namespaces can never collide; a cross-actor replay is a MISS that executes in its own right, never the stored response (FM5, the !29 R4 lesson completed; falsifiable: `test_idempotency.py::test_fm5_cross_actor_replay_is_a_miss`) | — |
 | L0_MEMBER (member mobile/web CLIENTS) | S/E | Client-side member surface: token storage, pinning, member-app scopes | **PLANNED (P16–P18)** — the member AUTH BACKEND is as-built (P14.5 !65, TB1M rows above); client-side threats land with the apps (P16 FM1/FM2/FM4 blockers are the checklist) | Owned by **P16–P18** |
+| CNS_E1/CNS_P1 (member sign-in, F15) | S | Impersonate the guarantor — including the !29 attack shape: rewriting `users.email`/`members.email` to hijack the identity | FM2 link authority: the principal resolves through the `member_credentials` row (0035), NEVER an email match; the ONE shared OTP implementation (`domain/otp.py:evaluate_challenge` — single-use, ≤5 attempts, constant-time compare); the live link re-verified on EVERY request (`api/authz.py:RequireMemberPrincipal` → `member_auth.live_credential_by_id`) and AGAIN inside the consent/release transaction under the guarantee row lock (falsifiable: `test_member_identity.py::test_fm2_email_rewrite_never_redirects_the_link`) | — |
+| CNS_P2/CNS_P3/CNS_S3 (consent & self-release, F15) | T | Forge consent state: activate collateral without a principal, strip someone else's pledge, or withdraw past the cover rule | FM4 at the DATABASE: the 0035 `guarantee_consent_requires_principal` constraint trigger refuses an `active` row without a member credential OR staff attestation; `ck_guarantees_attested_consent_reference` makes an evidence-free attestation unrepresentable; ownership checked under the held guarantee row (dfd.md F15 lock citations); self-release limited to the member's OWN `pledged` row, cover re-verified at execution by the shared `_release_locked_guarantee` core (E4 → E6, then E9) with optimistic `version` 409s | — |
+| CNS_P2/CNS_P4 (consent acts, F15) | R | "I never consented" / an attestation nobody stands behind | Dedicated audit categories in the same transaction: `guarantee.consent` with the member CREDENTIAL as `audit_log.actor_id`, `guarantee.consent_override` with the attestor + the MANDATORY `consent_reference`; a consent-confirmation outbox notification to the guarantor makes a substitution visible to its victim (detection control, the !29 lesson) | Delivery is stubbed until **P20** (TB4 rows) |
+| CNS_S1/CNS_S2 (credential & session stores, F15) | I | Member login emails / session rows disclosed across tenants or to unentitled staff | `member_credentials` RLS-forced with explicit tenant predicates (0035, TB2 rows); reads gated by the narrow `member_identity:view` (System Admin / Branch Manager / Auditor only — `domain/rbac.py:_MEMBER_IDENTITY_GRANTS`); least-disclosure refusals: every wrong-principal shape gets the SAME single message, figures only in the audit row (`consent_guarantee_as_member` docstring; gate 1.6) | — |
+| CNS_P1 (member auth routes, F15) | D | OTP brute force / request flooding at the member edge | The same `api/auth.py:_rate_guard` on all three `/member/auth/*` routes; OTP attempt caps, 5-min TTL, single-use in `domain/otp.py`; punitive state committed even on failed requests (`api/member.py:verify_member_otp` comment) | Inherits UNOWNED-3 (in-process rate-limit fallback, §1 TB1-D row); OTP-request cost abuse becomes real with real providers → **P20** |
+| CNS_P2–P5 (all F15 processes) | E | Cross-principal escalation: a member token on staff gates, staff silently acting AS the member, or a member self-provisioning a login | FM1 audience dispatch deny-by-default (`application/auth.py:decode_principal` — `genesis-staff` vs `genesis-member`, unknown/missing refused; falsifiable both directions, `test_member_auth.py`); FM3: credential link create/revoke are ADMIN-only audited mutations (no self-service route exists); the staff path onto a member's consent is the EXPLICIT attested override gated `member_identity:approve` — never `applications:edit`, never an impersonation | — |
 
 ## 3. Accepted-risks register (named, per rule 13 honesty)
 
