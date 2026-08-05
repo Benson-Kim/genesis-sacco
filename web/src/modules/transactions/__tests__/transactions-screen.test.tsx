@@ -398,8 +398,8 @@ test("attribution XSS inertness: a hostile created_by string renders as inert TE
 
   await user.click(await screen.findByText("KES 8,000.10"));
   const drawer = await screen.findByRole("dialog", { name: "Transaction detail" });
-  // The sliced prefix renders as literal text…
-  expect(within(drawer).getByTitle(HOSTILE_CREATOR)).toHaveTextContent("<img src=");
+  // The sliced 8-char prefix ("<img src") renders as literal text…
+  expect(within(drawer).getByTitle(HOSTILE_CREATOR)).toHaveTextContent("<img src");
   // …and never as an element.
   expect(container.querySelector("img")).toBeNull();
   expect((window as { __pwned?: unknown }).__pwned).toBeUndefined();

@@ -666,8 +666,8 @@ test("attribution XSS inertness: a hostile requested_by string renders as inert 
 
   await openDetail(user);
   await screen.findByText("Record version");
-  // The sliced prefix renders as literal text…
-  expect(screen.getByTitle(HOSTILE_REQUESTER)).toHaveTextContent("<img src=");
+  // The sliced 8-char prefix ("<img src") renders as literal text…
+  expect(screen.getByTitle(HOSTILE_REQUESTER)).toHaveTextContent("<img src");
   // …and never as an element.
   expect(container.querySelector("img")).toBeNull();
   expect((window as { __pwned?: unknown }).__pwned).toBeUndefined();

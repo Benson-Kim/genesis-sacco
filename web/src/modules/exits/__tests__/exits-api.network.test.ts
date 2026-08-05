@@ -406,6 +406,7 @@ test("F-M2 accept/reject matrix: money fields assert the CANONICAL server decima
     member_status: "active",
     exit_status: "requested",
     reason: null,
+    requested_by: null,
     shares_amount: "25000.10",
     deposits_amount: "150000.10",
     equity: "175000.20",
