@@ -355,7 +355,3 @@ export function DistributeDialog({
     </Modal>
   );
 }
-      )}
-    </Modal>
-  );
-}
