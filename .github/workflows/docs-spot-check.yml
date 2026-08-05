@@ -8,22 +8,22 @@
 # path, an undocumented router, or a function claim without a matching def is
 # a red pipeline.
 #
-# GitLab `rules:changes` scoped to the exact inputs the check reads (the
-# diagram files AND the router wiring in backend/src/genesis/api/app.py AND
-# backend/migrations/versions/**) translates to the same `paths:` filters on
-# pull_request and push-to-main. Note: `docs/diagrams/erd-spot-check.py` is
-# NOT wired into GitLab CI at this HEAD, so — job-for-job parity — it is not
-# wired here either (README "CI parity" records this).
+# GitLab `rules:changes` on merge-request pipelines is scoped to the exact
+# inputs the check reads (the diagram files AND the router wiring in
+# backend/src/genesis/api/app.py AND backend/migrations/versions/**) and
+# translates to the same `paths:` filters on pull_request. On push to main
+# the GitLab job runs UNCONDITIONALLY (no `changes:` filter): squash-merges
+# land file combinations no MR pipeline ever tested together, and a paths
+# skip at HEAD once painted main green while the check was red two merges
+# earlier — so push-to-main carries no `paths:` filter here either.
+# Both semantic gates are wired, mirroring the GitLab job: c4-spot-check.py
+# AND erd-spot-check.py (README "CI parity" records this).
 # =============================================================================
 name: docs-spot-check
 
 on:
   push:
     branches: [main]
-    paths:
-      - 'docs/diagrams/**'
-      - 'backend/src/genesis/api/app.py'
-      - 'backend/migrations/versions/**'
   pull_request:
     paths:
       - 'docs/diagrams/**'
@@ -49,3 +49,5 @@ jobs:
       # Verbatim from the GitLab `docs:spot-check` job.
       - name: C4 semantic spot-check (stdlib only)
         run: python3 docs/diagrams/c4-spot-check.py
+      - name: ERD semantic spot-check (stdlib only)
+        run: python3 docs/diagrams/erd-spot-check.py

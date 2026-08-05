@@ -54,7 +54,7 @@ and nothing in these pipelines needs one). Optional extras if you want them:
 | GitLab job | GitHub workflow / job | Parity |
 |---|---|---|
 | `docs:diagrams` | `docs-diagrams.yml` / `docs-diagrams` | Full — same image (`minlag/mermaid-cli:11.4.2`), verbatim script, same `docs/diagrams/**` trigger |
-| `docs:spot-check` | `docs-spot-check.yml` / `docs-spot-check` | Full — `python3 docs/diagrams/c4-spot-check.py`, same trigger paths (`docs/diagrams/**`, `backend/src/genesis/api/app.py`, `backend/migrations/versions/**`) |
+| `docs:spot-check` | `docs-spot-check.yml` / `docs-spot-check` | Full — `python3 docs/diagrams/c4-spot-check.py` + `python3 docs/diagrams/erd-spot-check.py`; PR trigger paths mirror the GitLab MR `rules:changes` (`docs/diagrams/**`, `backend/src/genesis/api/app.py`, `backend/migrations/versions/**`); push-to-main is unconditional (no `paths:` filter), mirroring the GitLab default-branch rule |
 | `backend:lint` | `backend.yml` / `backend-lint` | Full — `python:3.12-slim`; `ruff check`, `ruff format --check`, `mypy --strict src`, `lint-imports` |
 | `backend:test` | `backend.yml` / `backend-test` | Full — `postgres:16-alpine` service, migrate as owner, non-superuser `genesis_app` role so **RLS is actually enforced**, `pytest --cov=src --cov-fail-under=85`, EXPLAIN `perf/explain_*.txt` + junit artifacts |
 | `backend:migrate-check` | `backend.yml` / `backend-migrate-check` | Full — `alembic upgrade head` → `downgrade -1` → `upgrade head` on a fresh database |
@@ -107,10 +107,12 @@ cancel-in-progress on PRs.
 7. **`mobile:*` not mirrored**: gated on `rules:exists: mobile/**/pubspec.yaml`,
    which does not exist at HEAD, so those jobs never spawn on GitLab either.
    Mirror them when the Flutter workspace lands.
-8. **`docs:spot-check` scope**: runs `c4-spot-check.py` only —
-   `docs/diagrams/erd-spot-check.py` is not wired into GitLab CI at this
-   HEAD, so it is (deliberately) not wired into GitHub either. If it gets
-   wired into `.gitlab-ci.yml`, wire it here in the same MR.
+8. **`docs:spot-check` scope**: ~~was `c4-spot-check.py` only~~ — CLOSED
+   (!70): `erd-spot-check.py` is now wired into the GitLab job and mirrored
+   here, and the push-to-main trigger is unconditional on both platforms
+   (GitLab dropped the default-branch `changes:` filter in !70; the GitHub
+   push trigger dropped its `paths:` filter in the same MR). PR/MR pipelines
+   stay paths-scoped identically on both.
 9. **Cosmetics without gate value**: GitLab's `coverage:` regex (MR coverage
    display) and junit MR widget have no GitHub equivalent — the actual gate
    (`--cov-fail-under=85`) and the junit XML artifact are mirrored.
