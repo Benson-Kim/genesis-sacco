@@ -137,6 +137,19 @@ commit (the !46-carries-!44 precedent, no rebase). If !65 closes
 instead of merging, 0036 re-chains to `'0034'` (the !26/0017 re-chain
 discipline). The next free number is **0037**.
 
+Registry delta update (2026-08-05, the issue-#30 close-out claim):
+**0035 and 0036 are on main** (!65 and !66 merged 2026-08-05; alembic
+head on main is **0036**, re-verified against main's
+`migrations/versions/` at branch time — merge commits `2a83323` /
+`32fe61e`, remediated to as-built diagrams by !70, merge `047d4e3`).
+**0037 is the issue-#30 close-out MR's**
+(`0037_committee_recommender.py`, `down_revision = '0036'` —
+committee-recommender attribution on `loan_applications`, declared in
+that MR's description at branch time per rule 14; head 0036 + the
+open-MR list re-verified at branch time: the only open MR, !11, claims
+no migration, so no other in-flight claim exists). The next free
+number is **0038**.
+
 ### Post-P13 hardening follow-up batch (issues #21/#24/#23) — status
 
 | Issue | Scope | Status |
@@ -1574,12 +1587,25 @@ unchanged; proven on !26–!30; apply to every prompt from here forward):
     commits; force-push only via the documented backup-branch +
     `--force-with-lease` rebase procedure, never bare.
 13. Security-template honesty rule: the included SAST / Secret-Detection
-    / Dependency-Scanning template jobs currently DO NOT SPAWN on this
-    project's MR pipelines (recorded on !26, !28, !29). Until P22 fixes
-    the template `rules:`, every MR's DoD records the security box
-    UNCHECKED with this exact reason. Ticking it without in-project job
-    evidence is a rejected MR; silently "fixing" it by removing the
-    template is worse.
+    / Dependency-Scanning template jobs historically DID NOT SPAWN on
+    this project's MR pipelines (recorded on !26, !28, !29). Since the
+    `.latest` template variants landed the jobs DO spawn and pass on MR
+    pipelines — observed on !64's pipelines 2731230146 / 2731298427 and
+    !67's 2731979233, and re-verified IN THIS PROJECT (post-move) on
+    !70's final MR pipeline 2734307715 (`semgrep-sast`,
+    `secret_detection`, `gemnasium-dependency_scanning`,
+    `gemnasium-python-dependency_scanning` — all spawned and passed;
+    the pre-move pipeline ids no longer resolve here, so 2734307715 is
+    the citable evidence), reconciled here by the issue-#30 close-out
+    MR (Hat 6 D7: the standing rule itself had become the stale
+    claim). The rule's HONESTY core is unchanged:
+    every MR's DoD ticks the security box ONLY against observed
+    in-project job evidence at that MR's final HEAD (job ids cited),
+    and records it unchecked with the reason when the jobs did not
+    spawn on that pipeline. Ticking it without in-project job evidence
+    is a rejected MR; silently "fixing" a non-spawn by removing the
+    template is worse. P22(a) still owns retiring the historical
+    carve-out from the older MRs' DoD records.
 14. Migration-claim registry: exactly one in-flight claim per alembic
     number. State the claim (number + `down_revision`) in the MR
     description at branch time, before the first commit. Registry at

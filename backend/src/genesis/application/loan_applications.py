@@ -37,7 +37,7 @@ API_TRANSITION_TARGETS = frozenset(
 
 _COLS = (
     "id, member_id, product_id, amount, term_months, rate_pct, purpose, stage, cover_pct, "
-    "created_by, version"
+    "created_by, recommended_by, version"
 )
 
 #: cover_pct is stored as NUMERIC(6,2); values above this cap carry no
@@ -64,6 +64,15 @@ class ApplicationRecord:
     #: whose audit history was not unambiguous, or system-created rows
     #: — attribution is never invented.
     created_by: uuid.UUID | None
+    #: Recommender attribution (issue #30 close-out, migration 0037):
+    #: the acting principal that moved the application INTO the
+    #: committee stage (transition_stage), recorded at that transition.
+    #: Drives the recommender SoD checks (the recommender can neither
+    #: vote on nor disburse the application — the exit/write-off/!66
+    #: posture) and rides the read model as the bare UUID. None for
+    #: system_actor transitions and for pre-0037 rows whose audit
+    #: history was not unambiguous — attribution is never invented.
+    recommended_by: uuid.UUID | None
     version: int
 
 
@@ -87,7 +96,8 @@ def _row_to_application(row: Any) -> ApplicationRecord:
         stage=ApplicationStage(str(row[7])),
         cover_pct=Decimal(str(row[8])),
         created_by=uuid.UUID(str(row[9])) if row[9] is not None else None,
-        version=int(row[10]),
+        recommended_by=uuid.UUID(str(row[10])) if row[10] is not None else None,
+        version=int(row[11]),
     )
 
 
@@ -320,6 +330,9 @@ async def create_application(
         stage=ApplicationStage.SUBMITTED,
         cover_pct=cover,
         created_by=actor_id,
+        # A fresh application has no recommendation yet (0037): the
+        # column is written only by the transition into committee.
+        recommended_by=None,
         version=1,
     )
 
@@ -443,16 +456,36 @@ async def transition_stage(
         # actor_id can be None here ONLY via the explicit system_actor
         # bypass validated at function entry (review R1).
         await enforce_authority_band(session, tenant_id, actor_id, Decimal(str(row[2])))
+    params: dict[str, object] = {
+        "st": target.value,
+        "id": str(application_id),
+        "tid": str(tenant_id),
+        "ver": version,
+    }
+    # Recommender attribution (issue #30 close-out, migration 0037):
+    # moving INTO committee IS the recommendation, so the acting
+    # principal is recorded on the row in the same UPDATE. A repeat
+    # referral (committee -> back -> committee) overwrites with the
+    # latest recommender — the recommendation that stands is the one
+    # that produced the current committee sitting. system_actor moves
+    # record NULL (an honest "moved by the system", never a fabricated
+    # principal). The SET fragment is code-owned, chosen by the target
+    # enum — no caller value is ever interpolated (v1.1 rule 6).
+    set_recommender = ""
+    if target is ApplicationStage.COMMITTEE:
+        set_recommender = ", recommended_by = CAST(:rec AS uuid)"
+        params["rec"] = str(actor_id) if actor_id is not None else None
     result = cast(
         CursorResult[Any],
         await session.execute(
             text(
-                "UPDATE loan_applications SET stage = :st, "
+                "UPDATE loan_applications SET stage = :st, "  # noqa: S608 - identifiers code-owned
                 "version = version + 1, updated_at = now() "
+                f"{set_recommender} "
                 "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
                 "AND version = :ver"
             ),
-            {"st": target.value, "id": str(application_id), "tid": str(tenant_id), "ver": version},
+            params,
         ),
     )
     if result.rowcount != 1:
@@ -515,7 +548,7 @@ async def cast_vote(
             text(
                 # Explicit tenant predicate on the row-lock read, on top
                 # of RLS (defence in depth, gate 1.6 v1.1; issue #17).
-                "SELECT stage, amount FROM loan_applications "
+                "SELECT stage, amount, recommended_by FROM loan_applications "
                 "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
             {"id": str(application_id), "tid": str(tenant_id)},
@@ -526,6 +559,18 @@ async def cast_vote(
     current = ApplicationStage(str(row[0]))
     if current is not ApplicationStage.COMMITTEE:
         raise ConflictError(f"voting is only open in committee stage, not '{current.value}'")
+    # Recommender separation of duties (issue #30 close-out, 0037): the
+    # principal who put the application before the committee cannot
+    # also vote on it — the exit-requester-cannot-vote / write-off-
+    # proposer-cannot-vote posture applied to the P9 committee. Read
+    # under the row lock held above (recommended_by is written under
+    # the same lock in transition_stage, so the comparison cannot
+    # race). A NULL recommender (system move, pre-0037 row) imposes no
+    # restriction — attribution is never invented. The refusal raises
+    # before the vote INSERT, so it leaves zero side effects (FM-A).
+    recommended_by = uuid.UUID(str(row[2])) if row[2] is not None else None
+    if recommended_by is not None and voter_id == recommended_by:
+        raise ForbiddenError("the recommender of an application cannot vote on it")
     if vote is Vote.APPROVE:
         # P13.7 authority bands, enforced under the row lock above.
         await enforce_authority_band(session, tenant_id, voter_id, Decimal(str(row[1])))

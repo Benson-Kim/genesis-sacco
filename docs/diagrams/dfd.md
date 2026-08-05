@@ -7,6 +7,12 @@
   flows shipped by !46 (corrections/fees/write-off), !47 (recovery
   cases), !51 (bad-debt recovery receipts + exit claim guard) and
   !52 (maker-checker adjustments) are drawn first-class (F10-F14).
+  Reconciled to main @
+  047d4e399e3f5c5537f15a8fb73b8f1ab4a15658 by the issue-#30 close-out
+  MR (!71): the P14.5 (!65) member-principal surface — member OTP
+  sign-in, guarantor consent/self-release as MEMBER-principal acts,
+  the staff-attested override, the credential-link admin — is drawn
+  first-class (F15, §3.15) with CNS_* element ids.
   Status: as-built, derived from code (not from MR prose).
   AUDIENCE: the DIAGRAMS are for SACCO managers, auditors and
   committee members — business vocabulary only inside the drawings
@@ -41,7 +47,7 @@
   executing MR flips them to as-built (v1.2 rule 11).
 - **Element ids.** Every element carries a stable id (`L0_*`, `TXN_*`,
   `DSB_*`, `RPY_*`, `EXIT_*`, `DIV_*`, `INT_*`, `DRM_*`, `EXP_*`,
-  `OBX_*`, `FEE_*`, `ADJ_*`, `WOF_*`, `RCV_*`, `RCS_*`). `stride.md`
+  `OBX_*`, `FEE_*`, `ADJ_*`, `WOF_*`, `RCV_*`, `RCS_*`, `CNS_*`). `stride.md`
   (P-DIAG.4) references these ids; renaming one is a change to both
   files (rule 11).
 - **Traceability.** Every process/store/flow row in the footer tables
@@ -79,7 +85,8 @@ providers — P20.
 Plain language: the SACCO's own staff sign in with a one-time code
 (OTP), and — since P14.5 — a member whose email a staff administrator
 has explicitly linked can sign in the same way to act for THEMSELVES
-(consenting to or withdrawing their own guarantee pledge); the two
+(consenting to or withdrawing their own guarantee pledge — drawn
+first-class as flow F15, §3.15); the two
 kinds of sign-in can never stand in for each other. The member mobile
 and web apps, M-Pesa and real SMS/email delivery are planned but not
 built.
@@ -900,6 +907,81 @@ flowchart LR
 | RCS_P2 (dispositions, as-built 0033/!54) | `api/recovery.py:set_disposition` (`POST /recovery-cases/{id}/disposition`, `RequirePermission(LOAN_BOOK, EDIT)`) → `application/recovery.py:set_case_disposition` — single gatekeeper `domain/recovery.py:transition`; pause targets require a `reason` → audit payload (!54); `closed_restructured` requires + atomically writes THE outcome note (!54); `add_case_outcome_note` (`POST …/outcome-note`) is terminal-only, exactly one per case (`uq_recovery_notes_one_outcome`, 0033) | case row alone (§3 recovery-mutation row) |
 | RCS_S1–S6 | `recovery_cases` (0026; 0033 widens the status CHECK to the six disposition states and regenerates the one-LIVE-case partial UNIQUE/scan index under the same names) + `recovery_case_notes` (0026; 0033 adds `is_outcome` + the one-outcome partial UNIQUE), `loans` (0001/0026 idx), `users`/`roles`/`permissions` (0001), `audit_log`, `outbox_events` | — |
 
+### 3.15 F15 — guarantor consent & self-release as the MEMBER principal (P14.5, !65)
+
+Plain language: pledging your savings behind someone else's loan is a
+personal act, so the consent belongs to the MEMBER — not to a staff
+keystroke. A member whose login a staff administrator has explicitly
+linked signs in with a one-time code (the same code rules as staff; a
+member session can never open a staff door, nor the reverse) and then
+consents to — or withdraws — THEIR OWN pledge only. Withdrawal is
+allowed only while the pledge is not yet consented, and only if the
+borrower's remaining cover still satisfies the product rule. Where the
+member cannot act (no login yet, paper consent), a staff officer may
+record an ATTESTED override — but only with a mandatory citation of
+the evidence, and the guarantor is notified so an attestation made in
+their name never goes unseen. Every consent row permanently records
+WHO gave it; a consent belonging to nobody cannot be written, even by
+direct database access. Linking or revoking a member's login is itself
+an audited admin act — never self-service.
+
+```mermaid
+flowchart LR
+    %% P-DIAG.3 F15 — drawn as-built at main @ 047d4e399e3f5c5537f15a8fb73b8f1ab4a15658 (P14.5, !65)
+    CNS_E1["Guarantor<br/>(the member themselves)"]
+    CNS_E2["Staff administrator / officer"]
+    subgraph TB1M["TB1M — member sign-in (one-time code)"]
+        CNS_P1(["member signs in with a one-time code<br/>(same code rules as staff;<br/>a member session never opens a staff door)"])
+        CNS_P2(["consent to MY OWN pledge"])
+        CNS_P3(["withdraw MY OWN pledge<br/>(only while not yet consented)"])
+    end
+    subgraph TB1["TB1 — signed-in staff only"]
+        CNS_P4(["attested consent override:<br/>evidence citation required,<br/>the guarantor is notified"])
+        CNS_P5(["link / revoke a member's login<br/>(admin act — never self-service)"])
+    end
+    subgraph TB2["TB2 — this SACCO's records only"]
+        CNS_S1[("member logins<br/>(the authoritative link)")]
+        CNS_S2[("sign-in codes & sessions<br/>(one book, exactly one<br/>owner per entry)")]
+        CNS_S3[("guarantee pledges<br/>(every consent carries<br/>who gave it)")]
+        CNS_S4[("loan applications<br/>(read: remaining cover<br/>re-checked on withdrawal)")]
+        CNS_S5[("audit trail")]
+        CNS_S6[("notification outbox")]
+    end
+
+    CNS_E1 -->|"signs in"| CNS_P1
+    CNS_P1 -->|"identity is the LINK,<br/>never an email match"| CNS_S1
+    CNS_P1 -->|"codes single-use,<br/>attempts capped"| CNS_S2
+    CNS_E1 -->|"consents"| CNS_P2
+    CNS_E1 -->|"withdraws"| CNS_P3
+    CNS_P2 -->|"link re-checked while the pledge<br/>is held; consent recorded<br/>with its giver"| CNS_S3
+    CNS_P3 -->|"own unconsented pledge only"| CNS_S3
+    CNS_P3 -->|"remaining cover still<br/>satisfies the product rule"| CNS_S4
+    CNS_E2 -->|"attests recorded consent"| CNS_P4
+    CNS_P4 -->|"evidence citation mandatory;<br/>consent carries the attestor"| CNS_S3
+    CNS_P4 -->|"guarantor notified"| CNS_S6
+    CNS_E2 -->|"links / revokes a login"| CNS_P5
+    CNS_P5 -->|"one active login per member;<br/>member notified of every change"| CNS_S1
+    CNS_P2 -->|"exact record, the member<br/>credential as the actor"| CNS_S5
+    CNS_P5 -->|"recorded"| CNS_S5
+```
+
+#### Source of truth (F15)
+
+| Element | Citation | Locks (lock-order.md ids only) |
+|---|---|---|
+| CNS_E1 | the MEMBER principal: `member_credentials` link row (0035) — the LINK, never any email, is authoritative (TB1M/FM2) | — |
+| CNS_E2 | staff principals per TB1; the override needs `member_identity:approve`, the link admin the narrow `member_identity` grants (`domain/rbac.py:_MEMBER_IDENTITY_GRANTS`) | — |
+| CNS_P1 | `api/member.py:request_member_otp` / `verify_member_otp` / `refresh_member_token` → `application/member_auth.py:request_member_otp` / `verify_member_otp` / `rotate_member_refresh_token`; the ONE OTP implementation shared with staff: `domain/otp.py:evaluate_challenge`; same `api/auth.py:_rate_guard` + `x-tenant-id` pre-auth scoping; MEMBER-audience tokens dispatched deny-by-default (`application/auth.py:decode_principal`, FM1) | §3 member-OTP-verify and member-refresh-rotation single-node rows |
+| CNS_P2 | `api/member.py:consent_guarantee_as_member` (gate `api/authz.py:RequireMemberPrincipal` — the per-request live-link re-check) → `application/guarantees.py:consent_guarantee_as_member` — the link re-verified AGAIN inside the transaction under the held guarantee row (`member_auth.live_credential_by_id`, the ONE implementation); audit action `guarantee.consent` with the CREDENTIAL as actor | §3 guarantee-consent single-node row (GUAR alone, shared with CNS_P4) |
+| CNS_P3 | `api/member.py:release_guarantee_as_member` → `application/guarantees.py:release_guarantee_as_member` — own PLEDGED guarantee only, link re-verified under the held rows; shared release core `application/guarantees.py:_release_locked_guarantee` (rules identical for both principals: cover re-check at execution, least-disclosure refusals) | E4 → E6 (anchor → guarantee), then E9 (cover guard) |
+| CNS_P4 | `api/loans.py:consent_guarantee_override` (`member_identity:approve` — never `applications:edit`) → `application/guarantees.py:consent_guarantee_override` — MANDATORY `consent_reference` citing the evidence; audit action `guarantee.consent_override` (attestor + reference); consent-confirmation outbox notification to the guarantor (detection control, the !29 lesson) | §3 guarantee-consent single-node row (GUAR alone, shared with CNS_P2) |
+| CNS_P5 | `api/member_identity.py` routes → `application/member_identity.py:create_credential` / `revoke_credential` / `list_member_credentials` — audited ADMIN mutations (FM3, never self-service); atomic active-email claim (`CLAIM_EMAIL_SQL`, `ON CONFLICT` by rowcount); re-link = revoke + create, each notifying the member | §3 member-credential-link single-node row (MSELF alone, chain ROOT) |
+| CNS_S1 | `member_credentials` (0035; RLS forced; one-active-per-member and one-active-per-email partial UNIQUEs) | — |
+| CNS_S2 | `otp_challenges` + `refresh_tokens` — SHARED with the staff principal, each row owned by exactly one principal kind via the 0035 XOR CHECKs (`ck_otp_challenges_one_principal`, `ck_refresh_tokens_one_principal`) | — |
+| CNS_S3 | `guarantees` — 0035 consent-principal columns (`consented_by_credential_id`, `consent_attested_by` + `consent_reference` with `ck_guarantees_attested_consent_reference`) + the FM4 constraint trigger `guarantee_consent_requires_principal`: a row entering `active` without a member credential OR a staff attestation is refused AT THE DATABASE | — |
+| CNS_S4 | `loan_applications` (0001) — the release anchor; remaining cover re-verified at execution under the borrower's deposit row (the P7 gate math, `_release_locked_guarantee`) | (within the CNS_P3 chain) |
+| CNS_S5 / CNS_S6 | `audit_log`, `outbox_events` (0001) — inherit the shared audit/outbox rows (stride.md §0 coverage map) | — |
+
 ## 4. Cross-reference
 
 - **Threats:** every element id above has STRIDE rows in
@@ -911,7 +993,8 @@ flowchart LR
   the highest-risk flows step-by-step: committee voting,
   snapshot-bind-reverify, outbox dispatch, recovery receipt,
   maker-checker adjustment, recovery-case lifecycle, member exit with
-  the claim guard — see [`README.md`](README.md).
+  the claim guard, guarantor consent as the member principal (F15) —
+  see [`README.md`](README.md).
 - **Out-of-scope as-built flows** (not money-bearing in the P-DIAG.3
   sense, listed for completeness, no diagram): arrears/penalty
   classification batch (posts nothing; `application/arrears.py`; its
@@ -932,8 +1015,11 @@ flowchart LR
 v1.2 rule 11 applies: any MR that changes a flow, store, boundary or
 PLANNED label drawn here updates this file (and the affected
 `stride.md` rows) in the same MR. The named flips already claimed:
-P19 (M-Pesa edges), P20 (provider seam), P14/P14.5/P16–P18 (member
-edge), **!53 / issue #23 (0033)** — recovery-case dispositions
+P19 (M-Pesa edges), P20 (provider seam), P16–P18 (member CLIENT
+edge — the P14.5 member AUTH surface itself was flipped as-built by
+!65 at TB1M/L0, and its consent/self-release flow is drawn
+first-class as F15 by the issue-#30 close-out MR !71),
+**!53 / issue #23 (0033)** — recovery-case dispositions
 (`disputed`, `irrecoverable_pending_write_off`, `closed_restructured`)
 and the single post-closure outcome note extend F14 and its stride.md
 rows in that MR. The P13.15 flip recorded here at authoring was

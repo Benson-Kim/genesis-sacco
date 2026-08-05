@@ -10,8 +10,12 @@
  *   0) and offers the action ONLY while the stage is `approved` — the
  *   UI never offers what the API forbids (gate 1.6). The committee
  *   decision is the approval step (P9 maker-checker voting, !58); the
- *   disburse contract itself exposes no checker semantics, so the guard
- *   here is the typed confirmation + the server's stage transition.
+ *   disburse contract now ALSO enforces user-level SoD server-side
+ *   (issue #30): neither the application's initiator (created_by,
+ *   !66/0036) nor its committee recommender (recommended_by, 0037) can
+ *   post the disbursement — both are 403. The guard here remains the
+ *   typed confirmation + the server's stage transition; the 403 renders
+ *   through the shared ErrorBanner.
  * - EXACTLY ONE write per intent: ConfirmDangerModal typed phrase,
  *   pending short-circuit + disabled controls, `retry: 0`, one
  *   Idempotency-Key per logical intent (stable across retries, rotated
