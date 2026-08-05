@@ -108,10 +108,12 @@ docs:spot-check:
       changes:
         - docs/diagrams/**/*
         - backend/src/genesis/api/app.py
+        - backend/migrations/versions/**/*
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       changes:
         - docs/diagrams/**/*
         - backend/src/genesis/api/app.py
+        - backend/migrations/versions/**/*
   script:
     - python3 docs/diagrams/c4-spot-check.py
 
