@@ -56,7 +56,7 @@ or test/artifact present on main).
 | P-DIAG.4 | ✅ DONE | stride.md |
 | P-DIAG.5 | ✅ DONE | sequence-committee-voting / -outbox-dispatch / -snapshot-bind-reverify |
 | P14 | ✅ DONE | !13 merged 2026-08-03; web:* jobs green (incl. spec/client drift + permanent stale-client negative proof) |
-| P14.5 | ❌ TODO | member principal absent |
+| P14.5 | ✅ DONE | 0035 member identity (!65); test_member_auth / test_member_identity FM1–FM5 + test_idempotency cross-actor MISS; combined-state pipeline 2732748398 green incl. migrate-check up→down→up (823 passed, cov 89.03%) |
 | P15 | 🔄 IN PROGRESS | batch 1 on MR !56 (Dashboard, Members, Access control + Phase B shared primitives incl. mandatory-usage blocker (f)); remaining 7 module batches + Playwright E2E follow one MR per batch |
 | P16 | ❌ TODO | no mobile/ tree |
 | P17 | ❌ TODO | depends P16, P14.5 |
