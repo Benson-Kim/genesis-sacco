@@ -21,8 +21,9 @@ export interface NavSection {
 }
 
 /**
- * Sidebar structure. Prototype entries without their own RBAC module
- *  (guarantors, committee, member exit) live under their owning modules.
+ * Sidebar structure mirroring the prototype NAV. Prototype entries
+ * without their own RBAC module (guarantors, committee, member exit,
+ * recovery) live under their owning modules.
  */
 export const NAV_SECTIONS: NavSection[] = [
   {
@@ -67,10 +68,24 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: "exit",
       },
       {
+        // P13.15 corrections console (issue #31 batch 1 — audit #30
+        // R1): the fraud channel's DEDICATED corrections RBAC module,
+        // never generic transactions (A3 maker-checker).
         label: "Corrections",
         href: "/modules/corrections",
         module: "corrections",
         icon: "transactions",
+      },
+      {
+        // P13.16 recovery worklist (issue #31 batch 1 — audit #30 R1);
+        // lives under the loan_book RBAC module (every /recovery-cases
+        // route is gated on loan_book view/create/edit server-side —
+        // there is no dedicated recovery module in the P4 matrix; the
+        // member-exit-under-members precedent).
+        label: "Recovery",
+        href: "/modules/loan_book/recovery",
+        module: "loan_book",
+        icon: "loan_book",
       },
     ],
   },
