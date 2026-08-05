@@ -230,7 +230,7 @@ def test_disbursement_at_exact_cap_succeeds_with_guarantees() -> None:
     = 35000.00. A loan of exactly 35000.00 disburses."""
 
     async def run() -> None:
-        tid, uid, token = await _seed_actor()
+        tid, _uid, token = await _seed_actor()
         mid = await _make_member(tid, deposit="10000.00")
         guarantor = await _make_member(tid, deposit="6000.00")
         pid = await _make_product(token)
@@ -242,6 +242,9 @@ def test_disbursement_at_exact_cap_succeeds_with_guarantees() -> None:
         # FM4: a row ENTERING 'active' carries a staff attestation.
         gid = uuid.uuid4()
         async with tenant_session(factory(), tid) as session:
+            # P14.5 FM4: a row born 'active' must carry a consent
+            # principal — seeded fixtures attest via any tenant user.
+            attestor = (await session.execute(text("SELECT id FROM users LIMIT 1"))).scalar_one()
             await session.execute(
                 text(
                     "INSERT INTO guarantees "
@@ -249,7 +252,7 @@ def test_disbursement_at_exact_cap_succeeds_with_guarantees() -> None:
                     " application_id, amount, status, consent_attested_by, consent_reference) "
                     "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:g AS uuid), "
                     "CAST(:b AS uuid), CAST(:a AS uuid), '5000.00', 'active', "
-                    "CAST(:att AS uuid), :cref)"
+                    "CAST(:att AS uuid), 'seeded fixture (P14.5 FM4)')"
                 ),
                 {
                     "id": str(gid),
@@ -257,8 +260,7 @@ def test_disbursement_at_exact_cap_succeeds_with_guarantees() -> None:
                     "g": str(guarantor),
                     "b": str(mid),
                     "a": str(app_id),
-                    "att": str(uid),
-                    "cref": "seeded fixture (P14.5 FM4)",
+                    "att": str(attestor),
                 },
             )
         async with tenant_session(factory(), tid) as session:

@@ -209,9 +209,8 @@ async def _seed_guarantee(
     async with tenant_session(factory(), tid) as session:
         attestor = None
         if status == "active":
-            # P14.5 FM4: the 0035 trigger refuses a row ENTERING
-            # 'active' without a principal, so seeded active fixtures
-            # carry a staff attestation (any tenant user).
+            # P14.5 FM4: a row born 'active' must carry a consent
+            # principal — seeded fixtures attest via any tenant user.
             attestor = (await session.execute(text("SELECT id FROM users LIMIT 1"))).scalar_one()
         await session.execute(
             text(

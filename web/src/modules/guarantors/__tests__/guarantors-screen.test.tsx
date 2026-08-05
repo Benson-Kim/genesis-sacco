@@ -548,6 +548,14 @@ test("CONSENT: no write until the byte-identical phrase; double-clicked confirm 
   // Consent converts the pledge into ACTIVE collateral (money-adjacent):
   // it carries the SAME danger treatment as pledge/release (!60 F7).
   expect(armButton).toHaveClass("danger");
+  // P14.5: the staff consent override MUST cite its evidence — the arm
+  // button stays disabled until the citation is typed, so a bare
+  // consent shape cannot even be attempted from this screen.
+  expect(armButton).toBeDisabled();
+  await user.type(
+    within(dialog).getByLabelText("Consent evidence reference"),
+    "Signed consent form CF-14",
+  );
   await user.click(armButton);
 
   const confirm = await screen.findByRole("dialog", { name: "Confirm consent attestation" });
@@ -562,9 +570,11 @@ test("CONSENT: no write until the byte-identical phrase; double-clicked confirm 
   await user.click(confirmButton);
 
   expect(mocked.consentGuarantee).toHaveBeenCalledTimes(1);
-  // The version the record was WITNESSED with pins the optimistic lock.
+  // The version the record was WITNESSED with pins the optimistic lock
+  // and the citation travels as the third argument (P14.5).
   expect(mocked.consentGuarantee.mock.calls[0]?.[0]).toBe(GUARANTEE_ID);
   expect(mocked.consentGuarantee.mock.calls[0]?.[1]).toBe(1);
+  expect(mocked.consentGuarantee.mock.calls[0]?.[2]).toBe("Signed consent form CF-14");
 
   release(guarantee({ status: "active", version: 2 }));
 
@@ -648,23 +658,21 @@ test("SUBSTITUTION (disbursed collateral): release is NOT offered; the swap requ
   await user.click(screen.getByRole("button", { name: "Substitute…" }));
   const drawer = await screen.findByRole("dialog", { name: "Substitute guarantee" });
 
-  // Unattested / unreferenced submissions never reach the wire.
+  // Unreferenced submissions never reach the wire (P14.5: the evidence
+  // citation IS the attestation — no consented checkbox exists to tick).
   await user.selectOptions(
     within(drawer).getByLabelText("Substitute guarantor"),
     GUARANTOR_ID,
   );
   await user.click(within(drawer).getByRole("button", { name: "Substitute…" }));
   expect(
-    await within(drawer).findByText("Attest the substitute guarantor's consent."),
-  ).toBeInTheDocument();
-  expect(
-    within(drawer).getByText(
+    await within(drawer).findByText(
       "Cite the consent evidence (e.g. the signed guarantorship form).",
     ),
   ).toBeInTheDocument();
+  expect(within(drawer).queryByLabelText("Consent attestation")).toBeNull();
   expect(mocked.substituteGuarantee).not.toHaveBeenCalled();
 
-  await user.click(within(drawer).getByLabelText("Consent attestation"));
   await user.type(
     within(drawer).getByLabelText("Consent evidence reference"),
     "Signed guarantorship form GF-778",
@@ -684,7 +692,6 @@ test("SUBSTITUTION (disbursed collateral): release is NOT offered; the swap requ
   // server derives the floor from the guarantee row).
   expect(mocked.substituteGuarantee.mock.calls[0]?.[2]).toEqual({
     guarantor_member_id: GUARANTOR_ID,
-    consented: true,
     consent_reference: "Signed guarantorship form GF-778",
     amount: null,
   });
@@ -711,7 +718,6 @@ test("SUBSTITUTE 409: reload withdraws the record with an INFORMATIONAL (never s
     within(drawer).getByLabelText("Substitute guarantor"),
     GUARANTOR_ID,
   );
-  await user.click(within(drawer).getByLabelText("Consent attestation"));
   await user.type(
     within(drawer).getByLabelText("Consent evidence reference"),
     "Signed guarantorship form GF-778",
@@ -825,7 +831,6 @@ test("money-input hygiene: leading zeros are rejected as a PURE STRING shape (no
   const substituteAmountOk = (amount: string) =>
     substituteCreateSchema.safeParse({
       guarantor_member_id: GUARANTOR_ID,
-      consented: true,
       consent_reference: "Signed guarantorship form GF-778",
       amount,
     }).success;

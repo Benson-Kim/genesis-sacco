@@ -59,18 +59,22 @@ export async function pledgeGuarantee(
 }
 
 /**
- * Record the guarantor's staff-attested consent: pledged -> active
- * (applications:edit). The `version` pins the optimistic lock — a
+ * Record the staff-attested consent OVERRIDE: pledged -> active
+ * (P14.5: member_identity:approve — consent is the MEMBER principal's
+ * act on the /member surface; this staff path is an explicit attested
+ * override and MUST cite its evidence via `consent_reference`, written
+ * as an audited fact). The `version` pins the optimistic lock — a
  * consent racing another act surfaces as 409.
  */
 export async function consentGuarantee(
   guaranteeId: string,
   version: number,
+  consentReference: string,
   idempotencyKey: string,
 ): Promise<Guarantee> {
   const { data, error, response } = await api.POST("/guarantees/{guarantee_id}/consent", {
     params: { path: { guarantee_id: guaranteeId } },
-    body: { version },
+    body: { version, consent_reference: consentReference },
     headers: { "Idempotency-Key": idempotencyKey },
   });
   if (error !== undefined || data === undefined) throw toApiError(error, response);
@@ -120,7 +124,6 @@ export async function substituteGuarantee(
       body: {
         version,
         guarantor_member_id: input.guarantor_member_id,
-        consented: input.consented,
         consent_reference: input.consent_reference,
         ...(input.amount !== null ? { amount: input.amount } : {}),
       },

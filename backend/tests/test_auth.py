@@ -38,6 +38,7 @@ def test_otp_flow_issues_short_lived_tokens() -> None:
             algorithms=["HS256"],
             audience=STAFF_AUDIENCE,
         )
+        assert claims["aud"] == "genesis-staff"
         assert claims["tid"] == str(tid)
         assert claims["exp"] - claims["iat"] <= 900
         assert tokens["expires_in"] == 900
