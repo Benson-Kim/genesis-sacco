@@ -38,6 +38,15 @@ const MemberCreateDrawer = dynamic(
     () => import("./MemberCreateDrawer").then((m) => m.MemberCreateDrawer),
     { ssr: false },
 );
+// KYC surfaces (issue #31 batch 3): row drill-down drawer + the
+// registration wizard continuation after a quick-create.
+const MemberKycDrawer = dynamic(
+    () => import("./MemberKycDrawer").then((m) => m.MemberKycDrawer),
+    { ssr: false },
+);
+const KycWizard = dynamic(() => import("./KycWizard").then((m) => m.KycWizard), {
+    ssr: false,
+});
 
 function statusPill(status: MemberStatus) {
     switch (status) {
@@ -154,6 +163,9 @@ export function MembersScreen() {
     const [type, setType] = useState<MemberType | "">("");
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [createdNo, setCreatedNo] = useState<string | null>(null);
+    // Row drill-down (KYC drawer) and the wizard continuation.
+    const [kycMember, setKycMember] = useState<Member | null>(null);
+    const [wizardMember, setWizardMember] = useState<Member | null>(null);
 
     const filters: MemberListFilters = { status, type };
     const list = useKeysetList<Member>({
@@ -197,6 +209,7 @@ export function MembersScreen() {
                     query={list}
                     rowKey={(member) => member.id}
                     emptyMessage="No members match these filters."
+                    onRowClick={(member) => setKycMember(member)}
                 />
             </Card>
             {drawerOpen && (
@@ -205,8 +218,25 @@ export function MembersScreen() {
                     onCreated={(member) => {
                         setDrawerOpen(false);
                         setCreatedNo(member.member_no);
+                        // Prototype wizard continuation (issue #31
+                        // batch 3): identity captured — proceed to the
+                        // KYC profile + documents steps.
+                        setWizardMember(member);
                     }}
                 />
+            )}
+            {kycMember !== null && (
+                <MemberKycDrawer
+                    member={kycMember}
+                    onStartWizard={() => {
+                        setWizardMember(kycMember);
+                        setKycMember(null);
+                    }}
+                    onClose={() => setKycMember(null)}
+                />
+            )}
+            {wizardMember !== null && (
+                <KycWizard member={wizardMember} onClose={() => setWizardMember(null)} />
             )}
         </div>
     );
