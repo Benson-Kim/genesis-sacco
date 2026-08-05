@@ -134,8 +134,14 @@ async def _approved_application(
     product_id: uuid.UUID,
     amount: str,
 ) -> uuid.UUID:
-    """Create an application and drive it to APPROVED via the P9 quorum."""
+    """Create an application and drive it to APPROVED via the P9 quorum.
+
+    The creating actor also refers the application to committee and is
+    therefore its recommender — since 0037 the recommender cannot vote,
+    so the quorum is reached by two OTHER committee members.
+    """
     second_token = await _add_voter(tid)
+    third_token = await _add_voter(tid)
     async with api_client() as client:
         created = await client.post(
             "/applications",
@@ -158,7 +164,7 @@ async def _approved_application(
             )
             assert moved.status_code == 200, moved.text
             version = moved.json()["version"]
-        for voter_token in (token, second_token):
+        for voter_token in (second_token, third_token):
             voted = await client.post(
                 f"/applications/{app_id}/vote",
                 json={"vote": "approve"},
@@ -511,6 +517,7 @@ def test_linked_guarantee_released_on_loan_closure_end_to_end() -> None:
                 consent_reference="signed form GF-P7",
             )
         second_token = await _add_voter(tid)
+        third_token = await _add_voter(tid)
         async with api_client() as client:
             for target in ("appraisal", "committee"):
                 moved = await client.post(
@@ -520,7 +527,9 @@ def test_linked_guarantee_released_on_loan_closure_end_to_end() -> None:
                 )
                 assert moved.status_code == 200, moved.text
                 version = moved.json()["version"]
-            for voter_token in (token, second_token):
+            # token is now the recommender (0037 SoD: cannot vote) —
+            # two OTHER members reach the quorum.
+            for voter_token in (second_token, third_token):
                 voted = await client.post(
                     f"/applications/{app_id}/vote",
                     json={"vote": "approve"},
@@ -529,7 +538,8 @@ def test_linked_guarantee_released_on_loan_closure_end_to_end() -> None:
                 assert voted.status_code == 200, voted.text
             # Cap check (hand-computed): 2000.00 x 3.00 + 4000.00
             # = 10000.00 >= 5000.00 -> disburses. The second principal
-            # posts it: the initiator is refused (issue #30 R4 SoD).
+            # posts it: the initiator is refused (issue #30 R4 SoD) and
+            # since 0037 so is the recommender (token here is both).
             disbursed = await client.post(
                 f"/applications/{app_id}/disburse",
                 json={"channel": "bank"},

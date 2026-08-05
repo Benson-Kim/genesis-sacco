@@ -2208,6 +2208,8 @@ export interface components {
             purpose: string | null;
             /** Rate Pct */
             rate_pct: string;
+            /** Recommended By */
+            recommended_by: string | null;
             /** Stage */
             stage: string;
             /** Term Months */

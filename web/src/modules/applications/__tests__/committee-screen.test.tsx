@@ -88,6 +88,7 @@ function committeeApp(overrides: Partial<Application> = {}): Application {
     stage: "committee",
     cover_pct: "95.50",
     created_by: null,
+    recommended_by: null,
     max_eligible: null,
     version: 7,
     ...overrides,
@@ -255,7 +256,8 @@ test("SERVER TRUTH SUPERSEDES the per-tab witness: a DIFFERENT server-attributed
 });
 
 test("attribution NULL leg (FM-B): an unattributed record with no witnessed referral renders the HONEST maker label — nothing invented; controls mount (the server enforces regardless)", async () => {
-  // created_by is null in the base fixture and the registry is empty.
+  // created_by AND recommended_by are null in the base fixture and the
+  // registry is empty.
   mountScreen();
 
   await screen.findByText(/Loan review/);
@@ -263,6 +265,63 @@ test("attribution NULL leg (FM-B): an unattributed record with no witnessed refe
     await screen.findByText(/unattributed on the server record/),
   ).toBeInTheDocument();
   expect(await screen.findByRole("button", { name: "Vote approve" })).toBeInTheDocument();
+});
+
+test("SERVER TRUTH (issue #30 close-out, 0037): a recommended_by matching the signed-in voter withholds the vote affordances STRUCTURALLY — with NO per-tab witness at all", async () => {
+  // No recordCommitteeMaker call: the registry knows nothing. The
+  // CONTRACT's recommender attribution alone establishes the maker —
+  // the server refuses this principal's vote (403) and the UI never
+  // offers it. Falsifiable: drop the recommended_by precedence and the
+  // registry's UNKNOWN sentinel would mount the controls.
+  mocked.fetchApplication.mockResolvedValue(committeeApp({ recommended_by: VOTER_ID }));
+  mountScreen();
+
+  await screen.findByText(/Loan review/);
+  expect(
+    await screen.findByText(/Approval requires a DIFFERENT\s+administrator/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/You recommended this application to committee \(server attribution\)/),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Vote approve" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Vote reject" })).toBeNull();
+  expect(mocked.voteOnApplication).not.toHaveBeenCalled();
+});
+
+test("SERVER TRUTH SUPERSEDES the per-tab witness for the RECOMMENDER (0037): a DIFFERENT server-attributed recommender renders the short-id maker label and mounts the controls", async () => {
+  // The tab witnessed the signed-in operator recommending — but the
+  // server record attributes the referral to another principal. Server
+  // truth wins; the witness is only the fallback for unattributed rows.
+  recordCommitteeMaker(APP_ID, VOTER_ID);
+  mocked.fetchApplication.mockResolvedValue(
+    committeeApp({ recommended_by: OTHER_OFFICER_ID }),
+  );
+  mountScreen();
+
+  await screen.findByText(/Loan review/);
+  // Least disclosure (FM-D): the SHORT id only — never a name/email.
+  expect(
+    await screen.findByText(
+      new RegExp(`Recommending officer ${OTHER_OFFICER_ID.slice(0, 8)} \\(server attribution\\)`),
+    ),
+  ).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Vote approve" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Vote reject" })).toBeInTheDocument();
+});
+
+test("EXTEND NEVER WEAKEN (0037): when the recommender is someone else but created_by matches the signed-in voter, the affordances stay withheld — the initiator's structural withhold survives the recommender precedence", async () => {
+  mocked.fetchApplication.mockResolvedValue(
+    committeeApp({ recommended_by: OTHER_OFFICER_ID, created_by: VOTER_ID }),
+  );
+  mountScreen();
+
+  await screen.findByText(/Loan review/);
+  expect(
+    await screen.findByText(/Approval requires a DIFFERENT\s+administrator/),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Vote approve" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Vote reject" })).toBeNull();
+  expect(mocked.voteOnApplication).not.toHaveBeenCalled();
 });
 
 test("SEPARATION OF DUTIES (deny by default): an unestablishable checker identity gets NO vote affordances", async () => {

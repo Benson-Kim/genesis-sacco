@@ -70,6 +70,15 @@ SEQUENCE_DIAGRAMS = [
     REPO_ROOT / "docs/diagrams/sequence-committee-voting.md",
     REPO_ROOT / "docs/diagrams/sequence-snapshot-bind-reverify.md",
     REPO_ROOT / "docs/diagrams/sequence-outbox-dispatch.md",
+    # P-DIAG drift MR (!55) diagrams + the !71 F15 pattern — added by
+    # the issue-#30 close-out MR so ALL sequence footers are
+    # machine-verified, not only the original three (small in-scope
+    # hardening; the regex only checks cited module paths exist).
+    REPO_ROOT / "docs/diagrams/sequence-recovery-receipt.md",
+    REPO_ROOT / "docs/diagrams/sequence-repayment-adjustment.md",
+    REPO_ROOT / "docs/diagrams/sequence-recovery-case-lifecycle.md",
+    REPO_ROOT / "docs/diagrams/sequence-member-exit-claim-guard.md",
+    REPO_ROOT / "docs/diagrams/sequence-guarantor-consent-principal.md",
 ]
 
 # A cited module path: genesis/<pkg>/<module>.py (also matches bare

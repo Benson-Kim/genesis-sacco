@@ -8,10 +8,14 @@
  * MAKER-CHECKER (blocker (f)): every vote affordance mounts INSIDE
  * MakerCheckerPanel — the checker controls exist only for a different,
  * known principal (getOwnUserId; no override prop). The maker identity
- * comes from the per-tab maker registry (see makerRegistry.ts — the P9
- * contract exposes no recommender identity; recorded honestly in the
- * MR). The server enforces the voting invariants regardless (gate 1.6):
- * one vote per voter (DB UNIQUE ⇒ 409), voting open only in committee
+ * is SERVER TRUTH first (issue #30 close-out, 0037): the contract's
+ * `recommended_by` (the committee referrer — the vote SoD subject the
+ * server enforces) with `created_by` (the initiator, !66/0036) also
+ * withheld structurally; the per-tab registry (makerRegistry.ts) is
+ * the fallback witness for unattributed rows only. The server enforces
+ * the voting invariants regardless (gate 1.6): one vote per voter (DB
+ * UNIQUE ⇒ 409), the RECOMMENDER cannot vote (403, keyed on the
+ * persisted recommended_by — 0037), voting open only in committee
  * stage, quorum from tenant config AT VOTE TIME, authority bands on
  * approve votes.
  *
@@ -186,26 +190,38 @@ function ReviewPanel({ applicationId }: Readonly<{ applicationId: string }>) {
   const mayApprove = can(permissions.data, "applications", "approve");
   const product = products.data?.find((p) => p.id === app.product_id);
   const conflict = vote.isError && isConflict(vote.error);
-  // SERVER TRUTH FIRST (issue #30 follow-up on !66/0036): created_by is
-  // the contract's initiator attribution — the maker-checker record
-  // itself, not a per-tab witness. The registry (the recommender THIS
-  // TAB witnessed) is consulted only when the server record is
-  // unattributed (created_by === null); nothing is ever invented.
+  // SERVER TRUTH FIRST (issue #30 close-out, 0037): recommended_by is
+  // the contract's recommender attribution — the vote's SoD subject
+  // (the server refuses the recommender's vote, 403). created_by (the
+  // initiator, !66/0036) stays structurally withheld too — EXTEND,
+  // never weaken: if the signed-in operator is EITHER server-attributed
+  // principal, the panel's self-check matches and the vote affordances
+  // are withheld. The registry (the referral THIS TAB witnessed) is
+  // consulted only when the server record carries NO attribution at
+  // all; nothing is ever invented.
   const witnessedMakerId = committeeMakerOf(app.id);
-  const makerId = app.created_by ?? witnessedMakerId;
   const ownId = getOwnUserId();
+  const serverMakerId = app.recommended_by ?? app.created_by;
+  const makerId =
+    ownId !== null && (ownId === app.recommended_by || ownId === app.created_by)
+      ? ownId
+      : (serverMakerId ?? witnessedMakerId);
   const makerLabel =
-    app.created_by !== null
-      ? app.created_by === ownId
-        ? "You initiated this application (server attribution)."
+    app.recommended_by !== null
+      ? app.recommended_by === ownId
+        ? "You recommended this application to committee (server attribution) — the server refuses your vote."
         : // Least disclosure (FM-D): the bare staff UUID via the
           // short-id convention — never a name or email.
-          `Initiating officer ${app.created_by.slice(0, 8)} (server attribution).`
-      : witnessedMakerId === MAKER_UNKNOWN
-        ? "Initiating officer — unattributed on the server record (attribution is never invented); no referral witnessed by this tab."
-        : witnessedMakerId === ownId
-          ? "You recommended this application to committee (witnessed by this tab)."
-          : "Recommending officer (witnessed by this tab).";
+          `Recommending officer ${app.recommended_by.slice(0, 8)} (server attribution).`
+      : app.created_by !== null
+        ? app.created_by === ownId
+          ? "You initiated this application (server attribution)."
+          : `Initiating officer ${app.created_by.slice(0, 8)} (server attribution).`
+        : witnessedMakerId === MAKER_UNKNOWN
+          ? "Referring officer — unattributed on the server record (attribution is never invented); no referral witnessed by this tab."
+          : witnessedMakerId === ownId
+            ? "You recommended this application to committee (witnessed by this tab)."
+            : "Recommending officer (witnessed by this tab).";
 
   function reloadRecord() {
     // Explicit reload flow (409: already voted / stage moved underneath):

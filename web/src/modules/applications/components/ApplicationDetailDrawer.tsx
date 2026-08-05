@@ -237,6 +237,21 @@ export function ApplicationDetailDrawer({
             "— (unattributed)"
           )}
         </Kv>
+        <Kv label="Recommended by">
+          {/* Recommender attribution (issue #30 close-out, 0037): the
+              SERVER's bare staff UUID, short-id convention — least
+              disclosure (FM-D): no name/email is ever fetched for it.
+              NULL renders the honest affordance (FM-B): not yet
+              referred to committee, or unattributed history — an actor
+              is never invented. */}
+          {app.recommended_by !== null ? (
+            <span className={styles.mono} title={app.recommended_by}>
+              {app.recommended_by.slice(0, 8)}
+            </span>
+          ) : (
+            "— (not referred / unattributed)"
+          )}
+        </Kv>
         <Kv label="Record version">{app.version}</Kv>
       </div>
       {/* One copy of the 409 reload-and-re-enter flow (gate 1.1). */}
