@@ -84,6 +84,17 @@ class TransactionOut(BaseModel):
     direction: str
     occurred_at: str
     is_reversal: bool
+    #: Posting-actor attribution (issue #30 R3, Hat 2 A3; migration
+    #: 0036): the staff principal who posted this transaction, now on
+    #: the ledger read model itself instead of only the access_control-
+    #: gated audit log. Gated exactly like every other field here by
+    #: transactions:view (the P4 matrix — no extra grant discloses it).
+    #: Least disclosure (gate 1.6): the bare user UUID only — never a
+    #: name or email; resolving it stays behind access_control:view.
+    #: null for system/job postings (interest, dormancy) and for
+    #: pre-0036 rows without unambiguous audit history — attribution is
+    #: never invented. Immutable by the 0004 append-only fence.
+    created_by: str | None
 
 
 class TransactionListResponse(BaseModel):
@@ -123,6 +134,7 @@ def _txn_out(t: txn_service.TransactionRecord) -> TransactionOut:
         direction=t.direction.value,
         occurred_at=t.occurred_at.isoformat(),
         is_reversal=t.is_reversal,
+        created_by=str(t.created_by) if t.created_by else None,
     )
 
 

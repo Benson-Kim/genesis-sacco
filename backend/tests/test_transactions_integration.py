@@ -643,3 +643,73 @@ def test_ledger_listing_keyset_filters_and_tenant_isolation() -> None:
         assert foreign == []  # RLS + explicit predicate: zero rows cross-tenant
 
     asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Issue #30 R3 — posting-actor attribution on the ledger read model (FM-B/D)
+# ---------------------------------------------------------------------------
+
+
+def test_ledger_read_model_carries_posting_actor_least_disclosure() -> None:
+    """FM-D: created_by rides the transactions read contract, gated by
+    transactions:view exactly like every other field (the P4 matrix —
+    no extra grant discloses it), as the bare staff UUID ONLY.
+
+    Falsifiable: dropping the TransactionOut field (or the _txn_out /
+    _row_to_txn mapping) fails the equality assertions; leaking the
+    actor's name or email into the payload fails the disclosure
+    assertions. FM-B leg: a system posting (no actor) reads back null —
+    attribution is never invented.
+    """
+
+    async def run() -> None:
+        email = unique_email()
+        tid, role_id = await seed_user(email)
+        async with tenant_session(factory(), tid) as session:
+            await seed_permissions(session, tid)
+            actor_row = (
+                await session.execute(
+                    text("SELECT id, full_name FROM users WHERE email = :email"),
+                    {"email": email},
+                )
+            ).first()
+        assert actor_row is not None
+        actor_id = uuid.UUID(str(actor_row[0]))
+        actor_name = str(actor_row[1])
+        token = issue_access_token(AuthContext(user_id=actor_id, tenant_id=tid, role_id=role_id))
+        headers = {"authorization": f"Bearer {token}"}
+        mid = await _seed_member(tid, deposit="1000.00")
+
+        # An attributed posting through the API (the teller flow).
+        async with api_client() as client:
+            posted = await client.post(
+                f"/members/{mid}/deposits",
+                json={"amount": "250.00", "channel": "mpesa"},
+                headers=headers,
+            )
+            assert posted.status_code == 201, posted.text
+
+        # A system posting: no acting principal, recorded as absent.
+        async with tenant_session(factory(), tid) as session:
+            await txn_service.record_deposit(
+                session, tid, None, mid, amount=Decimal("50.00"), channel=Channel.BANK
+            )
+
+        async with api_client() as client:
+            listing = await client.get("/transactions", headers=headers)
+            assert listing.status_code == 200, listing.text
+            items = listing.json()["items"]
+            # Channel keys the two fixtures apart (order-independent).
+            teller_rows = [i for i in items if i["channel"] == "mpesa"]
+            system_rows = [i for i in items if i["channel"] == "bank"]
+            assert teller_rows and system_rows
+            assert teller_rows[0]["created_by"] == str(actor_id)  # recorded at INSERT
+            assert system_rows[0]["created_by"] is None  # FM-B: never invented
+            assert "created_by" in system_rows[0]  # present even when null
+            # Least disclosure (gate 1.6): the UUID only — the actor's
+            # name/email appear nowhere in the money read model.
+            assert actor_name not in listing.text
+            assert email not in listing.text
+            assert "full_name" not in listing.text
+
+    asyncio.run(run())

@@ -133,6 +133,17 @@ class ApplicationOut(BaseModel):
     purpose: str | None
     stage: str
     cover_pct: str
+    #: Initiator attribution (issue #30 R4, migration 0036): the staff
+    #: principal who created the application — recorded at INSERT and
+    #: now exposed so approvers and the disbursing officer can see WHO
+    #: they are checking (the server enforces regardless: the initiator
+    #: can never post the disbursement, 403). Least disclosure (gate
+    #: 1.6): the bare user UUID only — never a name or email; resolving
+    #: it stays behind access_control:view (the P13.5 users/audit read
+    #: paths). NULL only for rows written without an actor or whose
+    #: pre-0036 audit history was not unambiguous (attribution is never
+    #: invented).
+    created_by: str | None
     #: deposits x product multiplier + live guarantees — the cap the P7
     #: disbursement gate enforces (issue #15). Computed on the single-
     #: application read only; None on listings (computing it per row
@@ -254,6 +265,7 @@ def _application_out(a: applications_service.ApplicationRecord) -> ApplicationOu
         purpose=a.purpose,
         stage=a.stage.value,
         cover_pct=str(a.cover_pct),
+        created_by=str(a.created_by) if a.created_by else None,
         version=a.version,
     )
 
