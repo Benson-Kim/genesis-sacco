@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isoTimestampSchema } from "@/lib/schemas";
 
 /**
  * Zod-validated response boundary for the reports module (P15 module 8
@@ -200,15 +201,14 @@ const DOWNLOAD_PATH_RE = /^\/exports\/downloads\/[A-Za-z0-9_-]+$/;
 
 /**
  * ISO-8601 datetime SHAPE for the export timestamps (review F-R4):
- * exactly what the backend's `datetime.isoformat()` emits — seconds
- * always present, optional fractional seconds, optional `Z`/`±HH:MM`
- * offset. These fields feed `fmtDateTime` on an operator-facing audit
- * surface; a garbage timestamp would render "Invalid Date" there, so
- * it is REJECTED at the boundary instead (the module's reject-unknowns
- * posture — consistent with DOWNLOAD_PATH_RE and the int assertions).
+ * the SHARED shape from `@/lib/schemas` (single copy, gate 1.1 —
+ * issue #30 A2/S2). These fields feed `fmtDateTime` on an
+ * operator-facing audit surface; a garbage timestamp would render
+ * "Invalid Date" there, so it is REJECTED at the boundary instead
+ * (the module's reject-unknowns posture — consistent with
+ * DOWNLOAD_PATH_RE and the int assertions).
  */
-const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/;
-const timestampSchema = z.string().regex(TIMESTAMP_RE);
+const timestampSchema = isoTimestampSchema;
 
 /** ArtifactOut — every figure (row count, cap, truncation, expiry) is
  * the SERVER's render metadata, displayed verbatim. */

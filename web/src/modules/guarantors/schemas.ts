@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { moneySchema } from "@/lib/schemas";
 
 /**
  * Zod-validated response boundary for the guarantors module (P15 module
@@ -38,8 +39,12 @@ export const guaranteeSchema = z.object({
   loan_id: z.string().nullable(),
   borrower_member_id: z.string(),
   guarantor_member_id: z.string(),
-  /** Decimal string — never a number (blocker (a)). */
-  amount: z.string(),
+  /** CANONICAL server money shape (issue #30 A2/S2 retrofit):
+   * `guarantees.amount` is numeric(18,2) CHECK (amount > 0)
+   * (migration 0001) via str(Decimal) (_guarantee_out, api/loans.py)
+   * — a '-' or garbage shape is a contract violation, REJECTED before
+   * it can reach fmtKes in the act dialogs. */
+  amount: moneySchema,
   status: guaranteeStatusSchema,
   version: z.number().int(),
 });

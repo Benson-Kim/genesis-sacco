@@ -36,6 +36,8 @@ const calls: FetchCall[] = [];
 let withdrawalStatus = 201;
 let listMoneyAsNumbers = false;
 let listUnknownType = false;
+let listGarbageMoney = false;
+let listGarbageTimestamp = false;
 
 function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -79,6 +81,18 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
     }
     if (listUnknownType) {
       return json(200, { items: [{ ...txnOut, type: "gl_sweep" }], next_cursor: null });
+    }
+    if (listGarbageMoney) {
+      // A STRING, so it passes a naive z.string() — the shared
+      // moneySchema shape (issue #30 A2/S2) is the only thing standing
+      // between it and fmtKes on the register.
+      return json(200, { items: [{ ...txnOut, amount: "007.10" }], next_cursor: null });
+    }
+    if (listGarbageTimestamp) {
+      return json(200, {
+        items: [{ ...txnOut, occurred_at: "yesterday-ish" }],
+        next_cursor: null,
+      });
     }
     return json(200, { items: [txnOut], next_cursor: "cursor-page-2" });
   }
@@ -158,6 +172,7 @@ const tabStorage = new Map<string, string>();
 /* eslint-disable @typescript-eslint/no-require-imports */
 const session = require("@/modules/auth/session") as typeof import("@/modules/auth/session");
 const txnApi = require("../api") as typeof import("../api");
+const txnSchemas = require("../schemas") as typeof import("../schemas");
 const { ApiError } = require("@genesis/api-client") as typeof import("@genesis/api-client");
 /* eslint-enable @typescript-eslint/no-require-imports */
 
@@ -168,6 +183,8 @@ beforeEach(() => {
   withdrawalStatus = 201;
   listMoneyAsNumbers = false;
   listUnknownType = false;
+  listGarbageMoney = false;
+  listGarbageTimestamp = false;
   session.clearSession();
   session.setSession({ accessToken: jwt(USER_ID, 900), refreshToken: REFRESH_VALUE });
 });
@@ -309,6 +326,98 @@ test("an unknown transaction type is a contract violation and is REJECTED, never
   expect(thrown).toBeInstanceOf(Error);
   expect(thrown).not.toBeInstanceOf(ApiError);
   expect(String(thrown)).toContain("type");
+});
+
+test("a garbage money STRING is REJECTED at the wire boundary (issue #30 A2/S2) — a value that passes z.string() can still never reach fmtKes", async () => {
+  listGarbageMoney = true;
+  const thrown = await txnApi
+    .fetchTransactionsPage(txnApi.EMPTY_TXN_FILTERS, null)
+    .catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("amount");
+});
+
+test("a garbage timestamp is REJECTED at the boundary (the !63 F-R4 lesson) — 'Invalid Date' can never render on the register", async () => {
+  listGarbageTimestamp = true;
+  const thrown = await txnApi
+    .fetchTransactionsPage(txnApi.EMPTY_TXN_FILTERS, null)
+    .catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("occurred_at");
+});
+
+test("issue #30 A2/S2 accept/reject matrix: money fields assert the CANONICAL server shape; the CHECK(>0)/CHECK(>=0) columns reject a sign", () => {
+  const txnWith = (field: string, value: string) =>
+    txnSchemas.transactionSchema.safeParse({ ...txnOut, [field]: value }).success;
+  const accountOut = {
+    txn_id: TXN_ID,
+    txn_ref: "MP-1042",
+    amount: "50000.10",
+    balance_after: "173500.10",
+  };
+  const accountWith = (field: string, value: string) =>
+    txnSchemas.accountTxnSchema.safeParse({ ...accountOut, [field]: value }).success;
+
+  // Canonical shapes ACCEPTED — exactly the backend serialisation
+  // (str(Decimal) of numeric(18,2) / to_cents; hand-computed oracles).
+  expect(txnWith("amount", "0.01")).toBe(true);
+  expect(txnWith("amount", "50000.10")).toBe(true);
+  expect(accountWith("balance_after", "0.00")).toBe(true);
+  expect(accountWith("amount", "2500.10")).toBe(true);
+
+  // Garbage shapes REJECTED on every money field — none of these is a
+  // str(Decimal) of a numeric(18,2) value, and each previously flowed
+  // into fmtKes unchallenged (bare z.string()).
+  const garbage = [
+    "abc",
+    "1e5",
+    "007.10", // leading zeros beyond a lone 0
+    "50000.1", // wrong scale — the server always emits two places
+    "50000.100",
+    "50000", // missing scale on a COLUMN value
+    "50,000.10", // grouping is fmtKes's job, never the wire's
+    " 50000.10",
+    "NaN",
+    "",
+  ];
+  for (const value of garbage) {
+    expect(txnWith("amount", value)).toBe(false);
+    expect(accountWith("amount", value)).toBe(false);
+    expect(accountWith("balance_after", value)).toBe(false);
+  }
+
+  // A '-' is a CONTRACT VIOLATION everywhere here: transactions.amount
+  // is CHECK (amount > 0) and deposit_accounts.balance is
+  // CHECK (balance >= 0) (migration 0001) — no negative branch exists.
+  expect(txnWith("amount", "-1.00")).toBe(false);
+  expect(accountWith("balance_after", "-1.00")).toBe(false);
+
+  // The interest-run boundary: total_interest is ZERO + to_cents sums
+  // (two places even for an all-skipped run); the quarter bounds stay
+  // DATE strings (deliberately NOT timestamp-asserted).
+  const run = {
+    period_start: "2026-04-01",
+    period_end: "2026-06-30",
+    annual_rate_pct: "8.00",
+    scanned: 120,
+    posted: 118,
+    skipped_existing: 2,
+    rate_mismatches: 0,
+    total_interest: "45678.10",
+    batches: 2,
+  };
+  expect(txnSchemas.interestRunSchema.safeParse(run).success).toBe(true);
+  expect(
+    txnSchemas.interestRunSchema.safeParse({ ...run, total_interest: "0.00" }).success,
+  ).toBe(true);
+  expect(
+    txnSchemas.interestRunSchema.safeParse({ ...run, total_interest: "1e5" }).success,
+  ).toBe(false);
+  expect(
+    txnSchemas.interestRunSchema.safeParse({ ...run, total_interest: "-1.00" }).success,
+  ).toBe(false);
 });
 
 test("POST /jobs/deposit-interest: the body carries the batch size ONLY (no rate, period or as-of can be sent); the run result parses verbatim", async () => {

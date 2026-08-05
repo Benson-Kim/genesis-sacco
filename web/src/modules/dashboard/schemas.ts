@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+    aggregateMoneySchema,
+    isoTimestampSchema,
+    signedAggregateMoneySchema,
+} from "@/lib/schemas";
 
 /**
  * Zod validation of GET /dashboard/summary (P13.9 composite endpoint).
@@ -8,6 +13,16 @@ import { z } from "zod";
  * The endpoint omits (nulls) every slice the caller's role is not
  * granted — the UI renders "—" for missing slices and never fabricates
  * figures (deny-by-default, gate 1.6).
+ *
+ * MONEY SHAPES (issue #30 A2/S2 retrofit): every figure here is a SQL
+ * aggregate (application/dashboard.py / loans.py — COALESCE(SUM(...),
+ * 0) and friends), so the shared AGGREGATE shapes apply: the canonical
+ * two-place decimal OR the bare "0" an empty aggregate serialises to.
+ * The SIGNED aggregate shape is taken ONLY where the backend documents
+ * a negative branch: the monthly flow series (reversal rows subtract
+ * in the month they were POSTED — MONTHLY_FLOWS_SQL) and
+ * free_capacity (an ADVISORY "balance less pledged" difference read
+ * without the P9 locks). Everything else REJECTS a '-'.
  */
 export const memberTypeCountSchema = z.object({
     type: z.string(),
@@ -21,26 +36,35 @@ export const membersOverviewSchema = z.object({
 });
 
 export const depositTotalsSchema = z.object({
-    total_deposits: z.string(),
-    total_share_capital: z.string(),
+    /** DEPOSIT_TOTAL_SQL and SHARE_TOTAL_SQL — COALESCE(SUM(balance),
+     * 0) over CHECK (balance >= 0) columns: non-negative aggregates,
+     * fmtKes-fed (issue #30 A2/S2 retrofit). */
+    total_deposits: aggregateMoneySchema,
+    total_share_capital: aggregateMoneySchema,
 });
 
 export const classificationSliceSchema = z.object({
     classification: z.string(),
     count: z.number().int(),
-    balance: z.string(),
-    provisions: z.string(),
+    /** Grouped COALESCE(SUM(...), 0) aggregates (loans.py
+     * portfolio_summary), fed to fmtAmount (A2/S2 retrofit). */
+    balance: aggregateMoneySchema,
+    provisions: aggregateMoneySchema,
 });
 
 export const portfolioSummarySchema = z.object({
     active_loans: z.number().int(),
-    outstanding_balance: z.string(),
-    npl_balance: z.string(),
+    /** COALESCE(SUM(...), 0) aggregates — bare "0" on an empty book,
+     * two-place otherwise; fmtKes-fed (A2/S2 retrofit). The ratio
+     * percentages are rendered as "%" text, never fmtKes-fed —
+     * deliberately left unasserted (A2/S2 sweep note). */
+    outstanding_balance: aggregateMoneySchema,
+    npl_balance: aggregateMoneySchema,
     npl_ratio_pct: z.string(),
-    par30_balance: z.string(),
+    par30_balance: aggregateMoneySchema,
     par30_ratio_pct: z.string(),
-    provisions: z.string(),
-    penalties_due: z.string(),
+    provisions: aggregateMoneySchema,
+    penalties_due: aggregateMoneySchema,
     by_classification: z.array(classificationSliceSchema),
 });
 
@@ -48,21 +72,38 @@ export const guarantorCapacitySchema = z.object({
     member_id: z.string(),
     member_no: z.string(),
     name: z.string(),
-    pledged_total: z.string(),
-    free_capacity: z.string(),
+    /** live_pledged_total — a COALESCE'd SUM of CHECK (amount > 0)
+     * pledges: non-negative aggregate, fmtKes-fed (A2/S2 retrofit). */
+    pledged_total: aggregateMoneySchema,
+    /** ADVISORY "balance less pledged" difference (dashboard.py
+     * GuarantorCapacity), read without the P9 locks — legitimately
+     * NEGATIVE when the balance dropped after pledging or no deposit
+     * account exists; fmtKes-fed with its sign (A2/S2 retrofit). */
+    free_capacity: signedAggregateMoneySchema,
 });
 
 export const guarantorAggregatesSchema = z.object({
     active_guarantees: z.number().int(),
-    total_pledged: z.string(),
+    /** GUARANTEE_TOTALS_SQL — COALESCE(SUM(amount), 0) over
+     * CHECK (amount > 0) pledges: non-negative aggregate, fmtKes-fed
+     * (A2/S2 retrofit). */
+    total_pledged: aggregateMoneySchema,
     distinct_guarantors: z.number().int(),
     guarantors: z.array(guarantorCapacitySchema),
 });
 
 export const monthlyFlowSchema = z.object({
+    /** "YYYY-MM" UTC calendar month key — rendered verbatim, never
+     * fmtDateTime-fed: deliberately left unasserted (A2/S2 sweep
+     * note). */
     month: z.string(),
-    deposits: z.string(),
-    disbursements: z.string(),
+    /** MONTHLY_FLOWS_SQL — reversal rows SUBTRACT in the month they
+     * were posted, so a reversal-only month legitimately nets
+     * negative; zero-filled silent months arrive as "0.00" and an
+     * all-other-types month as the SQL bare "0"; fed to fmtAmount
+     * with the sign (A2/S2 retrofit). */
+    deposits: signedAggregateMoneySchema,
+    disbursements: signedAggregateMoneySchema,
 });
 
 export const pipelineStageSchema = z.object({
@@ -71,7 +112,10 @@ export const pipelineStageSchema = z.object({
 });
 
 export const dashboardSummarySchema = z.object({
-    as_of: z.string(),
+    /** datetime.isoformat() (api/dashboard.py summary.as_of) — feeds
+     * fmtDateTime in the header: garbage is REJECTED, never
+     * "Invalid Date" (the !63 F-R4 lesson; A2/S2 retrofit). */
+    as_of: isoTimestampSchema,
     members: membersOverviewSchema.nullish(),
     deposits: depositTotalsSchema.nullish(),
     loan_book: portfolioSummarySchema.nullish(),
