@@ -1590,12 +1590,15 @@ unchanged; proven on !26–!30; apply to every prompt from here forward):
     / Dependency-Scanning template jobs historically DID NOT SPAWN on
     this project's MR pipelines (recorded on !26, !28, !29). Since the
     `.latest` template variants landed the jobs DO spawn and pass on MR
-    pipelines — observed in-project on !64's pipelines 2731230146 /
-    2731298427 and !67's 2731979233 (`semgrep-sast`, `secret_detection`,
+    pipelines — observed on !64's pipelines 2731230146 / 2731298427 and
+    !67's 2731979233, and re-verified IN THIS PROJECT (post-move) on
+    !70's pipeline 2733651430 (`semgrep-sast`, `secret_detection`,
     `gemnasium-dependency_scanning`,
-    `gemnasium-python-dependency_scanning`), reconciled here by the
-    issue-#30 close-out MR (Hat 6 D7: the standing rule itself had
-    become the stale claim). The rule's HONESTY core is unchanged:
+    `gemnasium-python-dependency_scanning` — all spawned and passed;
+    the pre-move pipeline ids no longer resolve here, so 2733651430 is
+    the citable evidence), reconciled here by the issue-#30 close-out
+    MR (Hat 6 D7: the standing rule itself had become the stale
+    claim). The rule's HONESTY core is unchanged:
     every MR's DoD ticks the security box ONLY against observed
     in-project job evidence at that MR's final HEAD (job ids cited),
     and records it unchecked with the reason when the jobs did not
