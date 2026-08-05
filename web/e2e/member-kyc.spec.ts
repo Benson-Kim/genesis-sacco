@@ -66,6 +66,19 @@ const MEMBER_OUT = {
   version: 1,
 };
 
+// DETAIL read (#31 batch 3): the drawer's financial summary renders
+// these four SERVER strings verbatim. DELIBERATELY NON-ADDITIVE: a
+// screen that summed figures would surface a string asserted ABSENT.
+const MEMBER_DETAIL_OUT = {
+  ...MEMBER_OUT,
+  aggregates: {
+    deposits_total: "1000.11",
+    shares_total: "200.22",
+    loans_outstanding: "300.33",
+    guarantees_pledged: "40.04",
+  },
+};
+
 const PERSON_PROFILE_PAYLOAD = {
   bio: {
     first_name: "Jane",
@@ -292,6 +305,17 @@ test("happy path: row drill-down renders the SERVER profile verbatim + the check
   // grouping — a client re-format would render something else).
   await expect(drawer.getByText("123456.70", { exact: true })).toBeVisible();
   await expect(drawer.getByText("A012345678Z")).toBeVisible();
+
+  // Financial summary (#31 batch 3): the four SERVER aggregate strings
+  // verbatim; the non-additive fixture proves nothing is summed (a
+  // derived figure would read 1200.33 or 1540.70 — asserted absent).
+  await expect(drawer.getByText("Financial summary")).toBeVisible();
+  await expect(drawer.getByText("1000.11", { exact: true })).toBeVisible();
+  await expect(drawer.getByText("200.22", { exact: true })).toBeVisible();
+  await expect(drawer.getByText("300.33", { exact: true })).toBeVisible();
+  await expect(drawer.getByText("40.04", { exact: true })).toBeVisible();
+  await expect(drawer.getByText("1200.33")).toHaveCount(0);
+  await expect(drawer.getByText("1540.70")).toHaveCount(0);
 
   // Checklist mirrors the status machine: pending offers ONLY the
   // handover move; verified is terminal.

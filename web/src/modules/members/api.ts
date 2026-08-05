@@ -12,9 +12,11 @@ import { toApiError } from "@genesis/api-client";
 import { keysetPageSchema, type KeysetPage } from "@/modules/table/schemas";
 import { api } from "@/lib/api";
 import {
+    memberDetailSchema,
     memberSchema,
     type Member,
     type MemberCreateInput,
+    type MemberDetail,
     type MemberStatus,
     type MemberType,
 } from "./schemas";
@@ -54,6 +56,19 @@ export async function fetchMember(memberId: string): Promise<Member> {
     });
     if (error !== undefined || data === undefined) throw toApiError(error, response);
     return memberSchema.parse(data);
+}
+
+/** Single-member DETAIL read (the register's KYC drawer): the same
+ *  GET also carries the four advisory aggregate figures — decimal
+ *  strings parsed strictly at the boundary and rendered VERBATIM
+ *  (P15 blocker (a): no client-side money math, ever). Cross-module
+ *  consumers that only resolve a name keep using fetchMember. */
+export async function fetchMemberDetail(memberId: string): Promise<MemberDetail> {
+    const { data, error, response } = await api.GET("/members/{member_id}", {
+        params: { path: { member_id: memberId } },
+    });
+    if (error !== undefined || data === undefined) throw toApiError(error, response);
+    return memberDetailSchema.parse(data);
 }
 
 export async function createMember(

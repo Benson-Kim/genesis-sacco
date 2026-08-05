@@ -37,6 +37,7 @@ const calls: FetchCall[] = [];
 let createStatus = 201;
 let listUnknownStatus = false;
 let listUnknownType = false;
+let detailWithoutAggregates = false;
 
 function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -144,6 +145,7 @@ beforeEach(() => {
   createStatus = 201;
   listUnknownStatus = false;
   listUnknownType = false;
+  detailWithoutAggregates = false;
   session.clearSession();
   session.setSession({ accessToken: jwt(USER_ID, 900), refreshToken: REFRESH_VALUE });
 });
@@ -197,6 +199,41 @@ test("GET /members/{id}: the id travels as a PATH parameter with no query string
   expect(url.search).toBe("");
   expect(member.member_no).toBe("GP-0001");
   expect(member.version).toBe(1);
+  // The name-resolve projection strips the aggregates object entirely:
+  // cross-module consumers can never accidentally render money.
+  expect("aggregates" in member).toBe(false);
+});
+
+test("GET /members/{id} DETAIL: the aggregates object parses KEY-EXACT — the four decimal strings VERBATIM and nothing else; extra response keys are STRIPPED", async () => {
+  const detail = await membersApi.fetchMemberDetail(MEMBER_ID);
+  expect(calls).toHaveLength(1);
+  const url = new URL(calls[0]!.url);
+  expect(url.pathname).toBe(`/members/${MEMBER_ID}`);
+  expect(url.search).toBe("");
+  // Key-exactness: exactly the four contract fields (falsifiable: add
+  // or drop a key in the schema and this fails).
+  expect(Object.keys(detail.aggregates).sort()).toEqual([
+    "deposits_total",
+    "guarantees_pledged",
+    "loans_outstanding",
+    "shares_total",
+  ]);
+  // Decimal STRINGS, byte-identical to the wire (never numbers — no
+  // client-side money math can even start from here).
+  expect(detail.aggregates.deposits_total).toBe("1500.50");
+  expect(detail.aggregates.shares_total).toBe("750.25");
+  expect(detail.aggregates.loans_outstanding).toBe("2500.10");
+  expect(detail.aggregates.guarantees_pledged).toBe("1000.40");
+  // The stubbed internal field can never reach a screen (STRIPPED).
+  expect("internal_ledger_hint" in detail).toBe(false);
+});
+
+test("GET /members/{id} DETAIL: a response MISSING the aggregates object is a contract violation and is REJECTED (required, not optional)", async () => {
+  detailWithoutAggregates = true;
+  const thrown = await membersApi.fetchMemberDetail(MEMBER_ID).catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("aggregates");
 });
 
 test("POST /members (create flow): the body carries {type, name, phone, email} and NOTHING else; the Idempotency-Key travels as a HEADER; the write query string is EMPTY; EXTRA response keys are STRIPPED", async () => {
@@ -296,5 +333,17 @@ test("an unknown member type is a contract violation and is REJECTED at the boun
     .catch((error: unknown) => error);
   expect(thrown).toBeInstanceOf(Error);
   expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("type");
+});
+nc () => {
+  listUnknownType = true;
+  const thrown = await membersApi
+    .fetchMembersPage(EMPTY_FILTERS, null)
+    .catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("type");
+});
+expect(thrown).not.toBeInstanceOf(ApiError);
   expect(String(thrown)).toContain("type");
 });

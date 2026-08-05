@@ -33,6 +33,7 @@ import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
 import { FormField } from "@/modules/forms/FormField";
 import { fromApiError, mergeFieldErrors, type FieldErrors } from "@/modules/forms/form-errors";
+import { fetchMemberDetail } from "../api";
 import { fetchKycProfile, updateKycProfile } from "../kycApi";
 import { KYC_FORM_SECTIONS, type KycProfile } from "../kycSchemas";
 import {
@@ -96,6 +97,17 @@ export function MemberKycDrawer({
     queryFn: () => fetchKycProfile(member.id),
     // Record class: never serve a stale record into a version-pinned
     // edit (lib/query.ts).
+    staleTime: STALE_TIME.record,
+    retry: false,
+  });
+
+  // Advisory financial aggregates (#31 batch 3): the DETAIL read
+  // carries four decimal strings rendered VERBATIM below (P15 blocker
+  // (a): no summing, no derived figures, ever). Record class: money
+  // figures are never served stale.
+  const detailQuery = useQuery({
+    queryKey: ["members", "detail", member.id],
+    queryFn: () => fetchMemberDetail(member.id),
     staleTime: STALE_TIME.record,
     retry: false,
   });
@@ -179,6 +191,34 @@ export function MemberKycDrawer({
       <div className={styles.docHead}>
         <span className={styles.cellSub}>{member.member_no}</span>
         <Pill>{TYPE_LABELS[member.type]}</Pill>
+      </div>
+
+      <div className={styles.summaryPanel}>
+        <div className={styles.panelSubTitle}>Financial summary</div>
+        {detailQuery.isPending && (
+          <div className={styles.muted}>Loading financial summary…</div>
+        )}
+        {detailQuery.isError && <ErrorBanner error={detailQuery.error} />}
+        {detailQuery.data !== undefined && (
+          <dl className={styles.summaryList}>
+            <div className={styles.summaryRow}>
+              <dt>Deposits</dt>
+              <dd>{detailQuery.data.aggregates.deposits_total}</dd>
+            </div>
+            <div className={styles.summaryRow}>
+              <dt>Share capital</dt>
+              <dd>{detailQuery.data.aggregates.shares_total}</dd>
+            </div>
+            <div className={styles.summaryRow}>
+              <dt>Loans outstanding</dt>
+              <dd>{detailQuery.data.aggregates.loans_outstanding}</dd>
+            </div>
+            <div className={styles.summaryRow}>
+              <dt>Guarantees pledged</dt>
+              <dd>{detailQuery.data.aggregates.guarantees_pledged}</dd>
+            </div>
+          </dl>
+        )}
       </div>
 
       {profileQuery.isPending && <div className={styles.muted}>Loading KYC profile…</div>}

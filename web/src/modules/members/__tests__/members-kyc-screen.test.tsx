@@ -46,6 +46,7 @@ jest.mock("../api", () => {
     ...actual,
     fetchMembersPage: jest.fn(),
     fetchMember: jest.fn(),
+    fetchMemberDetail: jest.fn(),
     createMember: jest.fn(),
   };
 });
@@ -101,6 +102,18 @@ const MEMBER = {
   status: "active" as const,
   version: 1,
 };
+
+// DELIBERATELY NON-ADDITIVE aggregate fixture (#31 batch 3): no figure
+// equals any combination of the others, so a screen that summed or
+// derived a figure would surface a string this suite asserts ABSENT.
+const AGGREGATES = {
+  deposits_total: "1000.11",
+  shares_total: "200.22",
+  loans_outstanding: "300.33",
+  guarantees_pledged: "40.04",
+};
+
+const MEMBER_DETAIL = { ...MEMBER, aggregates: AGGREGATES };
 
 function personProfile(overrides: Partial<KycProfile> = {}): KycProfile {
   return {
@@ -232,6 +245,7 @@ beforeEach(() => {
   setSession({ accessToken: fakeJwt(ADMIN_ID), refreshToken: "refresh-1" });
   grantPermissions(FULL_PERMS);
   mockedMembers.fetchMembersPage.mockResolvedValue({ items: [MEMBER], nextCursor: null });
+  mockedMembers.fetchMemberDetail.mockResolvedValue(MEMBER_DETAIL);
   mocked.fetchKycProfile.mockResolvedValue(personProfile());
   mocked.fetchKycDocumentsPage.mockResolvedValue({
     items: [pendingDoc(), verifiedDoc()],
@@ -323,6 +337,51 @@ test("XSS: hostile profile PII renders byte-identical as inert TEXT; the informa
   // re-format would render "KES 123,456.70", which this refuses).
   expect(within(dialog).getByText("123456.70")).toBeInTheDocument();
   expect(within(dialog).queryByText(/KES\s*123,456/)).toBeNull();
+});
+
+// ---------------------------------------------------------------------------
+// Financial summary (#31 batch 3): server aggregates, rendered
+// verbatim, NEVER summed or derived (P15 blocker (a)).
+// ---------------------------------------------------------------------------
+
+test("aggregates: the four server figures render VERBATIM and are NEVER summed — the non-additive fixture proves no derived figure exists", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+  const dialog = await openKycDrawer(user);
+
+  await within(dialog).findByText("Financial summary");
+  // All four SERVER strings, byte-identical (no KES prefix, no
+  // grouping, no re-formatting).
+  expect(await within(dialog).findByText("1000.11")).toBeInTheDocument();
+  expect(within(dialog).getByText("200.22")).toBeInTheDocument();
+  expect(within(dialog).getByText("300.33")).toBeInTheDocument();
+  expect(within(dialog).getByText("40.04")).toBeInTheDocument();
+  // The figures the drawer must NEVER compute (hand-computed here,
+  // in the TEST, from the fixture): a "position" of deposits with
+  // shares would read 1200.33; a grand figure across all four would
+  // read 1540.70; deposits net of loans would read 699.78. None may
+  // exist anywhere in the dialog.
+  expect(within(dialog).queryByText("1200.33")).toBeNull();
+  expect(within(dialog).queryByText("1540.70")).toBeNull();
+  expect(within(dialog).queryByText("699.78")).toBeNull();
+  // The wire read carries the member id; nothing else is derivable.
+  expect(mockedMembers.fetchMemberDetail).toHaveBeenCalledWith(MEMBER_ID);
+});
+
+test("aggregates: a hostile aggregate string renders byte-identical as inert TEXT (never a parser sink)", async () => {
+  const hostileFigure = "<img src=x onerror=window.__pwned=3>";
+  mockedMembers.fetchMemberDetail.mockResolvedValue({
+    ...MEMBER_DETAIL,
+    aggregates: { ...AGGREGATES, deposits_total: hostileFigure },
+  });
+  const user = userEvent.setup();
+  const { container } = mountScreen();
+  const dialog = await openKycDrawer(user);
+
+  await within(dialog).findByText("Financial summary");
+  expect(await within(dialog).findByText(hostileFigure)).toBeInTheDocument();
+  expect(container.querySelector("img")).toBeNull();
+  expect(container.querySelector("script")).toBeNull();
 });
 
 // ---------------------------------------------------------------------------

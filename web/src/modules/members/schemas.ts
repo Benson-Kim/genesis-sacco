@@ -27,6 +27,29 @@ export const memberSchema = z.object({
 
 export type Member = z.infer<typeof memberSchema>;
 
+/**
+ * Advisory financial aggregates on the single-member DETAIL read
+ * (#31 batch 3). All four figures are decimal STRINGS rendered
+ * verbatim: NO client-side money math ever (P15 blocker (a)), no
+ * summing, no derived figures. Required, not optional, per the
+ * contract: the detail read always carries the object, so a missing
+ * or null aggregates is a contract violation and is REJECTED.
+ */
+export const memberAggregatesSchema = z.object({
+    deposits_total: z.string(),
+    shares_total: z.string(),
+    loans_outstanding: z.string(),
+    guarantees_pledged: z.string(),
+});
+
+export type MemberAggregates = z.infer<typeof memberAggregatesSchema>;
+
+export const memberDetailSchema = memberSchema.extend({
+    aggregates: memberAggregatesSchema,
+});
+
+export type MemberDetail = z.infer<typeof memberDetailSchema>;
+
 /** Client-side pre-validation of the create form (server re-validates). */
 export const memberCreateSchema = z.object({
     type: memberTypeSchema,
