@@ -365,8 +365,8 @@ export function FeeDrawer({ onClose }: Readonly<{ onClose: () => void }>) {
           onClose={() => setConfirmEntry(null)}
         >
           <Banner>
-            This posts a {FEE_TYPE_LABELS[confirmEntry.fee_type as FeeType]} via{" "}
-            {CHANNEL_LABELS[confirmEntry.channel as CashChannel]} for {freshMember.name} ·{" "}
+            This posts a {FEE_TYPE_LABELS[confirmEntry.fee_type]} via{" "}
+            {CHANNEL_LABELS[confirmEntry.channel]} for {freshMember.name} ·{" "}
             {freshMember.member_no}. The amount is the tenant-configured figure, resolved by the
             server. The ledger is append-only — undoing this requires a
             correction posting.
