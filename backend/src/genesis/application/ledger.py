@@ -1081,9 +1081,7 @@ async def disburse_loan(
     # refusal names no identity.
     recommended_by = uuid.UUID(str(recommended_by_raw)) if recommended_by_raw is not None else None
     if recommended_by is not None and actor_id == recommended_by:
-        raise ForbiddenError(
-            "the recommender of a loan application cannot post its disbursement"
-        )
+        raise ForbiddenError("the recommender of a loan application cannot post its disbursement")
 
     # Step 2: validate and transition stage.
     try:
