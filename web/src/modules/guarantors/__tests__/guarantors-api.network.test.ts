@@ -186,13 +186,21 @@ test("POST /applications/{id}/guarantees: the amount travels as a decimal STRING
   expect("internal_capacity_note" in result).toBe(false);
 });
 
-test("POST consent + release: the body carries the VERSION only — no amounts EVER (P13.14); the server's new status/version parse verbatim", async () => {
-  const consented = await guarantorsApi.consentGuarantee(GUARANTEE_ID, 1, "key-consent-1");
+test("POST consent + release: no amounts EVER (P13.14); consent carries version + the MANDATORY evidence citation (P14.5 staff-attested override), release the version only; the server's new status/version parse verbatim", async () => {
+  const consented = await guarantorsApi.consentGuarantee(
+    GUARANTEE_ID,
+    1,
+    "Signed consent form CF-14",
+    "key-consent-1",
+  );
   const released = await guarantorsApi.releaseGuarantee(GUARANTEE_ID, 2, "key-release-1");
   expect(calls).toHaveLength(2);
 
   expect(new URL(calls[0]!.url).pathname).toBe(`/guarantees/${GUARANTEE_ID}/consent`);
-  expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({ version: 1 });
+  expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({
+    version: 1,
+    consent_reference: "Signed consent form CF-14",
+  });
   expect(calls[0]!.headers.get("idempotency-key")).toBe("key-consent-1");
 
   expect(new URL(calls[1]!.url).pathname).toBe(`/guarantees/${GUARANTEE_ID}/release`);
@@ -215,13 +223,12 @@ test("a stale release surfaces as ONE 409 ApiError — no transport-level retry,
   expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
 });
 
-test("POST substitute: a BLANK replacement amount is OMITTED from the wire (server-derived floor); attestation + reference travel verbatim; the swap boundary STRIPS extras", async () => {
+test("POST substitute: a BLANK replacement amount is OMITTED from the wire (server-derived floor); the evidence citation travels verbatim and NO consented boolean exists anywhere (P14.5 — a caller-asserted consent flag is a rejected design); the swap boundary STRIPS extras", async () => {
   const swap = await guarantorsApi.substituteGuarantee(
     GUARANTEE_ID,
     2,
     {
       guarantor_member_id: GUARANTOR_ID,
-      consented: true,
       consent_reference: "Signed guarantorship form GF-778",
       amount: null,
     },
@@ -229,14 +236,14 @@ test("POST substitute: a BLANK replacement amount is OMITTED from the wire (serv
   );
   expect(calls).toHaveLength(1);
   const body = JSON.parse(calls[0]!.body ?? "{}") as Record<string, unknown>;
-  // No amount key AT ALL — the server derives the floor from the row.
+  // No amount key AT ALL — the server derives the floor from the row —
+  // and no consented boolean (the !29 lesson made structural).
   expect(Object.keys(body).sort()).toEqual([
     "consent_reference",
-    "consented",
     "guarantor_member_id",
     "version",
   ]);
-  expect(body["consented"]).toBe(true);
+  expect("consented" in body).toBe(false);
   expect(body["consent_reference"]).toBe("Signed guarantorship form GF-778");
   expect(body["version"]).toBe(2);
 
@@ -252,7 +259,6 @@ test("a typed replacement amount travels as the decimal STRING byte-identically"
     2,
     {
       guarantor_member_id: GUARANTOR_ID,
-      consented: true,
       consent_reference: "Signed guarantorship form GF-779",
       amount: "60000.10",
     },
@@ -278,7 +284,12 @@ test("this module performs NO reads and NO query strings: every request is a POS
     { guarantor_member_id: GUARANTOR_ID, amount: "50000.10" },
     "key-pledge-2",
   );
-  await guarantorsApi.consentGuarantee(GUARANTEE_ID, 1, "key-consent-2");
+  await guarantorsApi.consentGuarantee(
+    GUARANTEE_ID,
+    1,
+    "Signed consent form CF-15",
+    "key-consent-2",
+  );
   await guarantorsApi.releaseGuarantee(GUARANTEE_ID, 2, "key-release-2");
   for (const call of calls) {
     expect(call.method).toBe("POST");

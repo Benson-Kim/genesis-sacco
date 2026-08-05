@@ -44,8 +44,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from genesis.application.auth import decode_access_token
-from genesis.errors import UnauthenticatedError
+from genesis.application.auth import MemberAuthContext, decode_principal
+from genesis.errors import ForbiddenError, UnauthenticatedError
 from genesis.infrastructure.db import get_sessionmaker
 from genesis.infrastructure.tenancy import tenant_session
 from genesis.settings import get_settings
@@ -107,27 +107,49 @@ def _tenant_from_scope(scope: Scope) -> uuid.UUID | None:
     bearer = _header(scope, b"authorization") or ""
     if bearer.lower().startswith("bearer "):
         try:
-            return decode_access_token(bearer[7:]).tenant_id
-        except UnauthenticatedError:
+            # decode_principal, not the staff-only decode (P14.5): both
+            # principal kinds carry a tenant and both replay-protect.
+            return decode_principal(bearer[7:]).tenant_id
+        except (UnauthenticatedError, ForbiddenError):
             return None
     return None
 
 
 def _actor_from_scope(scope: Scope) -> str:
-    """Actor discriminator for the request hash (review R4).
+    """Kind-qualified actor discriminator (review R4; P14.5 FM5).
 
-    Authenticated requests hash the token's user_id so replays are
-    per-user; pre-auth requests (x-tenant-id header, no bearer) have no
-    actor and hash the empty string — their identity lives in the body
-    (e.g. the OTP email), which is already part of the hash.
+    Authenticated requests are scoped per principal — staff by user
+    id, members by CREDENTIAL id (the authoritative member identity,
+    FM2) — with distinct kind prefixes so the two namespaces can never
+    collide. Pre-auth requests (x-tenant-id header, no bearer) have no
+    actor and use the empty string — their identity lives in the body
+    (e.g. the OTP email), which rides the request hash. An
+    undecodable token also maps to the empty actor: the handler will
+    refuse it regardless, so no per-actor claim is burned for it.
     """
     bearer = _header(scope, b"authorization") or ""
     if bearer.lower().startswith("bearer "):
         try:
-            return str(decode_access_token(bearer[7:]).user_id)
-        except UnauthenticatedError:
+            principal = decode_principal(bearer[7:])
+        except (UnauthenticatedError, ForbiddenError):
             return ""
+        if isinstance(principal, MemberAuthContext):
+            return f"member:{principal.credential_id}"
+        return f"staff:{principal.user_id}"
     return ""
+
+
+def scoped_storage_key(actor: str, method: str, path: str, client_key: str) -> str:
+    """The stored claim key: (actor principal, route) folded into the
+    client's Idempotency-Key (FM5; the tenant scope is the claim row's
+    tenant_id). A different actor or route therefore claims a
+    DIFFERENT row — a cross-actor replay is a MISS, not a shared
+    response and not a 409. Module-level so tests pin the exact
+    scoping; the digest keeps the stored key bounded and free of
+    header material.
+    """
+    scope_digest = hashlib.sha256(f"{actor}|{method}|{path}".encode()).hexdigest()
+    return f"{scope_digest}:{client_key}"
 
 
 async def _read_body(receive: Receive) -> bytes:
@@ -174,10 +196,14 @@ class IdempotencyMiddleware:
         body = await _read_body(receive)
         method: str = scope["method"]
         path: str = scope["path"]
-        # The actor is part of the hash (review R4): a different user
-        # replaying the same key mismatches and gets the 409 envelope,
-        # never the stored response of a request they never authorized.
+        # Storage-key scope (tenant, actor principal, route) — FM5:
+        # the actor and route live in the CLAIM KEY, so a different
+        # actor's identical client key claims a different row (a MISS,
+        # never the first actor's stored response). The hash keeps the
+        # full identity including the body: within one actor's scope,
+        # same key + different payload is the 409 envelope.
         actor = _actor_from_scope(scope)
+        key = scoped_storage_key(actor, method, path, key)
         request_hash = hashlib.sha256(
             b"|".join([actor.encode(), method.encode(), path.encode(), body])
         ).hexdigest()

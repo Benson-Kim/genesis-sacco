@@ -75,6 +75,10 @@ TENANT_TABLES = [
     "idempotency_keys",
     "otp_challenges",
     "refresh_tokens",
+    # P14.5: the member credential link IS member identity — the
+    # authorization substrate for member-visible money actions — so
+    # its RLS posture is release-blocking (ADR-0002; migration 0035).
+    "member_credentials",
 ]
 
 
@@ -264,6 +268,57 @@ def test_cross_tenant_kyc_rows_are_invisible_and_immutable() -> None:
             ).scalar_one()
         assert profiles == 1, "tenant A cannot see its own profile"
         assert documents == 1, "tenant A cannot see its own document"
+
+    asyncio.run(run())
+
+
+def test_cross_tenant_member_credentials_are_invisible_and_immutable() -> None:
+    """P14.5 EXIT: leakage suite extended to member_credentials — the
+    credential link is the authorization substrate for member-visible
+    money actions (FM2: the link IS the identity), so tenant B must
+    not read, update, delete or forge tenant A links even via raw SQL
+    through the app role (ADR-0002)."""
+
+    async def run() -> None:
+        tid_a = await _create_tenant("cred-a")
+        tid_b = await _create_tenant("cred-b")
+        mid = await _insert_member(tid_a, tid_a)
+        async with tenant_session(_factory(), tid_a) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO member_credentials (tenant_id, member_id, email) "
+                    "VALUES (CAST(:tid AS uuid), CAST(:m AS uuid), :email)"
+                ),
+                {"tid": str(tid_a), "m": str(mid), "email": f"leak-{mid.hex[:8]}@example.com"},
+            )
+
+        async with tenant_session(_factory(), tid_b) as session:
+            visible = (
+                await session.execute(text("SELECT count(*) FROM member_credentials"))
+            ).scalar_one()
+            assert visible == 0, "tenant B can see tenant A credentials"
+            updated = await session.execute(
+                text("UPDATE member_credentials SET version = version + 1")
+            )
+            assert updated.rowcount == 0, "tenant B can update tenant A credentials"
+            deleted = await session.execute(text("DELETE FROM member_credentials"))
+            assert deleted.rowcount == 0, "tenant B can delete tenant A credentials"
+
+        with pytest.raises(DBAPIError):
+            async with tenant_session(_factory(), tid_b) as session:
+                await session.execute(
+                    text(
+                        "INSERT INTO member_credentials (tenant_id, member_id, email) "
+                        "VALUES (CAST(:tid AS uuid), CAST(:m AS uuid), :email)"
+                    ),
+                    {"tid": str(tid_a), "m": str(mid), "email": "forged@example.com"},
+                )
+
+        async with tenant_session(_factory(), tid_a) as session:
+            count = (
+                await session.execute(text("SELECT count(*) FROM member_credentials"))
+            ).scalar_one()
+            assert count == 1, "tenant A cannot see its own credential"
 
     asyncio.run(run())
 

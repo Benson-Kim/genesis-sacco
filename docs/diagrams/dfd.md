@@ -62,21 +62,27 @@
 
 | Id | Boundary | As-built enforcement (citation) |
 |---|---|---|
-| TB1 | **Unauthenticated network edge → authenticated staff principal.** Everything left of TB1 is untrusted input. | JWT bearer decode: `api/authz.py:get_auth_context` → `application/auth.py:decode_access_token` (access ≤15 min, `application/auth.py:issue_access_token`); principal established by OTP step-up: `application/auth.py:verify_otp` + `domain/otp.py:evaluate_challenge` (6 digits, ≤5 attempts, 5-min TTL, single-use, constant-time `hmac.compare_digest`); rotating refresh with family revocation on reuse: `application/auth.py:rotate_refresh_token`; pre-auth endpoints scope tenant from the explicit `x-tenant-id` header only: `api/auth.py:tenant_id_from_headers`; every auth route rate-limited: `api/auth.py:_rate_guard` → `infrastructure/rate_limit.py:check_rate_limit`. Authorization behind TB1 is deny-by-default per handler: `api/authz.py:RequirePermission` / `RequireAnyPermission`. |
+| TB1 | **Unauthenticated network edge → authenticated staff principal.** Everything left of TB1 is untrusted input. | JWT bearer decode: `api/authz.py:get_auth_context` → `application/auth.py:decode_access_token` (access ≤15 min, `application/auth.py:issue_access_token`; STAFF audience since P14.5 — see TB1M); principal established by OTP step-up: `application/auth.py:verify_otp` + `domain/otp.py:evaluate_challenge` (6 digits, ≤5 attempts, 5-min TTL, single-use, constant-time `hmac.compare_digest`); rotating refresh with family revocation on reuse: `application/auth.py:rotate_refresh_token`; pre-auth endpoints scope tenant from the explicit `x-tenant-id` header only: `api/auth.py:tenant_id_from_headers`; every auth route rate-limited: `api/auth.py:_rate_guard` → `infrastructure/rate_limit.py:check_rate_limit`. Authorization behind TB1 is deny-by-default per handler: `api/authz.py:RequirePermission` / `RequireAnyPermission`. |
+| TB1M | **Unauthenticated network edge → authenticated MEMBER principal (P14.5, !65).** The member and staff principals are DISJOINT credential populations at the same network edge: a member token can never satisfy a staff gate and vice versa (FM1). | Identity is the `member_credentials` link row (0035) — the LINK, never any email, is authoritative (FM2; the !29 interim email bridge is retired). Same P3 OTP machinery, one implementation: `application/member_auth.py:verify_member_otp` → `domain/otp.py:evaluate_challenge`; same tables with an exactly-one-principal XOR CHECK (0035); rotating member refresh families: `member_auth.py:rotate_member_refresh_token`. Token audiences dispatch deny-by-default: `application/auth.py:decode_principal` (`genesis-staff` / `genesis-member`; unknown/missing audience refused). The member gate re-verifies the LIVE link on EVERY request: `api/authz.py:RequireMemberPrincipal` → `member_auth.live_credential_by_id`; consent/release re-verify it AGAIN inside the transaction under the guarantee row lock. Link mutations are audited ADMIN mutations under the narrow `member_identity` module (FM3 — never self-service); consent rows carry their principal at the DB level (0035 trigger, FM4). Same `_rate_guard`, same `x-tenant-id` pre-auth scoping (`api/member.py`). |
 | TB2 | **api/worker process → forced-RLS Postgres.** No statement runs outside a tenant-scoped transaction. | `infrastructure/tenancy.py:tenant_session` — `set_config('app.tenant_id', :tid, true)` (≡ `SET LOCAL`, transaction-bound, pool-safe); snapshot variant for exports: `tenant_snapshot_session` (REPEATABLE READ); RLS enabled AND **forced** on every tenant-owned table: migration `0001` (`FORCE ROW LEVEL SECURITY` + `tenant_isolation` policies); app DB role `NOSUPERUSER NOBYPASSRLS` per ADR-0002 (bootstrap in `.gitlab-ci.yml` `backend:test`); defence in depth: explicit bound `tenant_id = :tid` predicates on every tenant-owned read AND write (v1.1 rule 4). |
 | TB3 | **Request process ↔ worker loops.** Workers carry no request principal (system actor, `actor_id=None` in audit rows) and run per-tenant cycles. | `infrastructure/outbox_worker.py:run_worker`, `infrastructure/export_worker.py:run_worker`, `infrastructure/dormancy_worker.py:run_worker`, `infrastructure/idempotency_worker.py:run_worker` (P13.17c); per-tenant fan-out via `outbox_worker.py:list_active_tenants`; dormancy per-tenant failure isolation (!32 R1): `dormancy_worker.py:run_dormancy_cycle`; workers cross TB2 exactly like the api (same `tenant_session`). The deposit-interest and arrears batches are NOT worker loops as-built: they are staff-triggered via `POST /jobs/deposit-interest` (`api/transactions.py`) and `POST /jobs/arrears` (`api/loan_book.py`) — their long-running batches still execute on the TB3 side of the request/short-transaction discipline (§3.6, §3.14). |
 | TB4 | **Provider adapter seam.** Nothing inside the domain talks to an external delivery network directly. | `infrastructure/providers.py:NotificationProvider` protocol; as-built implementation is `StubProvider` (logs event ids, never payload contents; idempotent by event id); real SMS/email/push providers are **PLANNED (P20)**; request handlers are forbidden from importing providers (import-linter contract, `infrastructure/providers.py` module docstring); dispatch happens outside any transaction and holds no domain locks (lock-order.md §3 outbox row). |
 
 **PLANNED external edges** (drawn dashed on L0, flipped by the
-executing MR per rule 11): member mobile/web clients + member-facing
-auth — P14/P14.5/P16–P18; M-Pesa STK + callbacks — P19; real
-notification providers — P20.
+executing MR per rule 11): member mobile/web CLIENTS — P16–P18 (the
+member-facing AUTH API surface itself is as-built since P14.5/!65 —
+TB1M above); M-Pesa STK + callbacks — P19; real notification
+providers — P20.
 
 ## 2. L0 — system context
 
-Plain language: today the ONLY people who can use the system are the
-SACCO's own staff, after a one-time code (OTP) proves who they are.
-Members, M-Pesa and real SMS/email delivery are planned but not built.
+Plain language: the SACCO's own staff sign in with a one-time code
+(OTP), and — since P14.5 — a member whose email a staff administrator
+has explicitly linked can sign in the same way to act for THEMSELVES
+(consenting to or withdrawing their own guarantee pledge); the two
+kinds of sign-in can never stand in for each other. The member mobile
+and web apps, M-Pesa and real SMS/email delivery are planned but not
+built.
 Everything staff do lands in one shared database that keeps every
 SACCO's records invisible to every other SACCO, and four background
 helpers deliver notifications, render reports, mark dormant members
@@ -108,7 +114,7 @@ flowchart LR
     L0_REDIS[("sign-in attempt counters")]
 
     L0_STAFF -->|"secure sign-in"| L0_API
-    L0_MEMBER -.->|"PLANNED P14/P16-P18"| L0_API
+    L0_MEMBER -->|"member sign-in (P14.5 API surface;<br/>member apps PLANNED P16-P18)"| L0_API
     L0_MPESA -.->|"PLANNED P19"| L0_API
     L0_API --> L0_PG
     L0_API --> L0_REDIS
@@ -119,7 +125,7 @@ flowchart LR
     L0_OBXW -->|"TB4: hands letters to the courier<br/>(practice courier until P20)"| L0_PROVIDERS
 
     classDef planned fill:#f8f9fa,stroke:#999,stroke-dasharray: 5 5;
-    class L0_MEMBER,L0_MPESA planned;
+    class L0_MPESA planned;
 ```
 
 ### Source of truth (L0)
@@ -127,7 +133,7 @@ flowchart LR
 | Element | Kind | Citation |
 |---|---|---|
 | L0_STAFF | external entity | the only authenticated principal as-built: `users` table (0001), roles seeded from the prototype matrix (`application/rbac.py:seed_permissions`) |
-| L0_MEMBER | external entity — **PLANNED (P14/P14.5/P16–P18)** | no member-facing auth on main; member data is operated on by staff only |
+| L0_MEMBER | external entity — **auth backend AS-BUILT (P14.5, !65); member apps PLANNED (P16–P18)** | the MEMBER principal is first-class: `member_credentials` link table (0035, RLS forced), `/member` auth + guarantor consent/self-release surface (`api/member.py`), admin link mutations (`api/member_identity.py`), the TB1M boundary above. The mobile/web member clients remain planned (P16–P18); until they land the surface is exercised by the P14.5 test suites |
 | L0_MPESA | external entity — **PLANNED (P19)** | no payment-provider code on main; deposits/withdrawals arrive via staff-recorded channels (`domain` `Channel` enum) |
 | L0_PROVIDERS | external entity (seam as-built, real delivery **PLANNED (P20)**) | `infrastructure/providers.py:StubProvider` behind `NotificationProvider` (TB4) |
 | L0_API | process | `api/app.py:create_app` — routers + `IdempotencyMiddleware` (`api/idempotency.py`) + correlation middleware + sanitized error envelope (`{category, correlation_id}`) |

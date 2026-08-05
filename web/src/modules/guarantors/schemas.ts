@@ -93,17 +93,17 @@ export type PledgeCreateInput = z.infer<typeof pledgeCreateSchema>;
 
 /**
  * Client-side pre-validation of the substitution form (P13.14 atomic
- * swap). The replacement amount is OPTIONAL — when blank the server
- * derives it from the guarantee row (it may only meet or exceed the
- * released amount, enforced server-side). `consented` must be true and
+ * swap; P14.5 contract). The replacement amount is OPTIONAL — when
+ * blank the server derives it from the guarantee row (it may only meet
+ * or exceed the released amount, enforced server-side).
  * `consent_reference` must cite the attestation evidence — an
- * unconsented or unreferenced substitute is a server 422.
+ * unreferenced substitute is a server 422. The pre-P14.5 `consented`
+ * boolean is REMOVED from the contract (a caller-asserted consent flag
+ * is a rejected design — the !29 lesson): the staff attestation is the
+ * act itself plus its cited evidence, never a checkbox.
  */
 export const substituteCreateSchema = z.object({
   guarantor_member_id: z.string().uuid("Select the substitute guarantor."),
-  consented: z.literal(true, {
-    errorMap: () => ({ message: "Attest the substitute guarantor's consent." }),
-  }),
   consent_reference: z
     .string()
     .trim()

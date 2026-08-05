@@ -183,8 +183,13 @@ async def _pledge(
         )
     if consent:
         async with tenant_session(factory(), tid) as session:
-            await guarantees_service.consent_guarantee(
-                session, tid, actor, record.id, version=record.version
+            await guarantees_service.consent_guarantee_override(
+                session,
+                tid,
+                actor,
+                record.id,
+                version=record.version,
+                consent_reference="signed form GF-P139",
             )
     return record.id
 

@@ -82,6 +82,12 @@ ENTITY_MODULES: dict[str, Module] = {
     # filterable per the dedicated corrections entitlement like the
     # write-off rows they draw down.
     "loan_recoveries": Module.CORRECTIONS,
+    # P14.5: credential-link payloads carry member emails and the
+    # link's who/when history — the member-identity surface. Disclosed
+    # per the DEDICATED member_identity entitlement (least disclosure,
+    # the corrections precedent): members:view alone must never read
+    # who can authenticate as a member.
+    "member_credentials": Module.MEMBER_IDENTITY,
     "loan_products": Module.SETTINGS,
     # P13.7: the tenant settings row is maintained under settings:*
     # routes; mapped here so its before/after payloads are released per

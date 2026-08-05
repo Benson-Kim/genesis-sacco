@@ -207,13 +207,19 @@ async def _seed_guarantee(
 ) -> uuid.UUID:
     gid = uuid.uuid4()
     async with tenant_session(factory(), tid) as session:
+        attestor = None
+        if status == "active":
+            # P14.5 FM4: a row born 'active' must carry a consent
+            # principal — seeded fixtures attest via any tenant user.
+            attestor = (await session.execute(text("SELECT id FROM users LIMIT 1"))).scalar_one()
         await session.execute(
             text(
                 "INSERT INTO guarantees "
                 "(id, tenant_id, guarantor_member_id, borrower_member_id, "
-                " amount, status, loan_id) "
+                " amount, status, loan_id, consent_attested_by, consent_reference) "
                 "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:g AS uuid), "
-                "CAST(:b AS uuid), :amount, :status, CAST(:lid AS uuid))"
+                "CAST(:b AS uuid), :amount, :status, CAST(:lid AS uuid), "
+                "CAST(:att AS uuid), :cref)"
             ),
             {
                 "id": str(gid),
@@ -223,6 +229,8 @@ async def _seed_guarantee(
                 "amount": amount,
                 "status": status,
                 "lid": str(loan_id) if loan_id else None,
+                "att": str(attestor) if attestor is not None else None,
+                "cref": "seeded fixture (P14.5 FM4)" if attestor is not None else None,
             },
         )
     return gid

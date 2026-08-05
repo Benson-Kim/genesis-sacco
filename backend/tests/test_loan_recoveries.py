@@ -313,13 +313,17 @@ async def _seed_active_guarantee(tid: uuid.UUID, loan_id: uuid.UUID, borrower: u
     member — the state the P9 disbursement linkage leaves behind."""
     guarantor = await _seed_member(tid)
     async with tenant_session(factory(), tid) as session:
+        # P14.5 FM4: a row born 'active' must carry a consent
+        # principal — seeded fixtures attest via any tenant user.
+        attestor = (await session.execute(text("SELECT id FROM users LIMIT 1"))).scalar_one()
         await session.execute(
             text(
                 "INSERT INTO guarantees "
                 "(id, tenant_id, guarantor_member_id, borrower_member_id, "
-                " loan_id, amount, status) "
+                " loan_id, amount, status, consent_attested_by, consent_reference) "
                 "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:g AS uuid), "
-                "CAST(:b AS uuid), CAST(:l AS uuid), '5000.00', 'active')"
+                "CAST(:b AS uuid), CAST(:l AS uuid), '5000.00', 'active', "
+                "CAST(:att AS uuid), 'seeded fixture (P14.5 FM4)')"
             ),
             {
                 "id": str(uuid.uuid4()),
@@ -327,6 +331,7 @@ async def _seed_active_guarantee(tid: uuid.UUID, loan_id: uuid.UUID, borrower: u
                 "g": str(guarantor),
                 "b": str(borrower),
                 "l": str(loan_id),
+                "att": str(attestor),
             },
         )
 
@@ -885,10 +890,12 @@ def test_fm9_cross_tenant_probes_and_idempotent_replay() -> None:
     API. Idempotency: replaying the SAME actor's key returns the
     stored response and records exactly ONE receipt (side-effect
     count, never the return value alone); a DIFFERENT actor replaying
-    the same key MISSES the stored response — the actor rides the
-    request hash, so the cross-actor replay gets the 409 conflict
-    envelope and ZERO new side effects (the !29 scoping rule, the
-    test_a5 house semantics), never the first actor's response."""
+    the same key MISSES the stored response — since P14.5 (FM5) the
+    claim key itself is scoped (tenant, actor principal, route), so
+    the second actor EXECUTES their own request (their own receipt,
+    their own claim row), and can never read the first actor's stored
+    response (the !29 R4 lesson completed — the interim same-claim 409
+    is upgraded to fully disjoint per-actor claims)."""
 
     async def run() -> None:
         tid_a, actor_a, token_a = await _seed_actor()
@@ -915,10 +922,13 @@ def test_fm9_cross_tenant_probes_and_idempotent_replay() -> None:
         _, _, receipts, _ = await _counts(tid_a)
         assert receipts == 1  # side-effect count, not the response
 
-        # Cross-actor replay MISSES (the !29 scoping lesson): the
-        # actor rides the request hash, so the second actor's identical
-        # key + body gets the 409 conflict envelope — never the stored
-        # response — and no receipt lands (side-effect count unmoved).
+        # Cross-actor replay MISSES (P14.5 FM5): the claim key is
+        # scoped per actor principal, so the second actor's identical
+        # key + body EXECUTES as their own request — a NEW receipt
+        # under their own claim, never the first actor's stored
+        # response. Falsifiable: drop the actor from
+        # scoped_storage_key and this replays actor A's 201 verbatim
+        # (same receipt id, count stuck at 1).
         _actor2, token2 = await _seed_extra_user(tid_a, "Accountant")
         async with api_client() as client:
             other = await client.post(
@@ -926,11 +936,13 @@ def test_fm9_cross_tenant_probes_and_idempotent_replay() -> None:
                 json={"amount": "100.00", "channel": "bank"},
                 headers=_headers(token2, idem=key),
             )
-            assert other.status_code == 409
+            assert other.status_code == 201, other.text
             assert other.headers.get("idempotency-replayed") != "true"
-            assert other.json()["category"] == "conflict"
+            assert other.json()["recovery_id"] != first.json()["recovery_id"], (
+                "the cross-actor replay must never serve the stored response"
+            )
         _, _, receipts, _ = await _counts(tid_a)
-        assert receipts == 1
+        assert receipts == 2, "the second actor's request executes in its own right"
 
         # Cross-tenant: zero rows under tenant B's session; 404 via API.
         async with tenant_session(factory(), tid_b) as session:

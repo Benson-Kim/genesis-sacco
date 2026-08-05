@@ -85,11 +85,8 @@ def test_p125_hot_path_queries_are_index_backed() -> None:
                 {"tid": str(tid), "a": str(uuid.uuid4())},
             )
 
-        assert "accounting_periods_tenant_id_period_start_key" in period_plan
-        assert "Seq Scan" not in period_plan
-        assert "idx_guarantees_application" in guarantee_plan
-        assert "Seq Scan" not in guarantee_plan
-
+        # Capture the artifact BEFORE any assertion (the p135 house
+        # rule) so the CI artifact always carries the full plans.
         OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         header = (
             "P12.5 hot-path EXPLAIN (ANALYZE, BUFFERS) — captured in CI against\n"
@@ -103,5 +100,20 @@ def test_p125_hot_path_queries_are_index_backed() -> None:
         ]
         body = "\n\n".join(f"=== {name} ===\n{plan}" for name, plan in sections)
         OUT_PATH.write_text(f"{header}\n{body}\n")
+
+        assert "accounting_periods_tenant_id_period_start_key" in period_plan
+        assert "Seq Scan" not in period_plan
+        # Issue-#20 flake class, re-armed by 0035: at rows=0 every
+        # tenant-led guarantees index cost-ties, and the two new
+        # consent-principal indexes (idx_guarantees_consent_credential /
+        # _attestor) widened the tie pool — the planner was OBSERVED
+        # serving this aggregate from one of them with the application
+        # filter pushed down (pipeline 2731924389, job 15710350280).
+        # The !46/p135 filtered-page precedent: accept any tenant-led
+        # guarantees index shipped with the schema; the falsifiable
+        # gate stays the no-sequential-scan check (drop the indexes and
+        # a Seq Scan is the only serve, even under enable_seqscan=off).
+        assert "idx_guarantees_" in guarantee_plan
+        assert "Seq Scan" not in guarantee_plan
 
     asyncio.run(run())

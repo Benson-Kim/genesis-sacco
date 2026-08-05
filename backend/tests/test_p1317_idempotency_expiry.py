@@ -61,6 +61,15 @@ async def _key_count(tid: uuid.UUID) -> int:
     return int(count)
 
 
+def _otp_storage_key(client_key: str) -> str:
+    """The stored claim key behind this suite's OTP requests (P14.5
+    FM5 scoping): the pre-auth request has no bearer, so the actor is
+    the empty string; the route is POST /auth/otp/request. Direct-SQL
+    reads and tampering must address the SCOPED key the middleware
+    actually stores."""
+    return idem_mw.scoped_storage_key("", "POST", "/auth/otp/request", client_key)
+
+
 async def _force_expire(tid: uuid.UUID, key: str) -> None:
     """Direct-SQL expiry: the DBA-tamper direction the 0029 docstring
     reasons about — shortening a window degrades to a NEW request with
@@ -71,7 +80,7 @@ async def _force_expire(tid: uuid.UUID, key: str) -> None:
                 "UPDATE idempotency_keys SET expires_at = now() - interval '1 second' "
                 "WHERE tenant_id = CAST(:tid AS uuid) AND key = :key"
             ),
-            {"tid": str(tid), "key": key},
+            {"tid": str(tid), "key": _otp_storage_key(key)},
         )
 
 
@@ -101,7 +110,7 @@ def test_expires_at_is_server_set_from_retention_config(
                         "FROM idempotency_keys "
                         "WHERE tenant_id = CAST(:tid AS uuid) AND key = :key"
                     ),
-                    {"tid": str(tid), "key": key},
+                    {"tid": str(tid), "key": _otp_storage_key(key)},
                 )
             ).one()
         window_seconds = float(row[0])

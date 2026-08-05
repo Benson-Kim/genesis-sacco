@@ -43,12 +43,21 @@ from genesis.domain.otp import (
     evaluate_challenge,
     hash_code,
 )
-from genesis.errors import UnauthenticatedError
+from genesis.errors import ForbiddenError, UnauthenticatedError
 from genesis.settings import get_settings
 
 ACCESS_TOKEN_TTL_SECONDS = 900
 REFRESH_TOKEN_TTL_SECONDS = 14 * 24 * 3600
 _JWT_ALGORITHM = "HS256"
+
+#: Token audiences (P14.5 FM1): STAFF and MEMBER principals are
+#: disjoint credential populations. Every issued token carries exactly
+#: one of these code-owned audience values and every decode dispatches
+#: on it deny-by-default — a member token can never satisfy a staff
+#: RequirePermission gate and a staff token can never satisfy the
+#: member principal gate (both directions falsifiably tested).
+STAFF_AUDIENCE = "genesis-staff"
+MEMBER_AUDIENCE = "genesis-member"
 
 
 @dataclass(frozen=True)
@@ -79,6 +88,23 @@ class AuthContext:
     role_id: uuid.UUID
 
 
+@dataclass(frozen=True)
+class MemberAuthContext:
+    """The MEMBER principal (P14.5): a member_credentials link row.
+
+    ``credential_id`` is the authenticated link (the authoritative
+    identity — FM2); ``member_id`` is the member it mapped to AT TOKEN
+    ISSUE and is re-verified against the live link on every request by
+    the member gate (api/authz.py:RequireMemberPrincipal) and inside
+    every consent/release transaction, so a re-linked or revoked
+    credential can never keep acting for the old member.
+    """
+
+    credential_id: uuid.UUID
+    member_id: uuid.UUID
+    tenant_id: uuid.UUID
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -102,29 +128,88 @@ def _hash_refresh_token(value: str) -> str:
 
 
 def issue_access_token(ctx: AuthContext, *, now: datetime | None = None) -> str:
-    """Signed access token with a lifetime of at most 15 minutes (gate 1.6)."""
+    """Signed STAFF access token, at most 15 minutes (gates 1.6, FM1)."""
     issued_at = now or _now()
     claims: dict[str, Any] = {
         "sub": str(ctx.user_id),
         "tid": str(ctx.tenant_id),
         "rid": str(ctx.role_id),
+        "aud": STAFF_AUDIENCE,
         "iat": int(issued_at.timestamp()),
         "exp": int(issued_at.timestamp()) + ACCESS_TOKEN_TTL_SECONDS,
     }
     return jwt.encode(claims, _signing_key(), algorithm=_JWT_ALGORITHM)
 
 
-def decode_access_token(token: str) -> AuthContext:
-    """Validate a bearer token; failures surface a sanitized 401."""
+def issue_member_access_token(ctx: MemberAuthContext, *, now: datetime | None = None) -> str:
+    """Signed MEMBER access token, at most 15 minutes (P14.5 FM1)."""
+    issued_at = now or _now()
+    claims: dict[str, Any] = {
+        "sub": str(ctx.credential_id),
+        "tid": str(ctx.tenant_id),
+        "mid": str(ctx.member_id),
+        "aud": MEMBER_AUDIENCE,
+        "iat": int(issued_at.timestamp()),
+        "exp": int(issued_at.timestamp()) + ACCESS_TOKEN_TTL_SECONDS,
+    }
+    return jwt.encode(claims, _signing_key(), algorithm=_JWT_ALGORITHM)
+
+
+def decode_principal(token: str) -> AuthContext | MemberAuthContext:
+    """Validate a bearer token and dispatch on its audience (FM1).
+
+    Signature and expiry are verified first; the audience dispatch is
+    a code-owned mapping and DENY BY DEFAULT — a missing or unknown
+    audience (including pre-P14.5 legacy tokens, which live at most 15
+    minutes) is refused as unauthenticated.
+    """
     try:
-        claims = jwt.decode(token, _signing_key(), algorithms=[_JWT_ALGORITHM])
+        claims = jwt.decode(
+            token,
+            _signing_key(),
+            algorithms=[_JWT_ALGORITHM],
+            # Audience is dispatched manually below so BOTH principal
+            # kinds decode through this single entry point; signature
+            # and exp verification stay on.
+            options={"verify_aud": False},
+        )
     except jwt.PyJWTError as exc:
         raise UnauthenticatedError("invalid access token") from exc
-    return AuthContext(
-        user_id=uuid.UUID(str(claims["sub"])),
-        tenant_id=uuid.UUID(str(claims["tid"])),
-        role_id=uuid.UUID(str(claims["rid"])),
-    )
+    audience = claims.get("aud")
+    if audience == STAFF_AUDIENCE:
+        return AuthContext(
+            user_id=uuid.UUID(str(claims["sub"])),
+            tenant_id=uuid.UUID(str(claims["tid"])),
+            role_id=uuid.UUID(str(claims["rid"])),
+        )
+    if audience == MEMBER_AUDIENCE:
+        return MemberAuthContext(
+            credential_id=uuid.UUID(str(claims["sub"])),
+            member_id=uuid.UUID(str(claims["mid"])),
+            tenant_id=uuid.UUID(str(claims["tid"])),
+        )
+    raise UnauthenticatedError("unknown token audience")
+
+
+def decode_access_token(token: str) -> AuthContext:
+    """STAFF-only decode; a member token is refused with a 403 (FM1).
+
+    403, not 401: the token is valid, the principal is simply the
+    wrong KIND for a staff permission gate — deny by default, and the
+    member learns nothing about the staff surface (least disclosure).
+    """
+    principal = decode_principal(token)
+    if isinstance(principal, MemberAuthContext):
+        raise ForbiddenError("member principal cannot satisfy a staff permission gate")
+    return principal
+
+
+def decode_member_access_token(token: str) -> MemberAuthContext:
+    """MEMBER-only decode; a staff token is refused with a 403 (FM1)."""
+    principal = decode_principal(token)
+    if isinstance(principal, AuthContext):
+        raise ForbiddenError("staff principal cannot satisfy the member gate")
+    return principal
 
 
 async def request_otp(session: AsyncSession, tenant_id: uuid.UUID, email: str) -> None:
