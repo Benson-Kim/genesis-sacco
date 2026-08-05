@@ -59,6 +59,18 @@ const memberOut = {
   version: 1,
 };
 
+// The DETAIL read (#31 batch 3): the same GET also carries the four
+// advisory aggregates as decimal STRINGS (MemberDetailOut).
+const memberDetailOut = {
+  ...memberOut,
+  aggregates: {
+    deposits_total: "1500.50",
+    shares_total: "750.25",
+    loans_outstanding: "2500.10",
+    guarantees_pledged: "1000.40",
+  },
+};
+
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -97,7 +109,10 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
     return json(201, { ...memberOut, internal_account_seed: "LEDGER-SECRET" });
   }
   if (path === `/members/${MEMBER_ID}` && request.method === "GET") {
-    return json(200, memberOut);
+    if (detailWithoutAggregates) {
+      return json(200, memberOut);
+    }
+    return json(200, { ...memberDetailOut, internal_ledger_hint: "LEDGER-SECRET" });
   }
   return json(404, { category: "not_found", correlation_id: "corr-n" });
 }
@@ -333,17 +348,5 @@ test("an unknown member type is a contract violation and is REJECTED at the boun
     .catch((error: unknown) => error);
   expect(thrown).toBeInstanceOf(Error);
   expect(thrown).not.toBeInstanceOf(ApiError);
-  expect(String(thrown)).toContain("type");
-});
-nc () => {
-  listUnknownType = true;
-  const thrown = await membersApi
-    .fetchMembersPage(EMPTY_FILTERS, null)
-    .catch((error: unknown) => error);
-  expect(thrown).toBeInstanceOf(Error);
-  expect(thrown).not.toBeInstanceOf(ApiError);
-  expect(String(thrown)).toContain("type");
-});
-expect(thrown).not.toBeInstanceOf(ApiError);
   expect(String(thrown)).toContain("type");
 });

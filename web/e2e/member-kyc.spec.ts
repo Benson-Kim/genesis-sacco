@@ -212,6 +212,10 @@ async function mockApi(page: Page, state: ApiState): Promise<void> {
       await respond(200, { items: [MEMBER_OUT], next_cursor: null });
       return;
     }
+    if (path === `/members/${MEMBER_ID}` && method === "GET") {
+      await respond(200, MEMBER_DETAIL_OUT);
+      return;
+    }
     if (path === `/members/${MEMBER_ID}/profile` && method === "GET") {
       state.profileGetCalls += 1;
       if (state.profile === null) {
