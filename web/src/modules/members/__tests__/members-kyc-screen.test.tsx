@@ -497,7 +497,9 @@ test("documents: affordances mirror the status machine — pending offers ONLY '
 
   await within(dialog).findByText("National ID copy");
   const pendingRow = within(dialog).getByText("National ID copy").closest("li")!;
-  const verifiedRow = within(dialog).getByText("KRA PIN").closest("li")!;
+  // selector: the document-row label <span> — the person PROFILE also
+  // renders a "KRA PIN" <dt> field label in the same dialog.
+  const verifiedRow = within(dialog).getByText("KRA PIN", { selector: "span" }).closest("li")!;
 
   expect(within(pendingRow).getByRole("button", { name: "Mark received" })).toBeInTheDocument();
   expect(within(pendingRow).queryByRole("button", { name: "Verify" })).toBeNull();
@@ -523,8 +525,10 @@ test("documents: a blank expiry is the EXPLICIT null clear (review K2); a denial
   mountScreen();
   const dialog = await openKycDrawer(user);
 
-  await within(dialog).findByText("KRA PIN");
-  const verifiedRow = within(dialog).getByText("KRA PIN").closest("li")!;
+  // selector: the document-row label <span> — the person PROFILE also
+  // renders a "KRA PIN" <dt> field label in the same dialog.
+  await within(dialog).findByText("KRA PIN", { selector: "span" });
+  const verifiedRow = within(dialog).getByText("KRA PIN", { selector: "span" }).closest("li")!;
   await user.click(within(verifiedRow).getByRole("button", { name: "Edit expiry" }));
 
   mocked.updateKycDocument.mockRejectedValue(new ApiError(403, "forbidden", "corr-403"));
