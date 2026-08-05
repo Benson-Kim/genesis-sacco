@@ -81,6 +81,7 @@ function debitTxn(overrides: Partial<Transaction> = {}): Transaction {
     direction: "debit",
     occurred_at: "2026-07-18T10:15:00+00:00",
     is_reversal: false,
+    created_by: null,
     ...overrides,
   };
 }
@@ -96,6 +97,7 @@ function creditTxn(overrides: Partial<Transaction> = {}): Transaction {
     direction: "credit",
     occurred_at: "2026-07-19T08:00:00+00:00",
     is_reversal: false,
+    created_by: null,
     ...overrides,
   };
 }
@@ -350,6 +352,57 @@ test("detail drawer resolves the member name (members:view), renders every field
   expect(within(drawer).getByText(/REVERSING entry/)).toBeInTheDocument();
   // No running balance is reconstructed client-side.
   expect(within(drawer).getByText(/never reconstructed/)).toBeInTheDocument();
+});
+
+test("attribution (issue #30 / !66 follow-up): the detail drawer renders created_by as the SHORT id with the full UUID on title — and NEVER fetches a directory record for it (least disclosure, FM-D)", async () => {
+  const TELLER_ID = "66666666-6666-6666-6666-666666666666";
+  const user = userEvent.setup();
+  mocked.fetchTransactionsPage.mockResolvedValue(
+    page([debitTxn({ created_by: TELLER_ID })]),
+  );
+  mountScreen();
+
+  await user.click(await screen.findByText("KES 8,000.10"));
+  const drawer = await screen.findByRole("dialog", { name: "Transaction detail" });
+  // Short-id convention: the 8-char prefix renders; the full UUID rides
+  // the title attribute (same treatment as every other opaque id).
+  const cell = within(drawer).getByTitle(TELLER_ID);
+  expect(cell).toHaveTextContent(TELLER_ID.slice(0, 8));
+  // Least disclosure: the staff UUID is NEVER resolved to a person —
+  // the only member fetch is the ledger row's member, never the teller.
+  for (const call of mockedMembers.fetchMember.mock.calls) {
+    expect(call[0]).not.toBe(TELLER_ID);
+  }
+});
+
+test("attribution NULL leg (FM-B): a system/unattributed posting renders the honest affordance — never an invented actor", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+
+  // Base fixtures carry created_by: null (system/job postings and
+  // pre-0036 rows are the documented NULL branch).
+  await user.click(await screen.findByText("KES 8,000.10"));
+  const drawer = await screen.findByRole("dialog", { name: "Transaction detail" });
+  expect(
+    within(drawer).getByText("— (system posting or unattributed)"),
+  ).toBeInTheDocument();
+});
+
+test("attribution XSS inertness: a hostile created_by string renders as inert TEXT in the UUID cell — no markup materialises", async () => {
+  const HOSTILE_CREATOR = "<img src=x onerror=window.__pwned=4>";
+  const user = userEvent.setup();
+  mocked.fetchTransactionsPage.mockResolvedValue(
+    page([debitTxn({ created_by: HOSTILE_CREATOR })]),
+  );
+  const { container } = mountScreen();
+
+  await user.click(await screen.findByText("KES 8,000.10"));
+  const drawer = await screen.findByRole("dialog", { name: "Transaction detail" });
+  // The sliced prefix renders as literal text…
+  expect(within(drawer).getByTitle(HOSTILE_CREATOR)).toHaveTextContent("<img src=");
+  // …and never as an element.
+  expect(container.querySelector("img")).toBeNull();
+  expect((window as { __pwned?: unknown }).__pwned).toBeUndefined();
 });
 
 test("DOUBLE-POST impossible from this client: triple-clicked confirmation produces exactly ONE write; the affordance is SPENT after success", async () => {
