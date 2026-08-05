@@ -17,8 +17,9 @@
  * - MAKER-CHECKER (blocker (f)): vote affordances mount ONLY inside
  *   MakerCheckerPanel — checker controls exist only for a different,
  *   known principal (getOwnUserId; no override prop). The maker
- *   identity comes from the per-tab registry (the P12 contract exposes
- *   no requested_by — recorded honestly in the MR). The server bans
+ *   identity is the CONTRACT's requested_by first (issue #30 / !66
+ *   follow-up — server truth), with the per-tab registry as the
+ *   fallback witness for unattributed (NULL) rows. The server bans
  *   self-votes and enforces one vote per voter regardless (gate 1.6).
  *   VOID deliberately sits OUTSIDE the panel: the P12 contract gates
  *   POST /member-exits/{id}/void on members:approve (verified against
@@ -221,14 +222,26 @@ export function ExitDetailDrawer({
   const voteConflict = vote.isError && isConflict(vote.error);
   const voidConflict = voidMutation.isError && isConflict(voidMutation.error);
 
-  const makerId = exitMakerOf(record.id);
+  // SERVER TRUTH FIRST (issue #30 follow-up on !66/0036): requested_by
+  // is the contract's initiator attribution — the maker-checker record
+  // itself, not a per-tab witness. The registry (the request THIS TAB
+  // witnessed) is consulted only when the server record is
+  // unattributed (requested_by === null); nothing is ever invented.
+  const witnessedMakerId = exitMakerOf(record.id);
+  const makerId = record.requested_by ?? witnessedMakerId;
   const ownId = getOwnUserId();
   const makerLabel =
-    makerId === EXIT_MAKER_UNKNOWN
-      ? "Initiating officer — identity not exposed by the API contract (only requests witnessed by this tab are attributed)."
-      : makerId === ownId
-        ? "You initiated this exit request (witnessed by this tab)."
-        : "Initiating officer (witnessed by this tab).";
+    record.requested_by !== null
+      ? record.requested_by === ownId
+        ? "You initiated this exit request (server attribution)."
+        : // Least disclosure (FM-D): the bare staff UUID via the
+          // short-id convention — never a name or email.
+          `Initiating officer ${record.requested_by.slice(0, 8)} (server attribution).`
+      : witnessedMakerId === EXIT_MAKER_UNKNOWN
+        ? "Initiating officer — unattributed on the server record (attribution is never invented); no request witnessed by this tab."
+        : witnessedMakerId === ownId
+          ? "You initiated this exit request (witnessed by this tab)."
+          : "Initiating officer (witnessed by this tab).";
 
   function reloadRecord() {
     // Explicit reload flow (!60 F5): refetch the record (its status,
@@ -269,6 +282,20 @@ export function ExitDetailDrawer({
         </Kv>
         <Kv label="Status">{exitStatusPill(record.status)}</Kv>
         <Kv label="Reason">{record.reason ?? "—"}</Kv>
+        <Kv label="Requested by">
+          {/* Initiator attribution (issue #30 / !66 follow-up): the
+              SERVER's bare staff UUID, short-id convention — least
+              disclosure (FM-D): no name/email is ever fetched for it.
+              NULL renders the honest unattributed affordance (FM-B):
+              an actor is never invented. */}
+          {record.requested_by !== null ? (
+            <span className={styles.mono} title={record.requested_by}>
+              {record.requested_by.slice(0, 8)}
+            </span>
+          ) : (
+            "— (unattributed)"
+          )}
+        </Kv>
         <Kv label="Requested">{fmtDateTime(record.created_at)}</Kv>
         <Kv label="Decided">{fmtDateTime(record.decided_at)}</Kv>
         <Kv label="Settled">{fmtDateTime(record.settled_at)}</Kv>

@@ -73,6 +73,14 @@ export const exitSchema = z.object({
   member_id: z.string(),
   status: exitStatusSchema,
   reason: z.string().nullable(),
+  /** Initiator attribution (issue #30 R4, migration 0036 — the !66
+   * follow-up): the staff principal who requested the exit, as the
+   * BARE user UUID only. Least disclosure (!66 FM-D): never a name or
+   * email — resolving the id stays behind access_control:view
+   * server-side, and this client NEVER fetches a directory record for
+   * it. NULL is an honest "unattributed" (pre-0036 rows without
+   * unambiguous audit history — FM-B: an actor is never invented). */
+  requested_by: z.string().nullable(),
   /** Snapshot components, server-computed under the P12 lock set. */
   shares_amount: moneySchema,
   deposits_amount: moneySchema,
@@ -140,6 +148,12 @@ export const exitStatementSchema = z.object({
   member_status: statementMemberStatusSchema,
   exit_status: exitStatusSchema,
   reason: z.string().nullable(),
+  /** Initiator attribution on the canonical DOCUMENT (issue #30 R4,
+   * !66 follow-up): the same bare staff UUID as ExitOut.requested_by,
+   * rendered verbatim via the short-id convention — never resolved to
+   * a name/email (FM-D); NULL stays the honest unattributed line
+   * (FM-B). */
+  requested_by: z.string().nullable(),
   shares_amount: moneySchema,
   deposits_amount: moneySchema,
   /** SERVER-computed equity line — never re-derived client-side. */

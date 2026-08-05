@@ -154,6 +154,7 @@ def test_fm1_boundary_days_land_in_the_documented_buckets() -> None:
             ("181-360", 2, Decimal("13000.00"), Decimal("34.21")),
             ("360+", 1, Decimal("8000.00"), Decimal("21.05")),
             ("TOTAL", 10, Decimal("38000.00"), Decimal("100.00")),
+            ("WRITTEN OFF (memo)", 0, Decimal("0.00"), Decimal("0.00")),
         ]
 
     asyncio.run(run())
@@ -214,6 +215,7 @@ def test_h2_leap_window_days_are_counted_on_the_real_calendar() -> None:
             ("181-360", 0, Decimal("0.00"), Decimal("0.00")),
             ("360+", 0, Decimal("0.00"), Decimal("0.00")),
             ("TOTAL", 1, Decimal("1500.00"), Decimal("100.00")),
+            ("WRITTEN OFF (memo)", 0, Decimal("0.00"), Decimal("0.00")),
         ]
 
         nonleap_rows = await _render_par(tid, as_of_nonleap)
@@ -227,6 +229,7 @@ def test_h2_leap_window_days_are_counted_on_the_real_calendar() -> None:
             ("181-360", 0, Decimal("0.00"), Decimal("0.00")),
             ("360+", 1, Decimal("1500.00"), Decimal("37.50")),
             ("TOTAL", 2, Decimal("4000.00"), Decimal("100.00")),
+            ("WRITTEN OFF (memo)", 0, Decimal("0.00"), Decimal("0.00")),
         ]
 
     asyncio.run(run())
@@ -309,9 +312,12 @@ def test_reconstruction_and_drift_detector_end_to_end() -> None:
         rows = parse_csv(body)
         assert rows[0] == _HEADERS
         # Row 1 is "current", row 2 is "1-30" (R1); the 40-dpd loan
-        # sits in "31-90" at row 3; TOTAL closes the 6 buckets.
+        # sits in "31-90" at row 3; TOTAL closes the 6 buckets; the
+        # written-off memo disclosure (the !40 correction note) is the
+        # final row — zero here (nothing written off).
         assert rows[3] == ["31-90", "1", "7500.00", "100.00"]
         assert rows[7] == ["TOTAL", "1", "7500.00", "100.00"]
+        assert rows[8] == ["WRITTEN OFF (memo)", "0", "0.00", "0.00"]
 
         # H3: every money cell renders in the canonical 2dp form (the
         # !34 '0' vs '0.00' inconsistency class).
@@ -395,10 +401,14 @@ def test_r2_percent_of_portfolio_foots_to_exactly_100() -> None:
             ("181-360", 0, Decimal("0.00"), Decimal("0.00")),
             ("360+", 0, Decimal("0.00"), Decimal("0.00")),
             ("TOTAL", 3, Decimal("3000.00"), Decimal("100.00")),
+            ("WRITTEN OFF (memo)", 0, Decimal("0.00"), Decimal("0.00")),
         ]
-        bucket_share_sum = sum((row[3] for row in rows[:-1]), Decimal("0.00"))
+        # The six BUCKET shares foot to exactly 100.00; the TOTAL row
+        # prints 100.00; the memo row sits outside the footing (its
+        # share of the ACTIVE portfolio is 0.00 by definition).
+        bucket_share_sum = sum((row[3] for row in rows[:6]), Decimal("0.00"))
         assert bucket_share_sum == Decimal("100.00")
-        assert rows[-1][3] == Decimal("100.00")
+        assert rows[6][3] == Decimal("100.00")
 
     asyncio.run(run())
 
@@ -492,6 +502,138 @@ def test_r4_shared_transaction_repayments_apportion_without_fanout() -> None:
             ("181-360", 0, Decimal("0.00"), Decimal("0.00")),
             ("360+", 0, Decimal("0.00"), Decimal("0.00")),
             ("TOTAL", 2, Decimal("7000.00"), Decimal("100.00")),
+            ("WRITTEN OFF (memo)", 0, Decimal("0.00"), Decimal("0.00")),
         ]
+
+    asyncio.run(run())
+
+
+async def _write_off_loan(
+    tid: uuid.UUID,
+    mid: uuid.UUID,
+    loan_id: uuid.UUID,
+    *,
+    balance: str,
+    penalty_due: str,
+    total: str,
+    posted_days_ago: int,
+) -> None:
+    """Seed the durable FACTS of a posted P13.15 write-off raw (the
+    seeding style of this suite): the loans row's terminal status and
+    the write-once loan_write_offs snapshot with status='posted' and
+    its posted_at — exactly what post_write_off leaves behind and what
+    the report reads (never mutable balance/dpd columns)."""
+    async with tenant_session(factory(), tid) as session:
+        await session.execute(
+            text(
+                "UPDATE loans SET status = 'written_off' "
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"id": str(loan_id), "tid": str(tid)},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO loan_write_offs "
+                "(id, tenant_id, loan_id, member_id, balance, penalty_due, "
+                " total_written_off, classification, provision_pct, reason, "
+                " status, posted_at) "
+                "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:lid AS uuid), "
+                "CAST(:mid AS uuid), :balance, :penalty, :total, 'loss', '100.00', "
+                "'PAR memo disclosure test', 'posted', :posted_at)"
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "tid": str(tid),
+                "lid": str(loan_id),
+                "mid": str(mid),
+                "balance": balance,
+                "penalty": penalty_due,
+                "total": total,
+                "posted_at": datetime.now(UTC) - timedelta(days=posted_days_ago),
+            },
+        )
+
+
+def test_written_off_exposure_is_disclosed_never_bucketed() -> None:
+    """The !40 correction-note gap (note 3646076743): the bucket
+    predicate excludes written-off loans (the receivable was
+    derecognised by the P13.15 WO- posting), but the excluded exposure
+    must never silently vanish — it is DISCLOSED as the memo row.
+
+    HAND-COMPUTED: one live loan, principal 2,000.00, installment
+    500.00 due 40 days ago, no repayments -> dpd 40 -> "31-90",
+    outstanding 2,000.00 (the whole active portfolio: 100.00%). One
+    written-off loan, principal 9,000.00: its write-once snapshot
+    carries balance 8,500.00 + penalty_due 150.00 = total_written_off
+    8,650.00, posted 10 days ago. The memo row shows 1 loan /
+    8,650.00 (the snapshot claim, NOT the 9,000.00 principal); the
+    buckets and TOTAL are untouched by it — no bucket contains the
+    written-off loan and TOTAL stays 1 loan / 2,000.00.
+
+    Falsifiable BOTH ways:
+      * remove `AND l.status <> 'written_off'` from PAR_AGING_SQL and
+        the written-off loan lands in a bucket (its unmet 300.00
+        installment due 200 days ago -> "181-360") — the bucket vector
+        and TOTAL fail;
+      * remove the memo append (or its SQL) from _build_par_aging and
+        the final row is missing/zero — the memo vector fails.
+
+    As-of discipline: rendered at an as-of BEFORE posted_at, the memo
+    excludes the write-off (0 / 0.00) — posted_at is the disclosure's
+    as-of anchor (the write-once snapshot, never current-time state).
+    """
+
+    async def run() -> None:
+        tid, _, _ = await seed_actor()
+        mid = await seed_member(tid)
+        today = datetime.now(UTC).date()
+
+        live_loan = await _seed_loan_for_book(
+            tid, mid, principal="2000.00", balance="2000.00", disbursed_days_ago=100
+        )
+        await _add_installment(
+            tid, live_loan, installment_no=1, due=today - timedelta(days=40), total_due="500.00"
+        )
+
+        written_off_loan = await _seed_loan_for_book(
+            tid, mid, principal="9000.00", balance="8500.00", disbursed_days_ago=400
+        )
+        # An unmet installment 200 days past due: WITHOUT the status
+        # predicate this loan would land in "181-360" — the arm that
+        # makes removing the exclusion falsifiable.
+        await _add_installment(
+            tid,
+            written_off_loan,
+            installment_no=1,
+            due=today - timedelta(days=200),
+            total_due="300.00",
+        )
+        await _write_off_loan(
+            tid,
+            mid,
+            written_off_loan,
+            balance="8500.00",
+            penalty_due="150.00",
+            total="8650.00",
+            posted_days_ago=10,
+        )
+
+        rows = await _render_par(tid, datetime.now(UTC))
+        assert rows == [
+            ("current", 0, Decimal("0.00"), Decimal("0.00")),
+            ("1-30", 0, Decimal("0.00"), Decimal("0.00")),
+            ("31-90", 1, Decimal("2000.00"), Decimal("100.00")),
+            ("91-180", 0, Decimal("0.00"), Decimal("0.00")),
+            ("181-360", 0, Decimal("0.00"), Decimal("0.00")),
+            ("360+", 0, Decimal("0.00"), Decimal("0.00")),
+            ("TOTAL", 1, Decimal("2000.00"), Decimal("100.00")),
+            ("WRITTEN OFF (memo)", 1, Decimal("8650.00"), Decimal("0.00")),
+        ]
+
+        # As-of BEFORE the posting: the disclosure is as-of-consistent
+        # on posted_at — the write-off had not happened yet, so the
+        # memo is empty at that snapshot date.
+        earlier = await _render_par(tid, datetime.now(UTC) - timedelta(days=30))
+        assert earlier[-1] == ("WRITTEN OFF (memo)", 0, Decimal("0.00"), Decimal("0.00"))
 
     asyncio.run(run())

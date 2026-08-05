@@ -135,6 +135,9 @@ PINNED_CLAIMS: dict[str, tuple[str, ...]] = {
     "genesis/application/guarantees.py": (
         "release_guarantees_for_loan",
         "live_pledged_total",
+        # Diagram 22 — the member-principal consent/release acts (P14.5 !65)
+        "consent_guarantee_as_member",
+        "release_guarantee_as_member",
     ),
     # Diagram 20 — recovery cases (P13.16 !47) + the diagram-7 seam
     "genesis/application/recovery.py": (
@@ -155,8 +158,27 @@ PINNED_CLAIMS: dict[str, tuple[str, ...]] = {
     ),
     "genesis/domain/ledger.py": ("account_class",),
     "genesis/domain/sasra.py": ("line_for_account",),
+    # Diagrams 21/22 — the P14.5 member surface (!65; post-merge
+    # remediation MR): credential-link admin + member-facing auth
+    "genesis/application/member_identity.py": (
+        "create_credential",
+        "revoke_credential",
+        "list_member_credentials",
+    ),
+    "genesis/application/member_auth.py": (
+        "request_member_otp",
+        "verify_member_otp",
+        "rotate_member_refresh_token",
+    ),
+    "genesis/application/auth.py": ("MemberAuthContext",),
+    "genesis/domain/members.py": ("MemberStatus",),
     # Cross-cutting seams cited by diagram 0 and the L1/L2 files
     "genesis/api/idempotency.py": ("IdempotencyMiddleware",),
+    "genesis/api/authz.py": (
+        "RequirePermission",
+        "RequireAnyPermission",
+        "RequireMemberPrincipal",
+    ),
     "genesis/infrastructure/tenancy.py": (
         "tenant_session",
         "tenant_snapshot_session",

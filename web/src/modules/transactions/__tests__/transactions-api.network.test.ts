@@ -31,6 +31,7 @@ const TENANT = "22222222-2222-2222-2222-222222222222";
 const USER_ID = "55555555-5555-5555-5555-555555555555";
 const MEMBER_ID = "11111111-1111-1111-1111-111111111111";
 const TXN_ID = "eeeeeeee-1111-2222-3333-444444444444";
+const TELLER_ID = "66666666-6666-6666-6666-666666666666";
 
 const calls: FetchCall[] = [];
 let withdrawalStatus = 201;
@@ -58,6 +59,7 @@ const txnOut = {
   direction: "credit",
   occurred_at: "2026-08-01T09:00:00+00:00",
   is_reversal: false,
+  created_by: TELLER_ID,
 };
 
 function json(status: number, body: unknown): Response {
@@ -221,6 +223,36 @@ test("GET /transactions: keyset params ONLY (no offset/page); the opaque cursor 
   // The boundary transform yields the client-side page shape verbatim.
   expect(page.items[0]?.amount).toBe("50000.10");
   expect(page.nextCursor).toBe("cursor-page-2");
+  // Posting-actor attribution (issue #30 / !66 follow-up): the bare
+  // staff UUID travels verbatim — least disclosure: no name/email key
+  // exists anywhere in the contract or the parse.
+  expect(page.items[0]?.created_by).toBe(TELLER_ID);
+  expect(page.items[0] !== undefined && "full_name" in page.items[0]).toBe(false);
+  expect(page.items[0] !== undefined && "email" in page.items[0]).toBe(false);
+});
+
+test("attribution accept/reject matrix (issue #30 / !66 follow-up): created_by is a nullable STRING — the NULL leg is the honest system-posting wire value; a MISSING key is a contract violation", () => {
+  const withField = (value: unknown) =>
+    txnSchemas.transactionSchema.safeParse({ ...txnOut, created_by: value }).success;
+
+  // The two legitimate wire values: the bare staff UUID and the honest
+  // NULL (system/job postings — interest, dormancy — and pre-0036 rows;
+  // attribution never invented).
+  expect(withField(TELLER_ID)).toBe(true);
+  expect(withField(null)).toBe(true);
+
+  // Shape drift REJECTED: attribution never arrives as a number, an
+  // object (a smuggled name/email payload) or a boolean.
+  expect(withField(42)).toBe(false);
+  expect(withField({ id: TELLER_ID, full_name: "Jane" })).toBe(false);
+  expect(withField(true)).toBe(false);
+
+  // KEY EXACTNESS: dropping the key entirely is a contract violation —
+  // the field is nullable, not optional (falsifiable: soften the schema
+  // to .optional() and this leg fails).
+  const missing: Record<string, unknown> = { ...txnOut };
+  delete missing["created_by"];
+  expect(txnSchemas.transactionSchema.safeParse(missing).success).toBe(false);
 });
 
 test("GET /transactions: every register filter is a SERVER-side query parameter", async () => {

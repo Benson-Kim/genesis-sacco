@@ -12,9 +12,12 @@
  *   never offers what the API forbids (gate 1.6).
  * - SEPARATION OF DUTIES (blocker (f)): the settle affordance mounts
  *   ONLY inside MakerCheckerPanel — the P12 contract bans the
- *   initiator from posting their own settlement (403), so where this
- *   tab witnessed the initiator, the controls are structurally
- *   withheld (no override prop exists); the server enforces
+ *   initiator from posting their own settlement (403, keyed on the
+ *   persisted requested_by). The maker identity is the CONTRACT's
+ *   requested_by first (issue #30 / !66 follow-up — server truth),
+ *   with the per-tab registry as the fallback witness for
+ *   unattributed (NULL) rows; controls are structurally withheld for
+ *   the maker (no override prop exists); the server enforces
  *   regardless.
  * - EXACTLY ONE write per intent: ConfirmDangerModal typed phrase,
  *   pending short-circuit + disabled controls, `retry: 0`, one
@@ -193,14 +196,24 @@ export function SettleExitDialog({
   const parsedChannel = cashChannelSchema.safeParse(channel);
   const channelLabel = parsedChannel.success ? CHANNEL_LABELS[parsedChannel.data] : channel;
 
-  const makerId = exitMakerOf(record.id);
+  // SERVER TRUTH FIRST (issue #30 follow-up on !66/0036): requested_by
+  // is the contract's initiator attribution; the per-tab witness is
+  // only the fallback for unattributed (NULL) rows — nothing invented.
+  const witnessedMakerId = exitMakerOf(record.id);
+  const makerId = record.requested_by ?? witnessedMakerId;
   const ownId = getOwnUserId();
   const makerLabel =
-    makerId === EXIT_MAKER_UNKNOWN
-      ? "Initiating officer — identity not exposed by the API contract (only requests witnessed by this tab are attributed)."
-      : makerId === ownId
-        ? "You initiated this exit request (witnessed by this tab)."
-        : "Initiating officer (witnessed by this tab).";
+    record.requested_by !== null
+      ? record.requested_by === ownId
+        ? "You initiated this exit request (server attribution)."
+        : // Least disclosure (FM-D): the bare staff UUID via the
+          // short-id convention — never a name or email.
+          `Initiating officer ${record.requested_by.slice(0, 8)} (server attribution).`
+      : witnessedMakerId === EXIT_MAKER_UNKNOWN
+        ? "Initiating officer — unattributed on the server record (attribution is never invented); no request witnessed by this tab."
+        : witnessedMakerId === ownId
+          ? "You initiated this exit request (witnessed by this tab)."
+          : "Initiating officer (witnessed by this tab).";
 
   function reloadRecord() {
     // Explicit reload flow (!60 F5): refetch the record (a snapshot

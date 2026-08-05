@@ -91,6 +91,21 @@ export function TransactionDetailDrawer({
           )}
         </Kv>
         <Kv label="Reversal">{txn.is_reversal ? reversalPill() : "No"}</Kv>
+        <Kv label="Posted by">
+          {/* Posting-actor attribution (issue #30 / !66 follow-up):
+              the SERVER's bare staff UUID, short-id convention — least
+              disclosure (FM-D): no name/email is ever fetched for it.
+              NULL renders the honest affordance (FM-B): system/job
+              postings and pre-0036 rows are never given an invented
+              actor. */}
+          {txn.created_by !== null ? (
+            <span className={styles.mono} title={txn.created_by}>
+              {txn.created_by.slice(0, 8)}
+            </span>
+          ) : (
+            "— (system posting or unattributed)"
+          )}
+        </Kv>
         <Kv label="Ledger row id">
           <span className={styles.mono}>{txn.id}</span>
         </Kv>

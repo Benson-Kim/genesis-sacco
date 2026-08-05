@@ -11,6 +11,10 @@
   Reconciled to main @ 4ea6bf288460e121a42815b67965adc1854a6320
   (docs/CI follow-up MR, !38 review R3: migration head 0032 -> 0034
   — 0033/0034 landed by !53/!54 after the previous reconciliation).
+  Reconciled to main @ eb90a80ede68aed673c317ecd833b464ac17eac4
+  (post-merge remediation MR: migration head 0034 -> 0036 — 0035/0036
+  landed by !65/!66 without the same-MR diagram refresh v1.2 rule 11
+  requires; api layer grows to 22 routers (P14.5 member surface, !65)).
   Traceability: every box cites its module; `c4-spot-check.py` verifies
   every cited module path exists at the authoring SHA.
 -->
@@ -33,7 +37,7 @@ flowchart TB
     subgraph BE["Backend API process — genesis/api/app.py create_app"]
         direction TB
         MW["Middleware seam<br/>IdempotencyMiddleware — genesis/api/idempotency.py<br/>correlation id + error envelope — genesis/api/app.py<br/>tenancy: SET LOCAL app.tenant_id per txn —<br/>genesis/infrastructure/tenancy.py tenant_session"]
-        APIL["api layer — routers + schemas + authz<br/>genesis/api (20 routers, see c4-component.md)<br/>RequirePermission — genesis/api/authz.py"]
+        APIL["api layer — routers + schemas + authz<br/>genesis/api (22 routers, see c4-component.md)<br/>RequirePermission + RequireMemberPrincipal — genesis/api/authz.py"]
         APPL["application layer — use-case services, OWN the transactions<br/>genesis/application (audit, outbox writer, batch_runner,<br/>pagination + one service module per feature)"]
         DOM["domain layer — pure logic, no I/O<br/>genesis/domain: lending, ledger, committee, members, exits,<br/>dividends, deposits, money, otp, rbac, tenant_config, users,<br/>member_kyc, documents, recovery, sasra"]
         INF["infrastructure layer — adapters behind interfaces<br/>genesis/infrastructure: db, tenancy, redis_client,<br/>rate_limit, providers"]
@@ -50,7 +54,7 @@ flowchart TB
         IDW["idempotency purge — P13.17c<br/>genesis/infrastructure/idempotency_worker.py"]
     end
 
-    MIG["Migration runner — alembic upgrade head<br/>backend/alembic.ini + backend/migrations/<br/>versions 0001..0034 (head 0034 verified at reconciliation)"]
+    MIG["Migration runner — alembic upgrade head<br/>backend/alembic.ini + backend/migrations/<br/>versions 0001..0036 (head 0036 verified at reconciliation)"]
 
     PG[("PostgreSQL 16 — FORCED RLS (ADR-0002)<br/>append-only: ledger_entries + transactions (0004 triggers),<br/>audit_log (0001), repayments (0032), loan_recoveries (0030)<br/>write-once: dividend_declarations (0020), loan_write_offs (0025),<br/>repayment_adjustments (0025/0031), portfolio_month_snapshots (0027),<br/>period rollups (0028)<br/>closed-period posting barrier (0012/0014)<br/>advisory-lock tier: lock-order.md §6")]
     RD[("Redis<br/>rate limiting + readyz")]
@@ -75,7 +79,7 @@ flowchart TB
 
 | Container / element | Source on main @ `08541b8` |
 |---|---|
-| api layer | `genesis/api/` — 20 routers wired in `genesis/api/app.py` `create_app`; per-handler authz dependency `genesis/api/authz.py` (`RequirePermission` L28, `RequireAnyPermission` L54) |
+| api layer | `genesis/api/` — 22 routers wired in `genesis/api/app.py` `create_app`; per-handler authz dependencies `genesis/api/authz.py` (`RequirePermission` L38, `RequireAnyPermission` L94, member-principal gate `RequireMemberPrincipal` L64 — P14.5, !65) |
 | Idempotency middleware | `genesis/api/idempotency.py` (`IdempotencyMiddleware` L98): atomic `ON CONFLICT DO NOTHING` claim per (tenant, key), replay returns the stored response, actor is part of the request hash |
 | Tenancy middleware/seam | `genesis/infrastructure/tenancy.py` (`tenant_session` L12 — `SET LOCAL app.tenant_id` via `set_config(..., true)`; `tenant_snapshot_session` L31 — REPEATABLE READ for exports) |
 | application layer | `genesis/application/` — one service module per feature; cross-cutting: `audit.py` (in-txn audit rows), `outbox.py` (`enqueue_event` L17), `batch_runner.py` (shared batch jobs), `pagination.py` (keyset) |
@@ -86,7 +90,7 @@ flowchart TB
 | export renderer | `genesis/infrastructure/export_worker.py` → `genesis/application/exports.py` (`run_export_job` L381, claim `CLAIM_SQL` L82) |
 | dormancy worker | `genesis/infrastructure/dormancy_worker.py` (`run_dormancy_cycle` L65 — fail-closed per tenant, per-tenant error isolation per !37) → `genesis/application/dormancy.py` (`run_dormancy_for_tenant` L370) |
 | idempotency purge worker | `genesis/infrastructure/idempotency_worker.py` (`run_worker`) → `genesis/application/idempotency_purge.py` (`purge_expired_idempotency_keys` — shared batch runner, `FOR UPDATE SKIP LOCKED` subquery; P13.17c/DSA-3) |
-| migration runner | `backend/alembic.ini`, `backend/migrations/env.py`, `backend/migrations/versions/0001..0034` — head `0034` (`0034_recovery_claim_cap_lock.py`, `down_revision = "0033"`), verified at reconciliation (0033/0034 landed by !53/!54; nothing claims `0034` as parent) |
+| migration runner | `backend/alembic.ini`, `backend/migrations/env.py`, `backend/migrations/versions/0001..0036` — head `0036` (`0036_actor_attribution.py`, `down_revision = "0035"`), verified at reconciliation (0035/0036 landed by !65/!66; nothing claims `0036` as parent) |
 | PostgreSQL 16 | forced RLS per ADR-0002; store properties below |
 | Redis | `genesis/infrastructure/redis_client.py` (`ping_redis` — `/readyz`), `genesis/infrastructure/rate_limit.py` (auth endpoints) |
 

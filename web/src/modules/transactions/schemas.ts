@@ -107,6 +107,15 @@ export const transactionSchema = z.object({
    * (the !63 F-R4 lesson): garbage is REJECTED, never "Invalid Date". */
   occurred_at: isoTimestampSchema,
   is_reversal: z.boolean(),
+  /** Posting-actor attribution (issue #30 R3, migration 0036 — the
+   * !66 follow-up): the staff principal who posted this row, as the
+   * BARE user UUID only. Least disclosure (!66 FM-D): never a name or
+   * email — resolving the id stays behind access_control:view
+   * server-side, and this client NEVER fetches a directory record for
+   * it. NULL is an honest "unattributed" (system/job postings —
+   * interest, dormancy — and pre-0036 rows without unambiguous audit
+   * history; FM-B: an actor is never invented). */
+  created_by: z.string().nullable(),
 });
 
 export type Transaction = z.infer<typeof transactionSchema>;

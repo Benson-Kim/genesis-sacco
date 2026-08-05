@@ -51,6 +51,7 @@ const DEBIT_TXN = {
   direction: "debit",
   occurred_at: "2026-07-18T10:15:00+00:00",
   is_reversal: false,
+  created_by: null,
 };
 
 const CREDIT_TXN = {
@@ -63,6 +64,7 @@ const CREDIT_TXN = {
   direction: "credit",
   occurred_at: "2026-07-19T08:00:00+00:00",
   is_reversal: false,
+  created_by: null,
 };
 
 const MEMBER_OUT = {

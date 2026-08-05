@@ -28,6 +28,7 @@ from export_helpers import seed_actor, seed_member
 from genesis.application import transactions as txn_service
 from genesis.application.reports import (
     PAR_AGING_SQL,
+    PAR_WRITTEN_OFF_MEMO_SQL,
     account_activity_sql,
     membership_register_page_sql,
 )
@@ -89,6 +90,12 @@ def test_p1310_report_queries_are_index_backed() -> None:
                     "receivable_account": Account.LOANS_RECEIVABLE.value,
                 },
             )
+            # The written-off memo disclosure added to the PAR payload
+            # (the !40 correction note): tenant-led read over the
+            # write-once loan_write_offs snapshot — must be served by
+            # the 0025 idx_loan_write_offs_loan prefix (or a sibling
+            # tenant-led composite); NO new index was added for it.
+            par_memo = await _explain(session, PAR_WRITTEN_OFF_MEMO_SQL, base)
             register_page = await _explain(
                 session,
                 membership_register_page_sql(with_cursor=True),
@@ -126,6 +133,7 @@ def test_p1310_report_queries_are_index_backed() -> None:
         )
         sections = [
             ("portfolio-at-risk aging reconstruction", par_aging),
+            ("portfolio-at-risk written-off memo (loan_write_offs)", par_memo),
             ("membership register page (keyset)", register_page),
             ("account activity aggregate (period-scoped)", activity_windowed),
             ("account activity aggregate (full as-of)", activity_full),
@@ -162,6 +170,12 @@ def test_p1310_report_queries_are_index_backed() -> None:
         # precedent: any of the composite ledger/transactions indexes).
         assert "Index" in activity_windowed
         assert "Index" in activity_full
+        # The written-off memo must be index-served by an EXISTING 0025
+        # tenant-led index (loan-led / member-led / txn-led composite or
+        # the partial uq_loan_write_offs_open, whose status <> 'rejected'
+        # predicate covers status = 'posted'); the no-Seq-Scan loop
+        # below is the falsifiable floor.
+        assert "Index" in par_memo
         for name, plan in sections:
             assert "Seq Scan" not in plan, f"{name} plan fell back to a sequential scan"
 

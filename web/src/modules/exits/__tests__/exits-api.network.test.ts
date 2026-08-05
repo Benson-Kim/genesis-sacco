@@ -33,6 +33,7 @@ const TENANT = "22222222-2222-2222-2222-222222222222";
 const USER_ID = "55555555-5555-5555-5555-555555555555";
 const MEMBER_ID = "11111111-1111-1111-1111-111111111111";
 const EXIT_ID = "eeeeeeee-aaaa-bbbb-cccc-444444444444";
+const REQUESTER_ID = "66666666-6666-6666-6666-666666666666";
 
 const calls: FetchCall[] = [];
 let settlementStatus = 201;
@@ -55,6 +56,7 @@ const exitOut = {
   member_id: MEMBER_ID,
   status: "requested",
   reason: "Relocation",
+  requested_by: REQUESTER_ID,
   shares_amount: "25000.10",
   deposits_amount: "150000.10",
   loan_balance: "40000.00",
@@ -138,6 +140,7 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
       member_status: "active",
       exit_status: "requested",
       reason: "Relocation",
+      requested_by: REQUESTER_ID,
       shares_amount: "25000.10",
       deposits_amount: "150000.10",
       equity: "175000.20",
@@ -403,6 +406,7 @@ test("F-M2 accept/reject matrix: money fields assert the CANONICAL server decima
     member_status: "active",
     exit_status: "requested",
     reason: null,
+    requested_by: null,
     shares_amount: "25000.10",
     deposits_amount: "150000.10",
     equity: "175000.20",
@@ -435,4 +439,54 @@ test("GET statement: the canonical document parses VERBATIM (server equity line 
   expect(statement.equity).toBe("175000.20");
   expect(statement.net_payable).toBe("134500.20");
   expect("internal_gl_breakdown" in statement).toBe(false);
+  // Initiator attribution (issue #30 / !66 follow-up): the bare staff
+  // UUID travels verbatim through the document boundary — least
+  // disclosure: no name/email key exists for the INITIATOR anywhere
+  // in the contract or the parse (member_name is the exiting MEMBER's
+  // own document line, not the staff actor's).
+  expect(statement.requested_by).toBe(REQUESTER_ID);
+  expect("full_name" in statement).toBe(false);
+  expect("email" in statement).toBe(false);
+});
+
+test("attribution accept/reject matrix (issue #30 / !66 follow-up): requested_by is a nullable STRING on BOTH boundaries — the NULL leg is the honest 'unattributed' wire value; a MISSING key is a contract violation", async () => {
+  // The record read carries the initiator verbatim; no name/email key
+  // exists anywhere in the parse (least disclosure, FM-D).
+  const record = await exitsApi.fetchExit(EXIT_ID);
+  expect(record.requested_by).toBe(REQUESTER_ID);
+  expect("full_name" in record).toBe(false);
+  expect("email" in record).toBe(false);
+
+  const withField = (value: unknown) =>
+    exitSchemas.exitSchema.safeParse({ ...exitOut, requested_by: value }).success;
+
+  // The two legitimate wire values: the bare staff UUID and the honest
+  // NULL (pre-0036 rows — attribution never invented, FM-B).
+  expect(withField(REQUESTER_ID)).toBe(true);
+  expect(withField(null)).toBe(true);
+
+  // Shape drift REJECTED: attribution never arrives as a number, an
+  // object (a smuggled name/email payload) or a boolean.
+  expect(withField(42)).toBe(false);
+  expect(withField({ id: REQUESTER_ID, full_name: "Jane" })).toBe(false);
+  expect(withField(true)).toBe(false);
+
+  // KEY EXACTNESS: dropping the key entirely is a contract violation —
+  // the field is nullable, not optional (falsifiable: soften the schema
+  // to .optional() and this leg fails).
+  const missing: Record<string, unknown> = { ...exitOut };
+  delete missing["requested_by"];
+  expect(exitSchemas.exitSchema.safeParse(missing).success).toBe(false);
+
+  // The statement DOCUMENT boundary mirrors the same posture.
+  const statement = await exitsApi.fetchExitStatement(EXIT_ID);
+  const statementWith = (value: unknown) =>
+    exitSchemas.exitStatementSchema.safeParse({ ...statement, requested_by: value }).success;
+  expect(statementWith(REQUESTER_ID)).toBe(true);
+  expect(statementWith(null)).toBe(true);
+  expect(statementWith(42)).toBe(false);
+  expect(statementWith({ id: REQUESTER_ID, full_name: "Jane" })).toBe(false);
+  const statementMissing: Record<string, unknown> = { ...statement };
+  delete statementMissing["requested_by"];
+  expect(exitSchemas.exitStatementSchema.safeParse(statementMissing).success).toBe(false);
 });
