@@ -68,6 +68,7 @@ inline/in companion tables.
 | [`sequence-repayment-adjustment.md`](sequence-repayment-adjustment.md) — maker-checker adjustment: request → approve-with-reverify → post; reject frees the slot | business | P-DIAG drift MR (!46/!52) | as-built |
 | [`sequence-recovery-case-lifecycle.md`](sequence-recovery-case-lifecycle.md) — case open → work → job-only closes + staff dispositions | business | P-DIAG drift MR (P13.16/!47) | as-built incl. !53 dispositions + !54 hardening (flipped by !55) |
 | [`sequence-member-exit-claim-guard.md`](sequence-member-exit-claim-guard.md) — member exit and the debts that block the door | business | P-DIAG drift MR (P12 + !51) | as-built |
+| [`sequence-guarantor-consent-principal.md`](sequence-guarantor-consent-principal.md) — guarantor consent as the MEMBER principal: link → sign-in → consent/withdraw → attested override (DFD F15) | business | issue-#30 close-out MR !71 (P14.5/!65) | as-built @ `047d4e39` |
 | [`flow-teller-money-in.md`](flow-teller-money-in.md) — teller deposits & repayments incl. every visible refusal | business | P-DIAG drift MR | as-built |
 | [`flow-loan-lifecycle.md`](flow-loan-lifecycle.md) — the life of a loan: application → committee → payout → arrears → write-off → recovery | business | P-DIAG drift MR | as-built |
 | [`flow-checker-approvals.md`](flow-checker-approvals.md) — the checker's four-eyes queue | business | P-DIAG drift MR | as-built |
