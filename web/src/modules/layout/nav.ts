@@ -68,6 +68,16 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: "exit",
       },
       {
+        // The P13.11 dividends lifecycle console (issue #31 batch 2);
+        // lives under the transactions RBAC module (every /dividends
+        // route is gated on transactions view/edit/approve server-side
+        // — there is no dedicated dividends module in the P4 matrix).
+        label: "Dividends",
+        href: "/modules/transactions/dividends",
+        module: "transactions",
+        icon: "transactions",
+      },
+      {
         // P13.15 corrections console (issue #31 batch 1 — audit #30
         // R1): the fraud channel's DEDICATED corrections RBAC module,
         // never generic transactions (A3 maker-checker).
