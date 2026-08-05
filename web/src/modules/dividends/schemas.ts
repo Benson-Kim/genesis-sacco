@@ -19,8 +19,8 @@ import { isoTimestampSchema, moneySchema, MONEY_RE } from "@/lib/schemas";
  * database).
  *
  * Field-by-field shape derivation (backend/src/genesis, not guessed):
- * - total_share_basis / total_deposit_basis / total_dividend /
- *   total_rebate / total_payout: numeric(18,2) columns with CHECK
+ * - total_share_basis, total_deposit_basis, total_dividend,
+ *   total_rebate, total_payout: numeric(18,2) columns with CHECK
  *   (>= 0) — total_payout CHECK (> 0) — serialised via str(Decimal)
  *   (api/dividends.py:_declaration_out) → canonical two-place shape,
  *   no sign branch anywhere: `moneySchema`.
@@ -28,7 +28,7 @@ import { isoTimestampSchema, moneySchema, MONEY_RE } from "@/lib/schemas";
  *   CHECK (0..100) — the same str(Decimal) two-place shape; they are
  *   RATES, not money (rendered as "% p.a.", never via fmtKes), so
  *   they get their own alias of the canonical decimal shape below.
- * - DistributionRunOut dividend_total / rebate_total / payout_total:
+ * - DistributionRunOut dividend_total, rebate_total, payout_total:
  *   sums seeded from domain/money.py ZERO = Decimal("0.00") over
  *   to_cents-quantised claims, payout_total itself re-quantised via
  *   to_cents (application/dividends.py DistributionRunResult) — the
