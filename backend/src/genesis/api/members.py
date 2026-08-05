@@ -89,6 +89,32 @@ class MemberOut(BaseModel):
     version: int
 
 
+class MemberAggregatesOut(BaseModel):
+    """Advisory financial aggregates on the single-member read (#31).
+
+    All four figures are canonical decimal strings scaled by the
+    database (numeric(18,2)); clients render them verbatim and never
+    compute money (P15 blocker (a)). Advisory only: every BINDING money
+    decision recomputes under the established row locks.
+    """
+
+    deposits_total: str
+    shares_total: str
+    loans_outstanding: str
+    guarantees_pledged: str
+
+
+class MemberDetailOut(MemberOut):
+    """MemberOut expanded with aggregates — the DETAIL read only.
+
+    Expand-only contract change: every MemberOut field is unchanged and
+    the register LIST keeps its flat rows (aggregating every row of a
+    page would fan four subqueries out per member, gate 1.3).
+    """
+
+    aggregates: MemberAggregatesOut
+
+
 class MemberListResponse(BaseModel):
     items: list[MemberOut]
     next_cursor: str | None
@@ -189,11 +215,27 @@ async def member_statement(
 
 
 @router.get("/{member_id}")
-async def get_member(member_id: uuid.UUID, ctx: ViewCtx) -> MemberOut:
+async def get_member(member_id: uuid.UUID, ctx: ViewCtx) -> MemberDetailOut:
+    """Single-member read with advisory aggregates (#31, members:view).
+
+    The existence check runs FIRST: unknown ids (including cross-tenant
+    ids hidden by RLS) surface 404 before any aggregate is computed, so
+    no rejection path ever echoes an amount (least disclosure, gate
+    1.6).
+    """
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         record = await members_service.get_member(session, ctx.tenant_id, member_id)
-    return _out(record)
+        aggregates = await members_service.member_aggregates(session, ctx.tenant_id, member_id)
+    return MemberDetailOut(
+        **_out(record).model_dump(),
+        aggregates=MemberAggregatesOut(
+            deposits_total=str(aggregates.deposits_total),
+            shares_total=str(aggregates.shares_total),
+            loans_outstanding=str(aggregates.loans_outstanding),
+            guarantees_pledged=str(aggregates.guarantees_pledged),
+        ),
+    )
 
 
 @router.put("/{member_id}")

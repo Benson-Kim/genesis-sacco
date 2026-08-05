@@ -15,14 +15,17 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from genesis.application.guarantees import live_guarantee_params
 from genesis.application.ledger import _ADVISORY_NS, _advisory_key
 from genesis.application.outbox import enqueue_event
+from genesis.domain.lending import LoanStatus
 from genesis.domain.members import (
     MEMBER_NO_PREFIX,
     InvalidStatusTransitionError,
@@ -65,6 +68,87 @@ class StatementLine:
 class StatementPage:
     items: list[StatementLine]
     next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class MemberAggregates:
+    """Per-member financial aggregates for the single-member read (#31).
+
+    deposits_total, shares_total read the balance columns the P11
+    account services maintain under the account row locks (one row per
+    member per tenant). loans_outstanding sums the member's ACTIVE loan
+    balances (closed rows are zero by the closure rule; written-off
+    rows belong to the recovery module). guarantees_pledged sums LIVE
+    guarantee amounts using the single P9 status set via
+    live_guarantee_params() (a diverging filter would show figures the
+    pledge endpoint refuses). The API layer serializes all four as
+    canonical decimal strings.
+    """
+
+    deposits_total: Decimal
+    shares_total: Decimal
+    loans_outstanding: Decimal
+    guarantees_pledged: Decimal
+
+
+#: SQL behind member_aggregates, module-level so the EXPLAIN capture
+#: can assert its plan (the P13.9 convention). One SELECT of four
+#: scalar subqueries, each carrying an explicit tenant predicate that
+#: doubles the RLS fence (gate 1.6); every value is a bound parameter
+#: (v1.1 rule 6). Each subquery is servable by an index that shipped
+#: with its table in 0001: the deposit/share (tenant_id, member_id)
+#: UNIQUE-key probes, idx_loans_member, idx_guarantees_guarantor —
+#: this feature ships NO migration. The outer CAST normalises the
+#: empty-SUM zero to column scale so a zero-activity member serializes
+#: '0.00', never bare '0'.
+MEMBER_AGGREGATES_SQL = (
+    "SELECT "
+    "CAST(COALESCE((SELECT balance FROM deposit_accounts "
+    "WHERE member_id = CAST(:mid AS uuid) "
+    "AND tenant_id = CAST(:tid AS uuid)), 0) AS numeric(18,2)), "
+    "CAST(COALESCE((SELECT balance FROM share_accounts "
+    "WHERE member_id = CAST(:mid AS uuid) "
+    "AND tenant_id = CAST(:tid AS uuid)), 0) AS numeric(18,2)), "
+    "CAST((SELECT COALESCE(SUM(balance), 0) FROM loans "
+    "WHERE member_id = CAST(:mid AS uuid) "
+    "AND tenant_id = CAST(:tid AS uuid) "
+    "AND status = :loan_active) AS numeric(18,2)), "
+    "CAST((SELECT COALESCE(SUM(amount), 0) FROM guarantees "
+    "WHERE guarantor_member_id = CAST(:mid AS uuid) "
+    "AND tenant_id = CAST(:tid AS uuid) "
+    "AND status IN (:live0, :live1)) AS numeric(18,2))"
+)
+
+
+async def member_aggregates(
+    session: AsyncSession, tenant_id: uuid.UUID, member_id: uuid.UUID
+) -> MemberAggregates:
+    """Read-only advisory figures for the single-member read — NO row locks.
+
+    Every BINDING money decision (pledge capacity, exit settlement)
+    recomputes its figures under the established row locks; these
+    aggregates only inform the register's member drawer. Least
+    disclosure (gate 1.6): served only by the members:view route, the
+    response carries the four amounts and nothing else, and no
+    rejection path echoes them.
+    """
+    row = (
+        await session.execute(
+            text(MEMBER_AGGREGATES_SQL),
+            {
+                "mid": str(member_id),
+                "tid": str(tenant_id),
+                "loan_active": LoanStatus.ACTIVE.value,
+                **live_guarantee_params(),
+            },
+        )
+    ).one()
+    return MemberAggregates(
+        deposits_total=Decimal(str(row[0])),
+        shares_total=Decimal(str(row[1])),
+        loans_outstanding=Decimal(str(row[2])),
+        guarantees_pledged=Decimal(str(row[3])),
+    )
 
 
 def _row_to_record(row: Any) -> MemberRecord:
