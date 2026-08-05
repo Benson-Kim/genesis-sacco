@@ -87,6 +87,7 @@ function committeeApp(overrides: Partial<Application> = {}): Application {
     purpose: "Business stock",
     stage: "committee",
     cover_pct: "95.50",
+    created_by: null,
     max_eligible: null,
     version: 7,
     ...overrides,
@@ -211,6 +212,57 @@ test("SEPARATION OF DUTIES (structural): the operator who recommended to committ
   expect(screen.queryByRole("button", { name: "Vote approve" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Vote reject" })).toBeNull();
   expect(mocked.voteOnApplication).not.toHaveBeenCalled();
+});
+
+test("SERVER TRUTH (issue #30 / !66 follow-up): a created_by matching the signed-in voter withholds the vote affordances STRUCTURALLY — with NO per-tab witness at all", async () => {
+  // No recordCommitteeMaker call: the registry knows nothing. The
+  // CONTRACT's attribution alone establishes the maker — falsifiable:
+  // drop the created_by precedence and the registry's UNKNOWN sentinel
+  // would mount the controls.
+  mocked.fetchApplication.mockResolvedValue(committeeApp({ created_by: VOTER_ID }));
+  mountScreen();
+
+  await screen.findByText(/Loan review/);
+  expect(
+    await screen.findByText(/Approval requires a DIFFERENT\s+administrator/),
+  ).toBeInTheDocument();
+  expect(screen.getByText(/You initiated this application \(server attribution\)/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Vote approve" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Vote reject" })).toBeNull();
+  expect(mocked.voteOnApplication).not.toHaveBeenCalled();
+});
+
+test("SERVER TRUTH SUPERSEDES the per-tab witness: a DIFFERENT server-attributed initiator renders the short-id maker label and mounts the controls, even when this tab witnessed the signed-in operator's referral", async () => {
+  // The tab witnessed the signed-in operator recommending — but the
+  // server record attributes the INITIATOR (the maker-checker record
+  // itself) to another principal. Server truth wins; the witness is
+  // only the fallback for unattributed rows.
+  recordCommitteeMaker(APP_ID, VOTER_ID);
+  mocked.fetchApplication.mockResolvedValue(
+    committeeApp({ created_by: OTHER_OFFICER_ID }),
+  );
+  mountScreen();
+
+  await screen.findByText(/Loan review/);
+  // Least disclosure (FM-D): the SHORT id only — never a name/email.
+  expect(
+    await screen.findByText(
+      new RegExp(`Initiating officer ${OTHER_OFFICER_ID.slice(0, 8)} \\(server attribution\\)`),
+    ),
+  ).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Vote approve" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Vote reject" })).toBeInTheDocument();
+});
+
+test("attribution NULL leg (FM-B): an unattributed record with no witnessed referral renders the HONEST maker label — nothing invented; controls mount (the server enforces regardless)", async () => {
+  // created_by is null in the base fixture and the registry is empty.
+  mountScreen();
+
+  await screen.findByText(/Loan review/);
+  expect(
+    await screen.findByText(/unattributed on the server record/),
+  ).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Vote approve" })).toBeInTheDocument();
 });
 
 test("SEPARATION OF DUTIES (deny by default): an unestablishable checker identity gets NO vote affordances", async () => {

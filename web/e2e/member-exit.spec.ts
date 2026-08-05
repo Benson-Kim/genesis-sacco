@@ -51,6 +51,7 @@ const APPROVED_EXIT = {
   member_id: MEMBER_ID,
   status: "approved",
   reason: "Relocation",
+  requested_by: null,
   shares_amount: "25000.10",
   deposits_amount: "150000.10",
   loan_balance: "40000.00",

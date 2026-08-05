@@ -57,6 +57,15 @@ export const applicationSchema = z.object({
   stage: applicationStageSchema,
   /** Decimal string — the server-computed security-cover ratio. */
   cover_pct: z.string(),
+  /** Initiator attribution (issue #30 R4, migration 0036 — the !66
+   * follow-up): the staff principal who created the application, as
+   * the BARE user UUID only. Least disclosure (!66 FM-D): never a
+   * name or email — resolving the id stays behind access_control:view
+   * server-side, and this client NEVER fetches a directory record for
+   * it. NULL is an honest "unattributed" (pre-0036 rows without
+   * unambiguous audit history / system-created rows — FM-B: an actor
+   * is never invented). */
+  created_by: z.string().nullable(),
   /** to_cents(deposits x multiplier) added to the two-place guarantee
    * sum (application_max_eligible, loan_applications.py) — Decimal
    * addition keeps the wider scale, so the wire value is ALWAYS the

@@ -27,8 +27,9 @@
 
 # Entity-relationship diagram — as-built (P-DIAG.2)
 
-The entire schema at alembic head **0034**: **46 tables** (0033/0034
-alter existing tables and create none), drawn as
+The entire schema at alembic head **0036**: **47 tables** (0035
+creates `member_credentials`; 0033/0034/0036 alter existing tables and
+create none), drawn as
 seven subject-area `erDiagram`s (one diagram would not render readably;
 the split follows the module boundaries in the §3 traceability table).
 An entity appearing in more than one diagram (e.g. `members`,
@@ -44,10 +45,10 @@ attribute block where it only anchors a cross-area FK.
   [`erd-spot-check.py`](erd-spot-check.py) (§6).
 - **Every edge is a real FOREIGN KEY**, cited in the edge label as
   `column (migration)`. Nothing is inferred from code or prose.
-- **The tenant spine is drawn once, not 45 times.** Every table except
+- **The tenant spine is drawn once, not 46 times.** Every table except
   `tenants` carries `tenant_id uuid NOT NULL REFERENCES tenants(id)
   ON DELETE RESTRICT` (the 0001 pattern, repeated verbatim by every
-  later creating migration). Drawing those 45 edges would bury the
+  later creating migration). Drawing those 46 edges would bury the
   domain FKs, so the spine is shown representatively in diagram E and
   the `tenant_id FK` attribute on every entity stands for its edge.
 - **Attribute lists are keys, not column dictionaries**: PK, FKs,
@@ -69,6 +70,8 @@ attribute block where it only anchors a cross-area FK.
 ```mermaid
 erDiagram
     %% main @ 08541b860f1445b16c342c39b6606d86b9dbeb17 — alembic head 0022
+    %% post-merge remediation (!65 drift): member_credentials (0035)
+    %% verified at main @ eb90a80e, head 0036
     members {
         uuid id PK
         uuid tenant_id FK "tenant spine (0001)"
@@ -109,12 +112,20 @@ erDiagram
         uuid member_id FK "UNIQUE (tenant_id, member_id) (0001)"
         numeric balance "CHECK >= 0 (0001)"
     }
+    member_credentials {
+        uuid id PK
+        uuid tenant_id FK "tenant spine (0035)"
+        uuid member_id FK "-> members.id ON DELETE RESTRICT; partial UNIQUE uq_member_credentials_member_active: one ACTIVE credential per member (0035)"
+        text email UK "partial UNIQUE uq_member_credentials_email_active (tenant_id, email) WHERE status = active — atomic link claim, doubles as the member-login index (0035)"
+        text status "active|revoked CHECK; ck_member_credentials_revoked_at: revoked_at set iff revoked (0035)"
+    }
 
     branches |o--o{ members : "members.branch_id (0016)"
     members ||--o| member_profiles : "member_profiles (member_id, member_type) -> members (id, type); UNIQUE (tenant_id, member_id) (0018)"
     members ||--o{ member_documents : "member_documents (member_id, member_type) -> members (id, type) (0018)"
     members ||--o| share_accounts : "share_accounts.member_id; UNIQUE (tenant_id, member_id) (0001)"
     members ||--o| deposit_accounts : "deposit_accounts.member_id; UNIQUE (tenant_id, member_id) (0001)"
+    members ||--o{ member_credentials : "member_credentials.member_id (0035)"
 ```
 
 ### 2.B Lending
@@ -122,6 +133,8 @@ erDiagram
 ```mermaid
 erDiagram
     %% main @ 08541b860f1445b16c342c39b6606d86b9dbeb17 — alembic head 0022
+    %% post-merge remediation (!65/!66 drift): guarantees consent principal
+    %% (0035), loan_applications.created_by (0036) — main @ eb90a80e, head 0036
     loan_products {
         uuid id PK
         uuid tenant_id FK "tenant spine (0001)"
@@ -134,6 +147,7 @@ erDiagram
         uuid member_id FK "-> members.id (0001)"
         uuid product_id FK "-> loan_products.id (0001)"
         text stage "submitted..disbursed CHECK (0001)"
+        uuid created_by FK "nullable -> users.id; acting principal, audit-log backfilled (0036)"
     }
     loans {
         uuid id PK
@@ -164,6 +178,8 @@ erDiagram
         uuid application_id FK "nullable -> loan_applications.id (0001)"
         uuid loan_id FK "nullable -> loans.id (0001; linkage backfilled 0011)"
         text status "pledged|active|released (0001)"
+        uuid consented_by_credential_id FK "nullable -> member_credentials.id; the consenting member principal (0035)"
+        uuid consent_attested_by FK "nullable -> users.id; staff-attested override — ck_guarantees_attested_reference requires consent_reference (0035)"
     }
     committee_votes {
         uuid id PK
@@ -180,6 +196,7 @@ erDiagram
     members
     users
     transactions
+    member_credentials
 
     loan_products ||--o{ loan_applications : "loan_applications.product_id (0001)"
     members ||--o{ loan_applications : "loan_applications.member_id (0001)"
@@ -196,6 +213,9 @@ erDiagram
     loan_applications ||--o{ committee_votes : "committee_votes.application_id (0005)"
     users ||--o{ committee_votes : "committee_votes.voter_id (0005)"
     loans ||--o{ penalty_accruals : "penalty_accruals.loan_id (0019)"
+    users |o--o{ loan_applications : "loan_applications.created_by, nullable (0036)"
+    member_credentials |o--o{ guarantees : "guarantees.consented_by_credential_id, nullable (0035)"
+    users |o--o{ guarantees : "guarantees.consent_attested_by, nullable (0035)"
 ```
 
 ### 2.C Ledger & transactions
@@ -203,6 +223,8 @@ erDiagram
 ```mermaid
 erDiagram
     %% main @ 08541b860f1445b16c342c39b6606d86b9dbeb17 — alembic head 0022
+    %% post-merge remediation (!66 drift): transactions.created_by (0036)
+    %% — main @ eb90a80e, head 0036
     transactions {
         uuid id PK
         uuid tenant_id FK "tenant spine (0001); UNIQUE (tenant_id, id) composite-FK anchor (0014)"
@@ -210,6 +232,7 @@ erDiagram
         uuid member_id FK "nullable -> members.id (0001)"
         uuid reversal_of_id FK "nullable; (tenant_id, reversal_of_id) -> transactions (tenant_id, id) (0004, tenant-safe 0014); partial UNIQUE: one reversal per original (0004)"
         text type "posting taxonomy CHECK (0001, widened 0020)"
+        uuid created_by FK "nullable -> users.id; acting principal, NULL = system posting; pinned immutable by the 0004 append-only fence (0036)"
     }
     ledger_entries {
         uuid id PK
@@ -247,6 +270,7 @@ erDiagram
     users |o--o{ accounting_periods : "accounting_periods.closed_by, nullable (0012)"
     deposit_accounts ||--o{ deposit_interest_accruals : "deposit_interest_accruals.account_id (0008)"
     transactions |o--o{ deposit_interest_accruals : "deposit_interest_accruals.transaction_id, nullable (0008)"
+    users |o--o{ transactions : "transactions.created_by, nullable (0036)"
 ```
 
 ### 2.D Dividends & exits
@@ -325,6 +349,8 @@ erDiagram
 ```mermaid
 erDiagram
     %% main @ 08541b860f1445b16c342c39b6606d86b9dbeb17 — alembic head 0022
+    %% post-merge remediation (!65 drift): the P3 machinery expanded to the
+    %% member principal (0035) — main @ eb90a80e, head 0036
     tenants {
         uuid id PK "the ONLY table without a tenant_id column; RLS policy tenant_self (0001)"
         text slug UK "UNIQUE (0001)"
@@ -353,12 +379,14 @@ erDiagram
     otp_challenges {
         uuid id PK
         uuid tenant_id FK "tenant spine (0001)"
-        uuid user_id FK "-> users.id ON DELETE CASCADE (0001)"
+        uuid user_id FK "nullable since 0035 -> users.id ON DELETE CASCADE (0001); exactly one principal: ck_otp_challenges_one_principal XOR (0035)"
+        uuid member_credential_id FK "nullable -> member_credentials.id ON DELETE CASCADE (0035)"
     }
     refresh_tokens {
         uuid id PK
         uuid tenant_id FK "tenant spine (0002)"
-        uuid user_id FK "-> users.id ON DELETE CASCADE (0002)"
+        uuid user_id FK "nullable since 0035 -> users.id ON DELETE CASCADE (0002); exactly one principal: ck_refresh_tokens_one_principal XOR (0035)"
+        uuid member_credential_id FK "nullable -> member_credentials.id ON DELETE CASCADE (0035)"
         text token_hash UK "UNIQUE (tenant_id, token_hash) (0002)"
     }
     idempotency_keys {
@@ -391,14 +419,17 @@ erDiagram
         text pdf_token UK "UNIQUE download token (0013)"
     }
     branches
+    member_credentials
 
     tenants ||--o| tenant_settings : "tenant_settings.tenant_id PK/FK (0009)"
-    tenants ||--o{ roles : "roles.tenant_id — the tenant spine, carried by EVERY other table too (0001, not drawn 36 times)"
+    tenants ||--o{ roles : "roles.tenant_id — the tenant spine, carried by EVERY other table too (0001, not drawn 46 times)"
     roles ||--o{ permissions : "permissions.role_id (0001)"
     roles ||--o{ users : "users.role_id (0001)"
     branches |o--o{ users : "users.branch_id, nullable (0016)"
-    users ||--o{ otp_challenges : "otp_challenges.user_id (0001)"
-    users ||--o{ refresh_tokens : "refresh_tokens.user_id (0002)"
+    users |o--o{ otp_challenges : "otp_challenges.user_id (0001; nullable since 0035)"
+    users |o--o{ refresh_tokens : "refresh_tokens.user_id (0002; nullable since 0035)"
+    member_credentials |o--o{ otp_challenges : "otp_challenges.member_credential_id, nullable (0035)"
+    member_credentials |o--o{ refresh_tokens : "refresh_tokens.member_credential_id, nullable (0035)"
     users ||--o{ exports : "exports.requested_by (0013)"
     exports ||--o| export_artifacts : "export_artifacts.export_id UNIQUE (0013)"
 ```
@@ -535,9 +566,9 @@ erDiagram
 
 ## 3. Traceability: table → migrations → owning module
 
-Every table at head 0032, its creating migration, every later
+Every table at head 0036, its creating migration, every later
 migration that altered it (columns, CHECKs, triggers, indexes or data
-backfills), and the module that owns its writes on main @ `8f46aa5`.
+backfills), and the module that owns its writes on main @ `eb90a80`.
 Both directions of the table↔migration mapping are machine-checked by
 [`erd-spot-check.py`](erd-spot-check.py) (§6).
 
@@ -547,23 +578,24 @@ Both directions of the table↔migration mapping are machine-checked by
 | `roles` | 0001 | 0017 (system-role rename-guard trigger) | `application/rbac.py` |
 | `permissions` | 0001 | — | `application/rbac.py` |
 | `users` | 0001 | 0015 (`last_active_at`, keyset idx), 0016 (`branch_id`, idxs) | `application/users.py`, `application/auth.py` |
-| `otp_challenges` | 0001 | — | `application/auth.py` |
-| `refresh_tokens` | 0002 | — | `application/auth.py` |
+| `otp_challenges` | 0001 | 0035 (`member_credential_id`, `user_id` goes nullable, `ck_otp_challenges_one_principal` XOR, `idx_otp_credential`) | `application/auth.py`, `application/member_auth.py` |
+| `refresh_tokens` | 0002 | 0035 (`member_credential_id`, `user_id` goes nullable, `ck_refresh_tokens_one_principal` XOR, `idx_refresh_credential`) | `application/auth.py`, `application/member_auth.py` |
 | `members` | 0001 | 0016 (`branch_id`), 0018 (`uq_members_id_type`), 0020 (dividend-scan idx), 0021 (`dormant` status, dormancy-scan idx), 0022 (scan predicate widened, exited-scan idx), 0023 (register keyset idx), 0028 (`uq_members_tenant_id_id` composite-FK anchor) | `application/members.py` (+ `dormancy.py` batch) |
 | `member_profiles` | 0018 | — | `application/member_kyc.py` |
 | `member_documents` | 0018 | — | `application/member_kyc.py` |
 | `branches` | 0016 | — | `application/branches.py` |
+| `member_credentials` | 0035 (incl. partial UNIQUEs `uq_member_credentials_email_active`/`uq_member_credentials_member_active`, `ck_member_credentials_revoked_at`) | — | `application/member_identity.py` (audited link admin), `application/member_auth.py` (member login/refresh reads) |
 | `share_accounts` | 0001 | — | created by `application/members.py`; balances moved by `transactions.py`/`dividends.py`/`member_exits.py` |
 | `deposit_accounts` | 0001 | 0008 (partial scan idx), 0009 (keyset idx) | created by `application/members.py`; balances moved by `transactions.py`/`deposit_interest.py`/`dividends.py`/`member_exits.py`/`ledger.py` |
 | `loan_products` | 0001 | 0017 (`guarantors_required`) | `application/loan_products.py` |
-| `loan_applications` | 0001 | 0006 (keyset idx), 0014 (stage-keyset idx, drops 0001 stage idx) | `application/loan_applications.py` |
+| `loan_applications` | 0001 | 0006 (keyset idx), 0014 (stage-keyset idx, drops 0001 stage idx), 0036 (`created_by` + audit-log backfill — issue #30 R4 disbursement SoD) | `application/loan_applications.py` |
 | `committee_votes` | 0005 | — | `application/loan_applications.py` |
 | `loans` | 0001 | 0007 (`penalty_due`, `closed_at`, idxs), 0013 (disbursed idx), 0026 (`idx_loans_dpd_worklist`) | `application/loans.py` (+ `ledger.py` disburse, `arrears.py` batch; terminal write-off transition by `corrections.py`) |
 | `loan_schedules` | 0001 | 0007 (unpaid partial idx) | `application/ledger.py` (creates), `application/loans.py` (allocates) |
 | `repayments` | 0001 | 0014 (transaction-FK idx), 0025 (amount CHECK widened to `<> 0` for negative-linked correction rows), 0032 (append-only triggers `repayments_no_update`/`_no_delete` — issue #24 N4) | `application/ledger.py` (disburse-time rows), `application/loans.py` (repayment rows), `application/corrections.py` (negative correction rows) |
-| `guarantees` | 0001 | 0011 (loan-linkage data backfill) | `application/guarantees.py` |
+| `guarantees` | 0001 | 0011 (loan-linkage data backfill), 0035 (consent-principal columns `consented_by_credential_id`/`consent_attested_by`/`consent_reference`, `ck_guarantees_attested_reference`, `guarantees_consent_principal` constraint trigger, consent idxs) | `application/guarantees.py` |
 | `penalty_accruals` | 0019 | — | `application/arrears.py` |
-| `transactions` | 0001 | 0004 (`reversal_of_id`, append-only triggers, one-reversal partial UNIQUE), 0008 (keyset idxs), 0012 (closed-period trigger), 0013 (type idx), 0014 (tenant-safe reversal FK, `UNIQUE (tenant_id, id)`, advisory-locked trigger body), 0020 (type CHECK widened), 0025 (type CHECK: `fee`, `loan_write_off`), 0030 (type CHECK: `loan_recovery`) | `application/ledger.py` (every posting) |
+| `transactions` | 0001 | 0004 (`reversal_of_id`, append-only triggers, one-reversal partial UNIQUE), 0008 (keyset idxs), 0012 (closed-period trigger), 0013 (type idx), 0014 (tenant-safe reversal FK, `UNIQUE (tenant_id, id)`, advisory-locked trigger body), 0020 (type CHECK widened), 0025 (type CHECK: `fee`, `loan_write_off`), 0030 (type CHECK: `loan_recovery`), 0036 (`created_by` + audit-log backfill via in-transaction append-only trigger toggle — issue #30 R3) | `application/ledger.py` (every posting) |
 | `ledger_entries` | 0001 | 0004 (append-only triggers, balanced deferred constraint trigger), 0014 (balance check also pins totals = `transactions.amount`) | `application/ledger.py` |
 | `txn_ref_sequences` | 0004 | — | `application/ledger.py` (`_next_ref`), `application/members.py` (member numbering) |
 | `accounting_periods` | 0012 | 0028 (`rollup_at` marker + write-once marker trigger, composite-FK target for the rollup tables) | `application/accounting_periods.py` (+ `period_rollups.py` marker) |
@@ -591,10 +623,13 @@ Both directions of the table↔migration mapping are machine-checked by
 | `member_period_balances` | 0028 (incl. write-once + late-insert-fence triggers) | — | `application/period_rollups.py` |
 
 Nothing in this file is `PLANNED`: every entity above exists at head
-0034. The formerly in-flight !53 claim (0033, issue #23 — the
+0036. The formerly in-flight !53 claim (0033, issue #23 — the
 `recovery_cases` status widening and `recovery_case_notes.is_outcome`)
 and !54's 0034 (within-claim trigger regeneration) merged to main and
 are reconciled above by the !55 as-built flip (v1.2 rules 11/14).
+0035 (`member_credentials` + consent principal, !65) and 0036 (actor
+attribution, !66) merged WITHOUT the same-MR refresh rule 11 requires;
+they are reconciled above by the post-merge remediation MR.
 
 ## 4. Trust-relevant store properties (by reference — v1.2 rule 11)
 
@@ -605,8 +640,8 @@ Owned elsewhere; cited, never restated:
   `tenant_self`), per **ADR-0002** — see
   [`c4-container.md`](c4-container.md) **§3** (P-DIAG.1) for the
   boundary. Leakage-suite membership (`TENANT_TABLES`,
-  `backend/tests/test_tenancy_leakage.py`) covers 40 of the 45
-  tenant-owned tables plus `tenants` (the 0025/0026/0027/0028/0030
+  `backend/tests/test_tenancy_leakage.py`) covers 41 of the 46
+  tenant-owned tables plus `tenants` (the 0025/0026/0027/0028/0030/0035
   tables joined the suite in their own MRs); `committee_votes`,
   `txn_ref_sequences`, `accounting_periods`, `exports` and
   `export_artifacts` carry the same forced policies from their
@@ -646,7 +681,14 @@ Owned elsewhere; cited, never restated:
   [`lock-order.md`](lock-order.md) **§3** (`_post`).
 - **Other DB-enforced immutability guards** (schema facts, one line
   each, enforcement bodies in the cited migration): DPA consent
-  (`member_profiles`, 0018), system role names (`roles`, 0017).
+  (`member_profiles`, 0018), system role names (`roles`, 0017),
+  guarantee-consent principal presence (`guarantees`, 0035 — the
+  `guarantees_consent_principal` constraint trigger refuses any row
+  ENTERING `active` without a member principal or staff attestation;
+  P14.5 FM4). `transactions.created_by` (0036) is pinned immutable by
+  the existing 0004 append-only fence — 0036's audit-log backfill runs
+  under an in-transaction `DISABLE/ENABLE TRIGGER` toggle, so the
+  fence is provably back in force at commit.
 - **Lock behaviour of any table here** (claim scans, SKIP LOCKED,
   advisory locks): [`lock-order.md`](lock-order.md) is the single
   authority — this file states none of it.
@@ -682,6 +724,8 @@ constraint, v1.1 rule 5):
 | `(tenant_id, write_off_id, voter_id)` | `loan_write_off_votes` | 0025 | one write-off vote per voter |
 | `(tenant_id, loan_id)` partial, live statuses | `recovery_cases` | 0026 (predicate widened 0033, same name) | one LIVE recovery case per loan (open or paused — a paused case still blocks a second) |
 | `(tenant_id, case_id)` partial, `is_outcome` | `recovery_case_notes` | 0033 | exactly one outcome note per case, claimed atomically |
+| `(tenant_id, email)` partial, active | `member_credentials` | 0035 | one ACTIVE credential per email — the atomic link claim (doubles as the member-login serving index) |
+| `(tenant_id, member_id)` partial, active | `member_credentials` | 0035 | one ACTIVE credential per member, checked under the member row lock and backstopped here |
 | `(tenant_id, month_end)` | `portfolio_month_snapshots` | 0027 | one write-once portfolio snapshot per month |
 | `(tenant_id, period_start, account)` | `account_period_balances` | 0028 | one rollup row per account per closed period |
 | `(tenant_id, period_start, member_id)` | `member_period_balances` | 0028 | one rollup row per member per closed period |
@@ -694,7 +738,11 @@ prose), at main @ `08541b860f1445b16c342c39b6606d86b9dbeb17`; extended
 the same way for `0023*` through `0032*` at main @
 `8f46aa54250ff1a066af423924f3eb54a9c72fb7` (P-DIAG drift MR), and for
 `0033*`/`0034*` at main @ `d517769d1fb5e414c99d2ccf8bcbadf23a3d5085`
-(the !55 as-built flip — both alter existing tables, no new table).
+(the !55 as-built flip — both alter existing tables, no new table),
+and for `0035*`/`0036*` at main @
+`eb90a80ede68aed673c317ecd833b464ac17eac4` (the post-merge remediation
+MR — 0035 creates `member_credentials`, 0036 alters only; both landed
+by !65/!66 without the same-MR refresh this procedure requires).
 
 **Regeneration procedure for 0023+ MRs (v1.2 rule 11)**: a migration
 that creates a table adds it to the matching §2 subject-area diagram

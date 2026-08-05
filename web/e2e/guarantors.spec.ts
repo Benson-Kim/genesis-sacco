@@ -53,6 +53,7 @@ function applicationOut(overrides: Record<string, unknown> = {}) {
     purpose: "School fees",
     stage: "submitted",
     cover_pct: "80.00",
+    created_by: null,
     max_eligible: "300000.00",
     version: 2,
     ...overrides,

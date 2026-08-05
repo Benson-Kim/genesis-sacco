@@ -223,6 +223,20 @@ export function ApplicationDetailDrawer({
         </Kv>
         <Kv label="Purpose">{app.purpose ?? "—"}</Kv>
         <Kv label="Stage">{stagePill(app.stage)}</Kv>
+        <Kv label="Created by">
+          {/* Initiator attribution (issue #30 / !66 follow-up): the
+              SERVER's bare staff UUID, short-id convention — least
+              disclosure (FM-D): no name/email is ever fetched for it.
+              NULL renders the honest unattributed affordance (FM-B):
+              an actor is never invented. */}
+          {app.created_by !== null ? (
+            <span className={styles.mono} title={app.created_by}>
+              {app.created_by.slice(0, 8)}
+            </span>
+          ) : (
+            "— (unattributed)"
+          )}
+        </Kv>
         <Kv label="Record version">{app.version}</Kv>
       </div>
       {/* One copy of the 409 reload-and-re-enter flow (gate 1.1). */}

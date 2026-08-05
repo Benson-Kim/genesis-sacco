@@ -186,14 +186,26 @@ function ReviewPanel({ applicationId }: Readonly<{ applicationId: string }>) {
   const mayApprove = can(permissions.data, "applications", "approve");
   const product = products.data?.find((p) => p.id === app.product_id);
   const conflict = vote.isError && isConflict(vote.error);
-  const makerId = committeeMakerOf(app.id);
+  // SERVER TRUTH FIRST (issue #30 follow-up on !66/0036): created_by is
+  // the contract's initiator attribution — the maker-checker record
+  // itself, not a per-tab witness. The registry (the recommender THIS
+  // TAB witnessed) is consulted only when the server record is
+  // unattributed (created_by === null); nothing is ever invented.
+  const witnessedMakerId = committeeMakerOf(app.id);
+  const makerId = app.created_by ?? witnessedMakerId;
   const ownId = getOwnUserId();
   const makerLabel =
-    makerId === MAKER_UNKNOWN
-      ? "Recommending officer — identity not exposed by the API contract (only referrals witnessed by this tab are attributed)."
-      : makerId === ownId
-        ? "You recommended this application to committee (witnessed by this tab)."
-        : "Recommending officer (witnessed by this tab).";
+    app.created_by !== null
+      ? app.created_by === ownId
+        ? "You initiated this application (server attribution)."
+        : // Least disclosure (FM-D): the bare staff UUID via the
+          // short-id convention — never a name or email.
+          `Initiating officer ${app.created_by.slice(0, 8)} (server attribution).`
+      : witnessedMakerId === MAKER_UNKNOWN
+        ? "Initiating officer — unattributed on the server record (attribution is never invented); no referral witnessed by this tab."
+        : witnessedMakerId === ownId
+          ? "You recommended this application to committee (witnessed by this tab)."
+          : "Recommending officer (witnessed by this tab).";
 
   function reloadRecord() {
     // Explicit reload flow (409: already voted / stage moved underneath):

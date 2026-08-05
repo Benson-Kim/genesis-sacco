@@ -793,7 +793,13 @@ PAR_BUCKET_LABELS: tuple[str, ...] = (
 #:   * days past due = as-of date minus the earliest installment whose
 #:     cumulative schedule due exceeds the cash repaid by as-of.
 #: Loans closed on or before as-of are excluded (terminal postings
-#: zeroed them); written_off is excluded pending a write-off flow.
+#: zeroed them). written_off stays OUT of the buckets — the P13.15/!46
+#: write-off flow derecognises the receivable (CR loans.receivable),
+#: so the claim is no longer portfolio outstanding — but the excluded
+#: exposure is DISCLOSED as an explicit memo row (the !40 correction
+#: note, 3646076743): written-off exposure must never silently vanish
+#: from the report; recoveries against it are tracked as income
+#: (issue #21) and never resurrect the receivable.
 #: Cardinality bounded by construction: at most 6 bucket rows.
 PAR_AGING_SQL = """
 WITH paid AS (
@@ -876,6 +882,26 @@ GROUP BY 1
 ORDER BY 1
 """
 
+#: The written-off disclosure behind the PAR memo row: count and total
+#: of committee-approved write-offs POSTED on or before as-of, read
+#: from the write-once loan_write_offs snapshot (append-only record,
+#: v1.1 rule 2 — total_written_off is the claim derecognised at
+#: posting time; recoveries are income and never reduce it). The
+#: bucket predicate excludes on the loans row's CURRENT status (a
+#: write-off posted after as-of hides the loan from a historical
+#: as-of render — the pre-existing, in-file-documented semantics);
+#: this memo is as-of-consistent on posted_at, so the disclosed set
+#: is exactly the write-offs that had happened by the snapshot date.
+#: Tenant-led read served by the idx_loan_write_offs_loan prefix
+#: (0025) — no new index (EXPLAIN captured in test_p1310_explain).
+PAR_WRITTEN_OFF_MEMO_SQL = """
+SELECT COUNT(*) AS loans, COALESCE(SUM(total_written_off), 0) AS written_off
+FROM loan_write_offs
+WHERE tenant_id = CAST(:tid AS uuid)
+  AND status = 'posted'
+  AND posted_at <= :as_of
+"""
+
 
 async def _build_par_aging(
     session: AsyncSession,
@@ -935,6 +961,27 @@ async def _build_par_aging(
             total_loans,
             total_outstanding,
             Decimal("100.00") if total_outstanding > ZERO else Decimal("0.00"),
+        )
+    )
+    # Written-off disclosure (the !40 correction note): the exposure
+    # the bucket predicate excludes, as an explicit MEMO row after
+    # TOTAL — count + the derecognised claim from the write-once
+    # snapshot. It deliberately does NOT foot into TOTAL or the
+    # '% of Portfolio' column (the claim left the portfolio at
+    # posting; its share of the ACTIVE portfolio is 0.00 by
+    # definition) — prudential visibility without double-counting.
+    memo = (
+        await session.execute(
+            text(PAR_WRITTEN_OFF_MEMO_SQL),
+            {"tid": str(tenant_id), "as_of": as_of},
+        )
+    ).one()
+    rows.append(
+        (
+            "WRITTEN OFF (memo)",
+            int(memo[0]),
+            to_cents(Decimal(str(memo[1]))),
+            Decimal("0.00"),
         )
     )
     return _memory_query(rows)

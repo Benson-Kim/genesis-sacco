@@ -74,6 +74,20 @@ export function ExitStatementDrawer({
           <Kv label="Exit status">{exitStatusPill(statement.data.exit_status)}</Kv>
           <Kv label="Member status">{statement.data.member_status}</Kv>
           <Kv label="Reason">{statement.data.reason ?? "—"}</Kv>
+          <Kv label="Requested by">
+            {/* Initiator attribution on the canonical document (issue
+                #30 / !66 follow-up): the SERVER's bare staff UUID via
+                the short-id convention — least disclosure (FM-D): no
+                name/email is ever fetched for it; NULL renders the
+                honest unattributed line (FM-B). */}
+            {statement.data.requested_by !== null ? (
+              <span className={styles.mono} title={statement.data.requested_by}>
+                {statement.data.requested_by.slice(0, 8)}
+              </span>
+            ) : (
+              "— (unattributed)"
+            )}
+          </Kv>
 
           <div className={styles.subhead}>Settlement figures (server document)</div>
           <Kv label="Share capital">{fmtKes(statement.data.shares_amount)}</Kv>

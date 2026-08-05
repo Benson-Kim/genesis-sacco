@@ -159,6 +159,7 @@ def test_h7_issue_17_probe_every_new_report_builder() -> None:
             ("181-360", 0, Decimal("0.00"), Decimal("0.00")),
             ("360+", 0, Decimal("0.00"), Decimal("0.00")),
             ("TOTAL", 1, Decimal("4000.00"), Decimal("100.00")),
+            ("WRITTEN OFF (memo)", 0, Decimal("0.00"), Decimal("0.00")),
         ]
         own_income = await render(ReportName.INCOME_STATEMENT, tid_a)
         assert ("income", "income.interest", Decimal("75.00")) in own_income
@@ -172,7 +173,8 @@ def test_h7_issue_17_probe_every_new_report_builder() -> None:
         # aggregates, although RLS would have shown A's rows.
         assert await render(ReportName.MEMBERSHIP_REGISTER, tid_b) == []
         par = await render(ReportName.PORTFOLIO_AT_RISK_AGING, tid_b)
-        assert len(par) == 7  # 6 buckets (incl. "current", R1) + TOTAL
+        # 6 buckets (incl. "current", R1) + TOTAL + written-off memo.
+        assert len(par) == 8
         assert all(row[1:] == (0, Decimal("0.00"), Decimal("0.00")) for row in par)
         income = await render(ReportName.INCOME_STATEMENT, tid_b)
         assert income == [

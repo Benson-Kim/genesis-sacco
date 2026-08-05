@@ -12,6 +12,10 @@
   Reconciled to main @ 4ea6bf288460e121a42815b67965adc1854a6320
   (docs/CI follow-up MR, !38 review R3: migration head 0032 -> 0034
   — 0033/0034 landed by !53/!54 after the previous reconciliation).
+  Reconciled to main @ eb90a80ede68aed673c317ecd833b464ac17eac4
+  (post-merge remediation MR: migration head 0034 -> 0036 — 0035/0036
+  landed by !65/!66 without the same-MR diagram refresh v1.2 rule 11
+  requires; the member principal (P14.5, !65) flipped to as-built).
   Traceability: every as-built box cites its module below and in the
   companion table (§2); the checked-in spot-check script
   `c4-spot-check.py` verifies every cited module path exists at the
@@ -25,8 +29,10 @@ FastAPI backend**, PostgreSQL 16 with **forced RLS**, Redis, and four
 worker loops sharing the backend codebase.  The **web admin scaffold** (P14,
 !13) is the first as-built client: staff reach the API through its
 GENERATED, drift-gated client; mobile clients and external providers
-remain `PLANNED (Pn)` — the only authenticated principals are staff
-(there is no member principal until P14.5).
+remain `PLANNED (Pn)`. Two authenticated principals exist: staff, and
+— since P14.5 (!65) — the **member principal** (MEMBER-audience tokens
+on the `/member` surface; a member token can never satisfy a staff
+`RequirePermission` gate).
 
 ```mermaid
 flowchart TB
@@ -43,13 +49,13 @@ flowchart TB
         IDW["Idempotency purge worker — P13.17c<br/>genesis/infrastructure/idempotency_worker.py run_worker"]
     end
 
-    PG[("PostgreSQL 16 — FORCED RLS on every tenant table<br/>ADR-0002; genesis/infrastructure/tenancy.py<br/>alembic head 0034")]
+    PG[("PostgreSQL 16 — FORCED RLS on every tenant table<br/>ADR-0002; genesis/infrastructure/tenancy.py<br/>alembic head 0036")]
     RD[("Redis<br/>readiness probe + auth rate limiting<br/>genesis/infrastructure/redis_client.py<br/>genesis/infrastructure/rate_limit.py")]
 
     WEB["Web admin — Next.js + TS strict<br/>as-built (P14 scaffold): web/src<br/>feature screens PLANNED (P15)"]
     ADM["Admin mobile — Flutter<br/>PLANNED (P16/P18)"]
     MEM["Member mobile — Flutter<br/>PLANNED (P16/P17)"]
-    MPR["Member principal — member-facing auth<br/>PLANNED (P14.5)"]
+    MPR["Member principal — member-facing /member surface<br/>as-built (P14.5, !65): genesis/api/member.py<br/>MEMBER-audience gate: genesis/api/authz.py RequireMemberPrincipal"]
     MPESA["M-Pesa STK + callbacks<br/>PLANNED (P19)"]
     PROV["SMS / email / push providers<br/>PLANNED (P20) — adapter seam as-built:<br/>genesis/infrastructure/providers.py StubProvider"]
 
@@ -66,11 +72,11 @@ flowchart TB
     WEB -->|"HTTPS JSON via GENERATED client<br/>web/packages/api-client (drift-gated in CI)"| API
     ADM -.-> API
     MEM -.-> API
-    MPR -.-> API
+    MPR -->|"HTTPS JSON, MEMBER-audience JWT + OTP<br/>genesis/api/member.py (member client apps still PLANNED P16/P17)"| API
     MPESA -.-> API
 
     classDef planned fill:#f8f9fa,stroke:#999,stroke-dasharray: 5 5;
-    class ADM,MEM,MPR,MPESA,PROV planned;
+    class ADM,MEM,MPESA,PROV planned;
     classDef store fill:#fff3cd,stroke:#b8860b;
     class PG,RD store;
 ```
@@ -79,17 +85,17 @@ flowchart TB
 
 | Box | As-built? | Source on main @ `08541b8` |
 |---|---|---|
-| Staff users | as-built | the only authenticated principal: `genesis/api/authz.py` (`RequirePermission`), roles/matrix `genesis/domain/rbac.py`; JWT + OTP step-up `genesis/api/auth.py`, `genesis/application/auth.py` |
-| Backend API | as-built | `genesis/api/app.py` `create_app` — the single FastAPI app; 20 routers enumerated in [`c4-component.md`](c4-component.md) |
+| Staff users | as-built | staff principal: `genesis/api/authz.py` (`RequirePermission`), roles/matrix `genesis/domain/rbac.py`; JWT + OTP step-up `genesis/api/auth.py`, `genesis/application/auth.py` |
+| Backend API | as-built | `genesis/api/app.py` `create_app` — the single FastAPI app; 22 routers enumerated in [`c4-component.md`](c4-component.md) |
 | Outbox dispatch worker | as-built | `genesis/infrastructure/outbox_worker.py` (`run_worker` L182, `dispatch_due` L48) |
 | Export render worker | as-built | `genesis/infrastructure/export_worker.py` (`run_worker` L53, `run_export_cycle` L31) |
 | Dormancy cycle worker | as-built (P13.13 !32; resilience hardened by !37) | `genesis/infrastructure/dormancy_worker.py` (`run_worker` L106, `run_dormancy_cycle` L65) |
 | Idempotency purge worker | as-built (P13.17c !49) | `genesis/infrastructure/idempotency_worker.py` (`run_worker`) → `genesis/application/idempotency_purge.py` (`purge_expired_idempotency_keys`); expiry semantics never depend on it running (the `expires_at > now()` fence in `genesis/api/idempotency.py`) |
-| PostgreSQL 16, forced RLS | as-built | RLS enabled AND forced per ADR-0002 (`docs/adr/`), session scoping `genesis/infrastructure/tenancy.py` (`tenant_session` L12); migration head `0034` (`backend/migrations/versions/0034_recovery_claim_cap_lock.py`) |
+| PostgreSQL 16, forced RLS | as-built | RLS enabled AND forced per ADR-0002 (`docs/adr/`), session scoping `genesis/infrastructure/tenancy.py` (`tenant_session` L12); migration head `0036` (`backend/migrations/versions/0036_actor_attribution.py`) |
 | Redis | as-built | `genesis/infrastructure/redis_client.py` (readyz), `genesis/infrastructure/rate_limit.py` (auth rate limiting) |
 | Web admin | as-built with this MR (P14 scaffold, !13): app shell + OTP auth gate + deny-by-default route guards; feature screens PLANNED (P15) | `web/src` (modules `auth`/`authz`/`layout`/`table`), tokens `web/packages/design-system`, GENERATED client `web/packages/api-client` — freshness gated by the `web:spec-drift`/`web:client-drift` CI jobs against `backend/scripts/export_openapi.py` |
 | Admin mobile / Member mobile | PLANNED (P16/P17/P18) | not on main (draft !11 unmerged) |
-| Member principal | PLANNED (P14.5) | no member-facing auth exists; staff tokens are the only principal |
+| Member principal | as-built (P14.5, !65) | member-facing surface `genesis/api/member.py` (`/member` auth + guarantor consent/self-release); per-request live-link gate `genesis/api/authz.py` (`RequireMemberPrincipal`); MEMBER-audience tokens `genesis/application/auth.py` (`MemberAuthContext`) issued by `genesis/application/member_auth.py`; audited credential-link administration `genesis/api/member_identity.py` → `genesis/application/member_identity.py` (`member_credentials`, migration 0035) |
 | M-Pesa | PLANNED (P19) | no payment-intent tables, no callback routes on main |
 | SMS/email/push providers | PLANNED (P20) | only the adapter contract + logging stub are as-built: `genesis/infrastructure/providers.py` (`NotificationProvider`, `StubProvider`) |
 
