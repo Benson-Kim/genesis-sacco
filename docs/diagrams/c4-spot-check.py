@@ -32,6 +32,14 @@ Checks (stdlib only, no dependencies):
    (sequence-committee-voting.md, sequence-snapshot-bind-reverify.md,
    sequence-outbox-dispatch.md) exists under
    ``backend/src/genesis/``.
+5. Migration-head citation (!68 review R68-1): every migration head
+   the C4 context/container diagrams cite (``alembic head 0034``,
+   ``head `0034```, ...) EQUALS the actual head derived from the
+   ``NNNN_*.py`` files in ``backend/migrations/versions/`` on the
+   SAME tree — an MR that adds migration 0035+ without refreshing the
+   diagrams reds this check instead of silently rotting the citation
+   (v1.2 rule 11). Deliberately tree-relative: the check stays green
+   on any branch whose diagrams match its own versions/ directory.
 
 This script is the falsifiable half of the P-DIAG.1 EXIT criterion:
 the CI ``docs:diagrams`` render job is a SYNTAX gate only; the
@@ -82,6 +90,24 @@ IMPORT_RE = re.compile(
     re.MULTILINE,
 )
 INCLUDE_CALL_RE = re.compile(r"\bapp\.include_router\(([a-z_]+)\)")
+
+#: Check 5 (!68 review R68-1) — the migration head cited by the L1/L2
+#: diagrams must equal the head derived from the version FILES on this
+#: same tree, so a new migration reds this check until the diagrams
+#: are refreshed in the same MR (v1.2 rule 11).
+MIGRATIONS_DIR = REPO_ROOT / "backend/migrations/versions"
+HEAD_CITED_DIAGRAMS = [
+    REPO_ROOT / "docs/diagrams/c4-context.md",
+    REPO_ROOT / "docs/diagrams/c4-container.md",
+]
+#: Matches every current-head citation shape used by the diagrams —
+#: ``alembic head 0034``, ``migration head `0034```, ``(head 0034
+#: verified ...)`` — but NOT header-changelog transitions like
+#: ``head 0032 -> 0034`` (the arrow lookahead excludes the old value;
+#: the new value carries no ``head`` prefix of its own).
+HEAD_CITATION_RE = re.compile(r"\bhead\s+`?(\d{4})`?(?!\s*(?:->|→))")
+#: A migration version file: ``0034_recovery_claim_cap_lock.py``.
+VERSION_FILE_RE = re.compile(r"^(\d{4})_[a-z0-9_]+\.py$")
 
 #: Check 3 — function/class claims the diagrams make, pinned to code.
 #: module path (under backend/src/) -> names that must be defined via
@@ -193,6 +219,26 @@ def wired_router_modules(app_text: str) -> set[str]:
     return wired
 
 
+def actual_migration_head() -> str:
+    """Check 5 input: the max numeric-prefix chain head in versions/.
+
+    Derived from the files ON THIS TREE (never from a database or a
+    different branch), so the check self-corrects as migrations merge:
+    green on main at head 0034 today, red the moment a branch adds
+    0035+ without refreshing the diagram citations.
+    """
+    if not MIGRATIONS_DIR.is_dir():
+        fail(f"missing migrations directory {MIGRATIONS_DIR}")
+    prefixes = sorted(
+        m.group(1)
+        for p in MIGRATIONS_DIR.iterdir()
+        if (m := VERSION_FILE_RE.match(p.name))
+    )
+    if not prefixes:
+        fail(f"no NNNN_*.py migration files found in {MIGRATIONS_DIR} — regex drift?")
+    return prefixes[-1]
+
+
 def main() -> None:
     for p in [*DIAGRAMS, *SEQUENCE_DIAGRAMS, APP_PY]:
         if not p.exists():
@@ -258,12 +304,32 @@ def main() -> None:
             "backend/src/genesis/:\n  " + "\n  ".join(seq_missing)
         )
 
+    # --- Check 5: migration-head citations vs versions/ (!68 R68-1) ----
+    head = actual_migration_head()
+    head_citations = 0
+    stale: list[str] = []
+    for diagram in HEAD_CITED_DIAGRAMS:
+        cited = HEAD_CITATION_RE.findall(diagram.read_text(encoding="utf-8"))
+        if not cited:
+            fail(f"no migration-head citation found in {diagram.name} — regex drift?")
+        head_citations += len(cited)
+        stale.extend(f"{diagram.name} cites head {c}" for c in cited if c != head)
+    if stale:
+        fail(
+            "migration-head citation drift: the actual head derived from "
+            f"backend/migrations/versions/ on this tree is {head!r}, but:\n  "
+            + "\n  ".join(stale)
+            + "\nRefresh the C4 context/container diagrams in the same MR "
+            "that moves the migration head (v1.2 rule 11)."
+        )
+
     print(
         f"OK: {len(cited_modules)} cited module paths exist; "
         f"{len(wired)} routers wired in app.py all have L3 diagrams; "
         f"no invented routers; {verified_claims} pinned function claims "
         f"verified; {len(seq_cited)} sequence-diagram module citations "
-        "exist."
+        f"exist; migration head {head} cited consistently "
+        f"{head_citations}x across c4-context.md/c4-container.md."
     )
 
 
