@@ -282,7 +282,7 @@ test("OPEN CASE: no timestamp/classification/DPD can even be entered — the for
 
   await user.type(within(drawer).getByLabelText("Loan id"), LOAN_ID);
   await user.click(within(drawer).getByRole("button", { name: "Initiate recovery…" }));
-  const confirm = screen.getByRole("button", { name: "Initiate recovery", exact: true });
+  const confirm = screen.getByRole("button", { name: "Initiate recovery" });
   expect(confirm).toBeDisabled();
   expect(mocked.openCase).not.toHaveBeenCalled();
   await user.type(
@@ -316,7 +316,7 @@ test("OPEN CASE 409 (one live case per loan): EXACTLY ONE attempt; the explicit 
     screen.getByLabelText(`Type "${LOAN_ID.slice(0, 8)}" to confirm`),
     LOAN_ID.slice(0, 8),
   );
-  await user.click(screen.getByRole("button", { name: "Initiate recovery", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Initiate recovery" }));
 
   expect(await screen.findByText(/Your change was NOT applied/)).toBeInTheDocument();
   expect(mocked.openCase).toHaveBeenCalledTimes(1);
@@ -331,7 +331,7 @@ test("OPEN CASE 409 (one live case per loan): EXACTLY ONE attempt; the explicit 
     screen.getByLabelText(`Type "${LOAN_ID.slice(0, 8)}" to confirm`),
     LOAN_ID.slice(0, 8),
   );
-  await user.click(screen.getByRole("button", { name: "Initiate recovery", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Initiate recovery" }));
   await waitFor(() => expect(mocked.openCase).toHaveBeenCalledTimes(2));
   expect(mocked.openCase.mock.calls[1]?.[1]).not.toBe(staleKey);
 });
