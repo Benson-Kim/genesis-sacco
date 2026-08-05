@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import uuid
 from pathlib import Path
 
@@ -42,7 +43,7 @@ async def _explain(session: AsyncSession, sql: str, params: dict[str, object]) -
     return "\n".join(str(r) for r in rows)
 
 
-def test_p145_member_login_lookup_is_index_backed() -> None:
+def test_p145_member_login_lookup_is_index_backed(capfd: pytest.CaptureFixture[str]) -> None:
     async def run() -> None:
         tid, _ = await seed_user(unique_email())
         mid = uuid.uuid4()
@@ -92,6 +93,13 @@ def test_p145_member_login_lookup_is_index_backed() -> None:
             f"{header}\n=== live credential by login email "
             f"(LIVE_CREDENTIAL_BY_EMAIL_SQL) ===\n{plan}\n"
         )
+
+        # Surface the captured plan in the CI job log as well: the
+        # after_script cat list predates P14.5 and .gitlab-ci.yml is
+        # untouchable by standing rule, while artifact download needs
+        # an api-scope token the agent lacks (the !49 disclosure).
+        with capfd.disabled():
+            sys.stdout.write(f"\n{OUT_PATH.read_text()}\n")
 
         assert "uq_member_credentials_email_active" in plan, plan
         assert "Seq Scan" not in plan, "the member-login lookup fell back to a sequential scan"
