@@ -3,8 +3,8 @@
 /**
  * Open-recovery-case drawer (P15 batch 1 — the prototype's "Initiate
  * recovery" action, adapted to the P13.16 contract):
- * `POST /recovery-cases` (loan_book:create) opens a case on an
- * NPL-classified ACTIVE loan.
+ * `POST /recovery-cases` (loan_book:create) opens a case on a
+ * non-performing ACTIVE loan.
  *
  * - The body carries the loan id ONLY (extra="forbid"): the NPL
  *   snapshot (classification, days past due) is read under the loan
@@ -15,8 +15,9 @@
  *   Idempotency-Key per logical intent — simple-create material
  *   (README rule 2; the server holds the one-LIVE-case-per-loan claim,
  *   0033 uq_recovery_cases_one_open).
- * - A 409 (a live case already exists, or the loan is not NPL/active)
- *   renders the shared ConflictBanner's explicit reload-and-re-enter
+ * - A 409 (a live case already exists, or the loan is not an active
+ *   non-performing one) renders the ConflictBanner's explicit
+ *   reload-and-re-enter
  *   flow — NOTHING is replayed.
  * - The result panel renders the SERVER's case record verbatim; the
  *   affordance is then SPENT. NO money figure exists anywhere on this
@@ -106,8 +107,8 @@ export function OpenCaseDrawer({
 
   function reloadAfterConflict() {
     // Explicit reload flow (!60 F5): a live case already claims this
-    // loan (one live case per loan), or the loan is not an NPL-classed
-    // active loan. NOTHING is replayed.
+    // loan (one live case per loan), or the loan is not a
+    // non-performing active loan. NOTHING is replayed.
     void queryClient.invalidateQueries({ queryKey: ["recovery", "worklist"] });
     setReloadEpoch((epoch) => epoch + 1);
     open.reset();
@@ -182,7 +183,7 @@ export function OpenCaseDrawer({
       {!spent && (
         <form onSubmit={submitEntry} noValidate>
           <div className={styles.formNote}>
-            Recovery opens on an NPL-classified ACTIVE loan (&gt;90 days past
+            Recovery opens on a non-performing ACTIVE loan (&gt;90 days past
             due — the server verifies under the loan row lock). One live case
             per loan; cure and write-off close cases automatically from loan
             facts — never by hand.

@@ -212,7 +212,7 @@ export function WriteOffRequestDrawer({
           <div className={styles.formNote}>
             Write-off is the LAST stage of credit deterioration and is NOT
             forgiveness: the receivable is derecognised but the legal claim on
-            the member survives for recovery. Only an NPL-classified loan
+            the member survives for recovery. Only a non-performing loan
             (substandard / doubtful / loss) can be snapshotted — the database
             refuses anything else.
           </div>

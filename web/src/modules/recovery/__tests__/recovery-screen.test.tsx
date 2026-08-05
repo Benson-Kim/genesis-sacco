@@ -189,8 +189,8 @@ test("LEAST DISCLOSURE (addendum A5): the worklist renders workflow facts ONLY �
 
   expect(await screen.findByText("120")).toBeInTheDocument();
   expect(screen.getByText("Doubtful")).toBeInTheDocument();
-  // Falsifiable: render any balance/penalty/provision figure and this
-  // fails — the P13.16 contract carries none and neither may the DOM.
+  // Falsifiable: render any balance, penalty or provision figure and
+  // this fails — the P13.16 contract carries none; neither may the DOM.
   expect(container.textContent).not.toContain("KES");
   expect(screen.getByText(/no balances/)).toBeInTheDocument();
 });

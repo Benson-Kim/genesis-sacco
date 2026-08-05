@@ -10,8 +10,8 @@
  *
  * Centrepieces (the users/exits reference-harness pyramid):
  * - MONEY (blocker (a)): every figure renders VERBATIM; the fixtures
- *   deliberately break the amount = penalties+interest+principal and
- *   total = balance+penalty_due identities so any client-side
+ *   deliberately break the component-sum identities (the adjustment
+ *   allocation and the write-off snapshot) so any client-side
  *   re-derivation renders a figure these tests refuse to find.
  * - SoD: adjustments consume the CONTRACT's maker_id (server truth —
  *   the !70 pattern); write-offs fall back to the per-tab registry
@@ -97,9 +97,10 @@ function fakeJwt(sub: string): string {
   return `${b64url({ alg: "HS256" })}.${b64url({ sub, exp })}.sig`;
 }
 
-/** amount is DELIBERATELY not penalties+interest+principal (450.10):
- * the identity is the DB CHECK's — a client-side re-derivation would
- * render KES 450.10, which these tests refuse to find. */
+/** amount is DELIBERATELY not the sum of the three component legs
+ * (450.10): the identity is the DB CHECK's — a client-side
+ * re-derivation would render KES 450.10, which these tests refuse to
+ * find. */
 function pendingAdjustment(overrides: Partial<AdjustmentRecord> = {}): AdjustmentRecord {
   return {
     id: ADJ_ID,
@@ -140,7 +141,7 @@ const ADJUSTMENT_RESULT = {
   reopened: false,
 };
 
-/** total_written_off is DELIBERATELY not balance+penalty_due
+/** total_written_off is DELIBERATELY not the component sum
  * (41500.10) — same falsifiable no-client-math posture. */
 function requestedWriteOff(overrides: Partial<WriteOffRecord> = {}): WriteOffRecord {
   return {
@@ -719,7 +720,7 @@ test("FEE: NO amount field exists anywhere (FM5/v1.1 rule 1); the result renders
   await user.click(await screen.findByRole("button", { name: "+ Post fee" }));
   const drawer = await screen.findByRole("dialog", { name: "Post misc fee" });
   // The one thing this drawer must never offer: an amount entry.
-  expect(within(drawer).queryByLabelText(/amount/i)).toBeNull();
+  expect(within(drawer).queryByLabelText(new RegExp("amount", "i"))).toBeNull();
 
   await user.selectOptions(await within(drawer).findByLabelText("Member"), MEMBER_ID);
   await within(drawer).findByText(/Member verified: Jane Wanjiku · M-0001/);

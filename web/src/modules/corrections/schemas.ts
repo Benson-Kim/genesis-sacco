@@ -20,7 +20,7 @@ import { isoTimestampSchema, moneySchema } from "@/lib/schemas";
  * snapshot + append-only receipts under the write-off row lock). They
  * render verbatim via fmtKes and are NEVER coerced, combined, netted or
  * re-derived client-side — the client does not even verify that
- * amount equals penalties+interest+principal (that identity is the
+ * amount equals the sum of its three components (that identity is the
  * 0025 ck_repayment_adjustments_components CHECK, and posting-time
  * re-verification is the server's).
  *
@@ -28,10 +28,10 @@ import { isoTimestampSchema, moneySchema } from "@/lib/schemas";
  * the migration CHECK constraints — the !67 convention):
  * - repayment_adjustments (0025): amount CHECK (> 0), penalties /
  *   interest / principal CHECK (>= 0); 0031 adds
- *   loan_balance_at_request / loan_penalty_due_at_request CHECK
- *   (>= 0). AdjustmentOut's balance_after / penalty_due_after are the
- *   recomputed loans.balance CHECK (>= 0) (0001) / loans.penalty_due
- *   CHECK (>= 0) (0007).
+ *   loan_balance_at_request and loan_penalty_due_at_request, CHECK
+ *   (>= 0) each. AdjustmentOut's balance_after and penalty_due_after
+ *   are the recomputed loans.balance CHECK (>= 0) (0001) and
+ *   loans.penalty_due CHECK (>= 0) (0007).
  * - loan_write_offs (0025): balance CHECK (>= 0), penalty_due CHECK
  *   (>= 0), total_written_off CHECK (> 0).
  * - loan_recoveries (0030): amount CHECK (> 0); recovered_total /
@@ -138,8 +138,9 @@ export const adjustmentSchema = z.object({
   checker_id: z.string().nullable(),
   reason: z.string(),
   /** The COMPLETE original allocation being undone (0025: amount
-   * CHECK (> 0) = penalties + interest + principal, all CHECK (>= 0));
-   * the identity is the DB's — never re-verified client-side. */
+   * CHECK (> 0) equal to the sum of the three component legs, each
+   * CHECK (>= 0)); the identity is the DB's — never re-verified
+   * client-side. */
   amount: moneySchema,
   penalties: moneySchema,
   interest: moneySchema,
@@ -204,10 +205,9 @@ export const writeOffSchema = z.object({
   id: z.string(),
   loan_id: z.string(),
   member_id: z.string(),
-  /** Snapshot components (0025: balance / penalty_due CHECK (>= 0);
-   * total_written_off CHECK (> 0) = balance + penalty_due — the
-   * identity is the DB's ck_loan_write_offs_totals, never re-verified
-   * client-side). */
+  /** Snapshot components (0025: balance and penalty_due CHECK (>= 0);
+   * total_written_off CHECK (> 0) is their sum — the identity is the
+   * DB's ck_loan_write_offs_totals, never re-verified client-side). */
   balance: moneySchema,
   penalty_due: moneySchema,
   total_written_off: moneySchema,
@@ -256,7 +256,7 @@ export type WriteOffPostResult = z.infer<typeof writeOffPostResultSchema>;
 
 /** Recovery receipt result (RecoveryReceiptOut — issue #21): the RC-
  * posting plus the reconstructed claim position, all SERVER figures
- * verbatim (recovered_total / outstanding_claim computed under the
+ * verbatim (recovered_total and outstanding_claim computed under the
  * write-off row lock — never client math). */
 export const recoveryReceiptResultSchema = z.object({
   recovery_id: z.string(),

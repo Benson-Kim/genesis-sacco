@@ -11,7 +11,7 @@
  * - FRESH RECORD READ (record class, staleTime 0): every write arms
  *   against the freshest available read; the version anchors the
  *   assign/disposition bodies and every key material.
- * - LEAST DISCLOSURE (addendum A5): NO balance/penalty/provision
+ * - LEAST DISCLOSURE (addendum A5): NO balance, penalty or provision
  *   figure exists on this surface — the loan's money lives behind the
  *   P10 loan screens for the entitled. Staff UUIDs (opened_by,
  *   assignee, note authors) render via the !70 short-id convention —

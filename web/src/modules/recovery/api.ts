@@ -62,7 +62,7 @@ export async function fetchCase(caseId: string): Promise<CaseRecord> {
 }
 
 /**
- * Initiate recovery on an NPL-classified active loan (loan_book:create
+ * Initiate recovery on a non-performing active loan (loan_book:create
  * — the prototype's "Initiate recovery" action). The body carries the
  * loan id ONLY: the NPL snapshot is read under the loan row lock and
  * every SLA timestamp is server-written (addendum A7).
