@@ -27,10 +27,16 @@
  * recommended_by — 0037), and neither the initiator nor the recommender
  * can post the disbursement (403, keyed on the persisted
  * created_by/recommended_by).
+ *
+ * Storage (issue #30 finding S3): the shared createSessionScopedRegistry
+ * primitive — teardown on BOTH session-death paths (the query-path 401
+ * dual-cache teardown and explicit sign-out) is wired by construction
+ * (W58-2, the !60 F2 class). This wrapper keeps the module's exported
+ * vocabulary byte-compatible.
  */
-import { registerSessionScopedStore } from "@/modules/auth/sessionScopedStores";
+import { createSessionScopedRegistry } from "@/modules/auth/createSessionScopedRegistry";
 
-const makers = new Map<string, string>();
+const makers = createSessionScopedRegistry<string, string>();
 
 /** Sentinel for "maker not witnessed by this tab" — never a valid UUID. */
 export const MAKER_UNKNOWN = "maker-unknown";
@@ -45,15 +51,8 @@ export function committeeMakerOf(applicationId: string): string {
   return makers.get(applicationId) ?? MAKER_UNKNOWN;
 }
 
-/** Session-teardown hygiene (W58-2, the !60 F2 class): registered as a
- * session-scoped store below, so BOTH teardown paths — the query-path
- * 401 dual-cache teardown and explicit sign-out — clear it. A prior
- * operator's referral attributions never feed the next session's
- * MakerCheckerPanel SoD decision. Also test hygiene. */
+/** Session-teardown hygiene (W58-2): the registry is torn down by
+ * construction; this named clear stays for test hygiene and callers. */
 export function clearCommitteeMakers(): void {
   makers.clear();
 }
-
-// Teardown wiring by construction (W58-2): registration at module scope
-// means the registry cannot exist without dying on session teardown.
-registerSessionScopedStore(clearCommitteeMakers);
