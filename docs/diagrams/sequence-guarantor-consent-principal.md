@@ -51,7 +51,7 @@ sequenceDiagram
     rect rgb(240,248,255)
     Note over ADM,REC: Link — an audited admin act, never self-service
     ADM->>SYS: link the member's login email
-    SYS->>REC: one active login per member, claimed atomically;<br/>recorded and the member notified
+    SYS->>REC: one active login per member, claimed atomically —<br/>recorded and the member notified
     end
 
     rect rgb(240,255,240)
@@ -64,11 +64,11 @@ sequenceDiagram
     rect rgb(255,250,240)
     Note over G,REC: Consent / withdraw — my own pledge only
     G->>SYS: consent to my pledge (or withdraw it)
-    SYS->>SYS: hold the pledge row;<br/>re-check the login link WHILE holding it
+    SYS->>SYS: hold the pledge row —<br/>re-check the login link WHILE holding it
     alt link revoked, someone else's pledge, or already consented (withdrawal)
         SYS-->>G: one same-shaped refusal — no figures,<br/>no hints about other members' records
     else consent
-        SYS->>REC: pledge active, the consent carries WHO gave it;<br/>the record book itself refuses a consent<br/>belonging to nobody
+        SYS->>REC: pledge active, the consent carries WHO gave it —<br/>the record book itself refuses a consent<br/>belonging to nobody
     else withdrawal (not yet consented)
         SYS->>SYS: does the borrower's remaining cover<br/>still satisfy the product rule?
         SYS->>REC: pledge withdrawn only if cover holds —<br/>otherwise nothing changes
@@ -81,7 +81,7 @@ sequenceDiagram
     alt no evidence citation
         SYS-->>ADM: refused — the attestation must cite its evidence
     else evidence cited
-        SYS->>REC: pledge active, attestor + evidence recorded;<br/>the guarantor is NOTIFIED — an attestation<br/>made in their name never goes unseen
+        SYS->>REC: pledge active, attestor + evidence recorded —<br/>the guarantor is NOTIFIED, so an attestation<br/>made in their name never goes unseen
     end
     end
 ```
