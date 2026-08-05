@@ -27,6 +27,7 @@ const MEMBER_ID = "11111111-1111-1111-1111-111111111111";
 const PRODUCT_ID = "44444444-4444-4444-4444-444444444444";
 const APP_ID = "aaaaaaaa-1111-2222-3333-444444444444";
 const CREATOR_ID = "66666666-6666-6666-6666-666666666666";
+const RECOMMENDER_ID = "77777777-7777-7777-7777-777777777777";
 
 const calls: FetchCall[] = [];
 let transitionStatus = 200;
@@ -52,6 +53,7 @@ const applicationOut = {
   stage: "submitted",
   cover_pct: "120.00",
   created_by: CREATOR_ID,
+  recommended_by: RECOMMENDER_ID,
   max_eligible: "300000.00",
   version: 3,
 };
@@ -246,8 +248,34 @@ test("responses parse through the Zod boundary: record reads return validated sh
   // UUID travels verbatim through the boundary — least disclosure: no
   // name/email key exists anywhere in the contract or the parse.
   expect(application.created_by).toBe(CREATOR_ID);
+  // Recommender attribution (issue #30 close-out, 0037): same treatment.
+  expect(application.recommended_by).toBe(RECOMMENDER_ID);
   expect("full_name" in application).toBe(false);
   expect("email" in application).toBe(false);
+});
+
+test("recommender accept/reject matrix (issue #30 close-out, 0037): recommended_by is a nullable STRING — the NULL leg is a legitimate 'not referred / unattributed' wire value; a MISSING key is a contract violation", () => {
+  const withField = (value: unknown) =>
+    appSchemas.applicationSchema.safeParse({ ...applicationOut, recommended_by: value }).success;
+
+  // The two legitimate wire values: the bare staff UUID and the honest
+  // NULL (not yet referred to committee, system moves, pre-0037 rows —
+  // attribution never invented).
+  expect(withField(RECOMMENDER_ID)).toBe(true);
+  expect(withField(null)).toBe(true);
+
+  // Shape drift REJECTED: attribution never arrives as a number, an
+  // object (a smuggled name/email payload) or a boolean.
+  expect(withField(42)).toBe(false);
+  expect(withField({ id: RECOMMENDER_ID, full_name: "Jane" })).toBe(false);
+  expect(withField(true)).toBe(false);
+
+  // KEY EXACTNESS: dropping the key entirely is a contract violation —
+  // the field is nullable, not optional (falsifiable: soften the schema
+  // to .optional() and this leg fails).
+  const missing: Record<string, unknown> = { ...applicationOut };
+  delete missing["recommended_by"];
+  expect(appSchemas.applicationSchema.safeParse(missing).success).toBe(false);
 });
 
 test("attribution accept/reject matrix (issue #30 / !66 follow-up): created_by is a nullable STRING — the NULL leg is a legitimate 'unattributed' wire value; a MISSING key is a contract violation", () => {

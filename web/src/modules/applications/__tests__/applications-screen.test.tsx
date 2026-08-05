@@ -92,6 +92,7 @@ function baseApplication(overrides: Partial<Application> = {}): Application {
     stage: "submitted",
     cover_pct: "120.00",
     created_by: null,
+    recommended_by: null,
     max_eligible: "300000.00",
     version: 3,
     ...overrides,
@@ -475,6 +476,54 @@ test("attribution XSS inertness: a hostile created_by string renders as inert TE
   await screen.findByText("Record version");
   // The sliced 8-char prefix ("<img src") renders as literal text…
   expect(screen.getByTitle(HOSTILE_CREATOR)).toHaveTextContent("<img src");
+  // …and never as an element.
+  expect(container.querySelector("img")).toBeNull();
+  expect((window as { __pwned?: unknown }).__pwned).toBeUndefined();
+});
+
+test("recommender attribution (issue #30 close-out, 0037): the detail drawer renders recommended_by as the SHORT id with the full UUID on title — and NEVER fetches a directory record for it (least disclosure, FM-D)", async () => {
+  const RECOMMENDER_ID = "77777777-7777-7777-7777-777777777777";
+  const user = userEvent.setup();
+  mocked.fetchApplication.mockResolvedValue(
+    baseApplication({ stage: "committee", recommended_by: RECOMMENDER_ID }),
+  );
+  mountScreen();
+
+  await user.click(await screen.findByText("KES 250,000.10"));
+  await screen.findByText("Record version");
+  // Short-id convention: the 8-char prefix renders; the full UUID rides
+  // the title attribute (same treatment as created_by).
+  const cell = screen.getByTitle(RECOMMENDER_ID);
+  expect(cell).toHaveTextContent(RECOMMENDER_ID.slice(0, 8));
+  // Least disclosure: the staff UUID is NEVER resolved to a person.
+  for (const call of mockedMembers.fetchMember.mock.calls) {
+    expect(call[0]).not.toBe(RECOMMENDER_ID);
+  }
+  expect(screen.queryByText(/full_name/)).toBeNull();
+});
+
+test("recommender NULL leg (FM-B): a not-yet-referred / unattributed record renders the honest affordance — never an invented actor", async () => {
+  const user = userEvent.setup();
+  mocked.fetchApplication.mockResolvedValue(baseApplication({ recommended_by: null }));
+  mountScreen();
+
+  await user.click(await screen.findByText("KES 250,000.10"));
+  await screen.findByText("Record version");
+  expect(screen.getByText("— (not referred / unattributed)")).toBeInTheDocument();
+});
+
+test("recommender XSS inertness: a hostile recommended_by string renders as inert TEXT in the UUID cell — no markup materialises", async () => {
+  const HOSTILE_RECOMMENDER = '<img src=x onerror=window.__pwned=4>';
+  const user = userEvent.setup();
+  mocked.fetchApplication.mockResolvedValue(
+    baseApplication({ recommended_by: HOSTILE_RECOMMENDER }),
+  );
+  const { container } = mountScreen();
+
+  await user.click(await screen.findByText("KES 250,000.10"));
+  await screen.findByText("Record version");
+  // The sliced 8-char prefix ("<img src") renders as literal text…
+  expect(screen.getByTitle(HOSTILE_RECOMMENDER)).toHaveTextContent("<img src");
   // …and never as an element.
   expect(container.querySelector("img")).toBeNull();
   expect((window as { __pwned?: unknown }).__pwned).toBeUndefined();
