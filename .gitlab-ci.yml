@@ -96,8 +96,17 @@ docs:diagrams:
 # the repo root, so a diagram citing an invented module path, an
 # undocumented router, or a function claim without a matching def is a
 # red pipeline — the drift gate can no longer rot silently as
-# manual-only. Scoped to the exact inputs the check reads: the diagram
-# files AND the router wiring in backend/src/genesis/api/app.py.
+# manual-only. MR pipelines are scoped to the exact inputs the check
+# reads (the diagram files AND the router wiring in
+# backend/src/genesis/api/app.py AND the migration chain). On the
+# default branch the job ALWAYS runs, unconditionally: squash-merges
+# land file combinations no MR pipeline ever tested together, and a
+# rules:changes skip at HEAD painted main green while the check was
+# red two merges earlier (post-!65/!66 pipelines 2733179092/2733179118
+# failed; HEAD pipeline 2733179131 skipped the job because !67's
+# web-only diff missed the patterns). A cheap stdlib script is the
+# wrong thing to save minutes on — the default-branch verdict must be
+# computed, never inferred from an unrelated diff.
 # -----------------------------------------------------------------------------
 docs:spot-check:
   stage: lint
@@ -110,10 +119,6 @@ docs:spot-check:
         - backend/src/genesis/api/app.py
         - backend/migrations/versions/**/*
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      changes:
-        - docs/diagrams/**/*
-        - backend/src/genesis/api/app.py
-        - backend/migrations/versions/**/*
   script:
     - python3 docs/diagrams/c4-spot-check.py
 
