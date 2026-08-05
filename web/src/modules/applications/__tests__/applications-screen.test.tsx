@@ -91,6 +91,7 @@ function baseApplication(overrides: Partial<Application> = {}): Application {
     purpose: "School fees",
     stage: "submitted",
     cover_pct: "120.00",
+    created_by: null,
     max_eligible: "300000.00",
     version: 3,
     ...overrides,
@@ -431,6 +432,52 @@ test("Zod boundary rejects money as NUMBERS and unknown stages — contract viol
   expect(
     applicationSchema.safeParse({ ...baseApplication(), stage: "fast_tracked" }).success,
   ).toBe(false);
+});
+
+test("attribution (issue #30 / !66 follow-up): the detail drawer renders created_by as the SHORT id with the full UUID on title — and NEVER fetches a directory record for it (least disclosure, FM-D)", async () => {
+  const CREATOR_ID = "66666666-6666-6666-6666-666666666666";
+  const user = userEvent.setup();
+  mocked.fetchApplication.mockResolvedValue(baseApplication({ created_by: CREATOR_ID }));
+  mountScreen();
+
+  await user.click(await screen.findByText("KES 250,000.10"));
+  await screen.findByText("Record version");
+  // Short-id convention: the 8-char prefix renders; the full UUID rides
+  // the title attribute (same treatment as every other opaque id).
+  const cell = screen.getByTitle(CREATOR_ID);
+  expect(cell).toHaveTextContent(CREATOR_ID.slice(0, 8));
+  // Least disclosure: the staff UUID is NEVER resolved to a person —
+  // the only member fetch is the applicant's, and no name/email for
+  // the initiator appears anywhere in the DOM.
+  for (const call of mockedMembers.fetchMember.mock.calls) {
+    expect(call[0]).not.toBe(CREATOR_ID);
+  }
+  expect(screen.queryByText(/full_name/)).toBeNull();
+});
+
+test("attribution NULL leg (FM-B): an unattributed record renders the honest affordance — never an invented actor", async () => {
+  const user = userEvent.setup();
+  mocked.fetchApplication.mockResolvedValue(baseApplication({ created_by: null }));
+  mountScreen();
+
+  await user.click(await screen.findByText("KES 250,000.10"));
+  await screen.findByText("Record version");
+  expect(screen.getByText("— (unattributed)")).toBeInTheDocument();
+});
+
+test("attribution XSS inertness: a hostile created_by string renders as inert TEXT in the UUID cell — no markup materialises", async () => {
+  const HOSTILE_CREATOR = '<img src=x onerror=window.__pwned=3>';
+  const user = userEvent.setup();
+  mocked.fetchApplication.mockResolvedValue(baseApplication({ created_by: HOSTILE_CREATOR }));
+  const { container } = mountScreen();
+
+  await user.click(await screen.findByText("KES 250,000.10"));
+  await screen.findByText("Record version");
+  // The sliced prefix renders as literal text…
+  expect(screen.getByTitle(HOSTILE_CREATOR)).toHaveTextContent("<img src=");
+  // …and never as an element.
+  expect(container.querySelector("img")).toBeNull();
+  expect((window as { __pwned?: unknown }).__pwned).toBeUndefined();
 });
 
 test("intake amount rejects leading zeros and zero amounts (W58-5, the !60 F6 class) — pure string shape", () => {

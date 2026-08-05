@@ -50,6 +50,7 @@ const applicationOut = {
   purpose: "School fees",
   stage: "submitted",
   cover_pct: "120.00",
+  created_by: CREATOR_ID,
   max_eligible: "300000.00",
   version: 3,
 };
@@ -240,6 +241,35 @@ test("responses parse through the Zod boundary: record reads return validated sh
   expect(application.amount).toBe("250000.10");
   expect(application.stage).toBe("submitted");
   expect(application.version).toBe(3);
+  // Initiator attribution (issue #30 / !66 follow-up): the bare staff
+  // UUID travels verbatim through the boundary — least disclosure: no
+  // name/email key exists anywhere in the contract or the parse.
+  expect(application.created_by).toBe(CREATOR_ID);
+  expect("full_name" in application).toBe(false);
+  expect("email" in application).toBe(false);
+});
+
+test("attribution accept/reject matrix (issue #30 / !66 follow-up): created_by is a nullable STRING — the NULL leg is a legitimate 'unattributed' wire value; a MISSING key is a contract violation", () => {
+  const withField = (value: unknown) =>
+    appSchemas.applicationSchema.safeParse({ ...applicationOut, created_by: value }).success;
+
+  // The two legitimate wire values: the bare staff UUID and the honest
+  // NULL (pre-0036 rows / system-created — attribution never invented).
+  expect(withField(CREATOR_ID)).toBe(true);
+  expect(withField(null)).toBe(true);
+
+  // Shape drift REJECTED: attribution never arrives as a number, an
+  // object (a smuggled name/email payload) or a boolean.
+  expect(withField(42)).toBe(false);
+  expect(withField({ id: CREATOR_ID, full_name: "Jane" })).toBe(false);
+  expect(withField(true)).toBe(false);
+
+  // KEY EXACTNESS: dropping the key entirely is a contract violation —
+  // the field is nullable, not optional (falsifiable: soften the schema
+  // to .optional() and this leg fails).
+  const missing: Record<string, unknown> = { ...applicationOut };
+  delete missing["created_by"];
+  expect(appSchemas.applicationSchema.safeParse(missing).success).toBe(false);
 });
 
 test("a garbage money STRING is REJECTED at the wire boundary (issue #30 A2/S2) — a value that passes z.string() can still never reach fmtKes", async () => {
