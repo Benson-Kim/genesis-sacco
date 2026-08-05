@@ -2194,6 +2194,8 @@ export interface components {
             amount: string;
             /** Cover Pct */
             cover_pct: string;
+            /** Created By */
+            created_by: string | null;
             /** Id */
             id: string;
             /** Max Eligible */
@@ -2781,6 +2783,8 @@ export interface components {
             net_payable: string;
             /** Reason */
             reason: string | null;
+            /** Requested By */
+            requested_by: string | null;
             /** Settled At */
             settled_at: string | null;
             /** Settlement Txn Id */
@@ -2835,6 +2839,8 @@ export interface components {
             reason: string | null;
             /** Requested At */
             requested_at: string;
+            /** Requested By */
+            requested_by: string | null;
             /** Settled At */
             settled_at: string | null;
             /** Settlement Txn Ref */
@@ -3910,6 +3916,8 @@ export interface components {
             amount: string;
             /** Channel */
             channel: string;
+            /** Created By */
+            created_by: string | null;
             /** Direction */
             direction: string;
             /** Id */

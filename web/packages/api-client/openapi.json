@@ -389,6 +389,17 @@
             "title": "Cover Pct",
             "type": "string"
           },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -450,6 +461,7 @@
           "purpose",
           "stage",
           "cover_pct",
+          "created_by",
           "version"
         ],
         "title": "ApplicationOut",
@@ -1934,6 +1946,17 @@
             ],
             "title": "Reason"
           },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
           "settled_at": {
             "anyOf": [
               {
@@ -1979,6 +2002,7 @@
           "loan_balance",
           "fees",
           "net_payable",
+          "requested_by",
           "decided_at",
           "settled_at",
           "settlement_txn_id",
@@ -2088,6 +2112,17 @@
             "title": "Requested At",
             "type": "string"
           },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
           "settled_at": {
             "anyOf": [
               {
@@ -2129,6 +2164,7 @@
           "loan_balance",
           "fees",
           "net_payable",
+          "requested_by",
           "requested_at",
           "decided_at",
           "settled_at",
@@ -5317,6 +5353,17 @@
             "title": "Channel",
             "type": "string"
           },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
           "direction": {
             "title": "Direction",
             "type": "string"
@@ -5362,7 +5409,8 @@
           "channel",
           "direction",
           "occurred_at",
-          "is_reversal"
+          "is_reversal",
+          "created_by"
         ],
         "title": "TransactionOut",
         "type": "object"

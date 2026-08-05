@@ -65,7 +65,7 @@ from genesis.domain.lending import (
     transition,
 )
 from genesis.domain.money import to_cents
-from genesis.errors import ConflictError, NotFoundError
+from genesis.errors import ConflictError, ForbiddenError, NotFoundError
 
 # ---------------------------------------------------------------------------
 # Reference generation (gate 1.4)
@@ -174,15 +174,20 @@ async def _post(
     txn_ref = await _next_ref(session, tenant_id, prefix)
     txn_id = uuid.uuid4()
 
+    # created_by records the acting principal at INSERT (issue #30 R3,
+    # migration 0036): NULL for system/job postings — an absent actor
+    # is recorded as absent, never fabricated. The 0004 append-only
+    # triggers pin the attribution immutable the moment the row
+    # commits: it can never be rewritten after the fact.
     await session.execute(
         text(
             "INSERT INTO transactions "
             "(id, tenant_id, txn_ref, member_id, type, amount, channel, "
-            " occurred_at, reversal_of_id) "
+            " occurred_at, reversal_of_id, created_by) "
             "VALUES "
             "(CAST(:id AS uuid), CAST(:tid AS uuid), :ref, "
             " CAST(:mid AS uuid), :type, :amount, :channel, :ts, "
-            " CAST(:rev_of AS uuid))"
+            " CAST(:rev_of AS uuid), CAST(:actor AS uuid))"
         ),
         {
             "id": str(txn_id),
@@ -194,6 +199,7 @@ async def _post(
             "channel": spec.channel.value,
             "ts": ts,
             "rev_of": str(reversal_of_id) if reversal_of_id else None,
+            "actor": str(actor_id) if actor_id else None,
         },
     )
 
@@ -995,7 +1001,9 @@ async def disburse_loan(
     fails the whole transaction rolls back — no partial success.
 
     Steps:
-      1. Lock the application row; verify stage == approved.
+      1. Lock the application row; refuse the application's initiator
+         (user-level separation of duties, issue #30 R4 — the P12
+         self-settle mirror, 403); verify stage == approved.
       2. Verify the deposit-multiplier eligibility under the deposit
          account row lock (issue #15), then refuse any unconsented
          (pledged) guarantee — collateral is never activated without
@@ -1016,7 +1024,7 @@ async def disburse_loan(
                 # Explicit tenant predicate on the row-lock read, on top
                 # of RLS (defence in depth, gate 1.6 v1.1; issue #17).
                 "SELECT id, member_id, product_id, amount, term_months, "
-                "rate_pct, stage, version "
+                "rate_pct, stage, version, created_by "
                 "FROM loan_applications "
                 "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
             ),
@@ -1035,6 +1043,7 @@ async def disburse_loan(
         rate_pct_str,
         stage_str,
         version,
+        created_by_raw,
     ) = app_row
 
     member_id = uuid.UUID(str(member_id_raw))
@@ -1042,6 +1051,21 @@ async def disburse_loan(
     principal = Decimal(str(amount_str))
     rate_pct = Decimal(str(rate_pct_str))
     term_months = int(term_months)
+    created_by = uuid.UUID(str(created_by_raw)) if created_by_raw is not None else None
+
+    # Step 1b: user-level separation of duties (issue #30 R4, the
+    # mirror of the P12 self-settle ban): the initiator of a loan
+    # application can never post its disbursement — between committee
+    # ratification and cash-out a DIFFERENT principal must act, exactly
+    # as exit settlement requires. Read under the application row lock
+    # held above (created_by is written once at INSERT and never
+    # updated, so the comparison cannot race). A NULL created_by
+    # (pre-0036 rows without unambiguous audit history, or
+    # system-created rows) is not principal-comparable — for those the
+    # P9 committee quorum remains the approval control, unchanged.
+    # Least disclosure (gate 1.6): the refusal names no identity.
+    if created_by is not None and actor_id == created_by:
+        raise ForbiddenError("the initiator of a loan application cannot post its disbursement")
 
     # Step 2: validate and transition stage.
     try:

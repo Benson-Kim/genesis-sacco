@@ -1273,3 +1273,146 @@ def test_product_service_direct() -> None:
         assert any(p.id == product.id for p in listed)
 
     asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Issue #30 — initiator attribution on the application read contract (item 1)
+# and the disbursement SoD 403 at the wire (FM-A)
+# ---------------------------------------------------------------------------
+
+
+async def _sole_user(tid: uuid.UUID) -> tuple[uuid.UUID, str, str]:
+    """(id, full_name, email) of the tenant's only seeded user."""
+    async with tenant_session(factory(), tid) as session:
+        row = (
+            await session.execute(
+                text("SELECT id, full_name, email FROM users WHERE tenant_id = CAST(:t AS uuid)"),
+                {"t": str(tid)},
+            )
+        ).first()
+    assert row is not None
+    return uuid.UUID(str(row[0])), str(row[1]), str(row[2])
+
+
+def test_application_read_contract_exposes_created_by_least_disclosure() -> None:
+    """created_by rides ApplicationOut on create/get/list (issue #30 R4).
+
+    Falsifiable: dropping the ApplicationOut field (or the
+    _application_out mapping) fails the equality assertions.
+
+    Least disclosure (gate 1.6, stated per the P4 matrix):
+    applications:view holders receive the bare staff user UUID ONLY —
+    the initiator's name/email never ride the application read models;
+    resolving the UUID stays behind access_control:view (P13.5
+    users/audit read paths). FM-B leg: a row written without an actor
+    (the pre-0036 shape) reads back null — attribution is never
+    invented.
+    """
+
+    async def run() -> None:
+        tid, _, token = await _seed_actor()
+        uid, actor_name, actor_email = await _sole_user(tid)
+        headers = _headers(token)
+        member_id = await _make_member(headers, "Attribution Borrower")
+        product_id = await _make_product(headers, "Attribution Product")
+
+        created = await _make_application(headers, member_id, product_id, "1000.00")
+        assert created["created_by"] == str(uid)
+        app_id = str(created["id"])
+
+        async with api_client() as client:
+            single = await client.get(f"/applications/{app_id}", headers=headers)
+            assert single.status_code == 200
+            assert single.json()["created_by"] == str(uid)
+
+            listing = await client.get("/applications", headers=headers)
+            assert listing.status_code == 200
+            by_id = {a["id"]: a for a in listing.json()["items"]}
+            assert by_id[app_id]["created_by"] == str(uid)
+
+            # Least disclosure: the UUID only — no name/email keys and
+            # no initiator PII anywhere in the payloads.
+            for payload in (single, listing):
+                assert actor_name not in payload.text
+                assert actor_email not in payload.text
+                assert "full_name" not in payload.text
+                assert "email" not in payload.text
+
+        # FM-B: an unattributed (pre-0036 style) row stays null.
+        legacy_id = uuid.uuid4()
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO loan_applications "
+                    "(id, tenant_id, member_id, product_id, amount, term_months, "
+                    " rate_pct, stage) "
+                    "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:mid AS uuid), "
+                    "CAST(:pid AS uuid), '500.00', 6, 12.00, 'submitted')"
+                ),
+                {
+                    "id": str(legacy_id),
+                    "tid": str(tid),
+                    "mid": member_id,
+                    "pid": product_id,
+                },
+            )
+        async with api_client() as client:
+            legacy = await client.get(f"/applications/{legacy_id}", headers=headers)
+            assert legacy.status_code == 200
+            assert legacy.json()["created_by"] is None
+
+    asyncio.run(run())
+
+
+def test_initiator_cannot_disburse_own_application_api_403() -> None:
+    """FM-A at the wire: POST /applications/{id}/disburse by the
+    application's initiator is 403 forbidden (issue #30 R4 — the P12
+    self-settle mirror); a DIFFERENT loan_book:create holder disburses
+    the same application. Falsifiable: removing the created_by
+    comparison in disburse_loan turns the first call into a 201 and
+    this test fails.
+    """
+
+    async def run() -> None:
+        tid, role_id, initiator_token = await _seed_actor()
+        other_token = await _add_actor(tid, role_id)
+        initiator = _headers(initiator_token)
+        other = _headers(other_token)
+
+        member_id = await _make_member(initiator, "SoD Borrower")
+        await _set_deposit_balance(tid, member_id, "100000.00")
+        product_id = await _make_product(initiator, "SoD Product")
+        created = await _make_application(initiator, member_id, product_id, "9000.00")
+        app_id = str(created["id"])
+
+        # Committee quorum is P9 machinery; the SoD subject here is the
+        # cash-out, so the approved stage is seeded directly.
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(
+                text(
+                    "UPDATE loan_applications SET stage = 'approved' "
+                    "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+                ),
+                {"id": app_id, "tid": str(tid)},
+            )
+
+        async with api_client() as client:
+            refused = await client.post(
+                f"/applications/{app_id}/disburse",
+                json={"channel": "bank"},
+                headers=initiator,
+            )
+            assert refused.status_code == 403, refused.text
+            assert refused.json()["category"] == "forbidden"
+            # Least disclosure: no identity, no balances in the refusal.
+            assert str(member_id) not in refused.text
+
+            disbursed = await client.post(
+                f"/applications/{app_id}/disburse",
+                json={"channel": "bank"},
+                headers=other,
+            )
+            assert disbursed.status_code == 201, disbursed.text
+            assert disbursed.json()["loan_id"]
+
+    asyncio.run(run())

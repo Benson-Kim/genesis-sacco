@@ -1270,3 +1270,90 @@ def test_exit_api_rbac_no_money_in_body_and_statement() -> None:
             ).status_code == 404
 
     asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Issue #30 item 1 — initiator attribution on the exit read contract
+# ---------------------------------------------------------------------------
+
+
+def test_exit_read_contract_exposes_requested_by_least_disclosure() -> None:
+    """`requested_by` rides ExitOut on create/get/list (issue #30 R3).
+
+    The column has persisted since 0010 and already drives the
+    self-vote/self-settle 403s; this exposes it so the approver can see
+    WHO they are checking. Falsifiable: dropping the ExitOut field (or
+    the `_out` mapping) makes the equality assertions below fail.
+
+    Least disclosure (gate 1.6, stated per the P4 matrix): members:view
+    holders receive the bare staff user UUID ONLY — the initiator's
+    name/email never ride the exit read models; resolving the UUID
+    stays behind access_control:view (P13.5 users/audit read paths).
+    """
+
+    async def run() -> None:
+        tid, admin_uid, admin_token = await _seed_actor()
+        admin = {"authorization": f"Bearer {admin_token}"}
+        mid = await _seed_member(tid, deposit="500.00", shares="50.00")
+        # The seeded admin's email — must never appear in exit payloads.
+        async with tenant_session(factory(), tid) as session:
+            admin_email = (
+                await session.execute(
+                    text("SELECT email FROM users WHERE id = CAST(:u AS uuid)"),
+                    {"u": str(admin_uid)},
+                )
+            ).scalar_one()
+
+        async with api_client() as client:
+            created = await client.post(
+                "/member-exits",
+                json={"member_id": str(mid), "reason": "Relocation"},
+                headers=admin,
+            )
+            assert created.status_code == 201, created.text
+            assert created.json()["requested_by"] == str(admin_uid)
+
+            exit_id = created.json()["id"]
+            single = await client.get(f"/member-exits/{exit_id}", headers=admin)
+            assert single.status_code == 200
+            assert single.json()["requested_by"] == str(admin_uid)
+
+            listing = await client.get(
+                "/member-exits", params={"status": "requested", "limit": 5}, headers=admin
+            )
+            assert listing.status_code == 200
+            by_id = {e["id"]: e for e in listing.json()["items"]}
+            assert by_id[exit_id]["requested_by"] == str(admin_uid)
+
+            # The statement DOCUMENT carries the initiator too (issue
+            # #30 R3): an examiner reading a settlement sees WHO
+            # requested it next to the figures — no audit-log context
+            # switch. Same least-disclosure posture: the UUID only.
+            statement = await client.get(f"/member-exits/{exit_id}/statement", headers=admin)
+            assert statement.status_code == 200
+            assert statement.json()["requested_by"] == str(admin_uid)
+            assert admin_email not in statement.text
+
+            # Least disclosure: the UUID only — no name/email keys, and
+            # the initiator's PII appears nowhere in the payloads.
+            for payload in (created, single):
+                assert "Exit Member" not in str(payload.json().get("requested_by"))
+                assert admin_email not in payload.text
+                assert "full_name" not in payload.json()
+                assert "email" not in payload.json()
+
+        # Attribution is never invented (issue #30 FM2): a legacy-style
+        # request recorded without an actor reads back as null, not as
+        # some fabricated principal.
+        unattributed_id = await _request(tid, None, await _seed_member(tid, deposit="10.00"))
+        async with api_client() as client:
+            legacy = await client.get(f"/member-exits/{unattributed_id}", headers=admin)
+            assert legacy.status_code == 200
+            assert legacy.json()["requested_by"] is None
+            legacy_statement = await client.get(
+                f"/member-exits/{unattributed_id}/statement", headers=admin
+            )
+            assert legacy_statement.status_code == 200
+            assert legacy_statement.json()["requested_by"] is None
+
+    asyncio.run(run())
