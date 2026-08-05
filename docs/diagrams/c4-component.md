@@ -9,8 +9,13 @@
   builders (!40) join diagram 11 with their domain seams — the drift
   !40 could not fix itself because docs/diagrams/** was owned by a
   concurrent session).
+  Reconciled to main @ eb90a80ede68aed673c317ecd833b464ac17eac4
+  (post-merge remediation MR: the P14.5 member surface (!65) joins as
+  diagrams 21/22 — member-identity credential-link admin + the
+  member-facing /member router — with their PINNED_CLAIMS).
   Router groups enumerated from genesis/api/app.py create_app at the
-  reconciliation SHA (20 include_router calls). Every box names a REAL
+  reconciliation SHA (23 include_router calls resolving to 22 router
+  modules — accounting_periods wires two routers). Every box names a REAL
   module: node labels carry the genesis/... path; the checked-in
   spot-check script `c4-spot-check.py` asserts (a) every cited module
   path exists and (b) every router wired in app.py has a diagram here.
@@ -34,15 +39,15 @@ Cross-cutting application modules (`audit.py`, `outbox.py`,
 `pagination.py`, `batch_runner.py`) appear only where they carry the
 flow being mapped.
 
-## 0. Common request seam (shared by all 20 router groups)
+## 0. Common request seam (shared by all 22 router groups)
 
 ```mermaid
 flowchart LR
     REQ["HTTP request"] --> IDEM["genesis/api/idempotency.py<br/>IdempotencyMiddleware — mutating verbs:<br/>atomic key claim / stored-response replay"]
     IDEM --> AUTH["genesis/application/auth.py<br/>AuthContext from JWT"]
-    AUTH --> PERM["genesis/api/authz.py<br/>RequirePermission — deny by default,<br/>P4 matrix via genesis/domain/rbac.py"]
+    AUTH --> PERM["genesis/api/authz.py<br/>RequirePermission — deny by default,<br/>P4 matrix via genesis/domain/rbac.py<br/>(member surface: RequireMemberPrincipal — diagram 22)"]
     PERM --> TS["genesis/infrastructure/tenancy.py<br/>tenant_session — SET LOCAL app.tenant_id"]
-    TS --> H["router handler (diagrams 1-20)"]
+    TS --> H["router handler (diagrams 1-22)"]
 ```
 
 ## 1. health — `genesis/api/health.py`
@@ -263,11 +268,51 @@ flowchart LR
     S20 --> BR20["genesis/application/batch_runner.py<br/>close pass batches"]
 ```
 
+## 21. member identity (credential-link admin) — `genesis/api/member_identity.py`
+
+P14.5 FM3 (!65). Credential-link create/revoke are AUDITED ADMIN
+MUTATIONS under the dedicated narrow `member_identity:*` permissions —
+never self-service, never implied by `members:edit` (deny by default,
+gate 1.6). Re-linking an email to another member is revoke + create:
+two audited mutations, each notifying the member.
+
+```mermaid
+flowchart LR
+    R21["genesis/api/member_identity.py<br/>GET|POST /members/id/credentials,<br/>POST /credentials/id/revoke"] --> S21["genesis/application/member_identity.py<br/>create_credential (atomic active-email claim:<br/>ON CONFLICT DO NOTHING + rowcount, 0035 partial UNIQUEs),<br/>revoke_credential, list_member_credentials<br/>(locks: lock-order.md §3 member-credential link row —<br/>member row MSELF alone, chain ROOT)"]
+    S21 --> D21A["genesis/domain/members.py<br/>MemberStatus — link eligibility"]
+    S21 --> S21B["genesis/application/audit.py<br/>in-txn audit rows (FM3)"]
+    S21 --> S21C["genesis/application/outbox.py<br/>member notification via outbox"]
+```
+
+## 22. member (member-facing /member surface) — `genesis/api/member.py`
+
+P14.5 (!65). The MEMBER principal's own surface. `/member/auth/*`
+reuses the staff endpoint SHAPES from `genesis/api/auth.py` (bodies,
+response models, rate guard — imported, not copied; gate 1.1) but
+issues MEMBER-audience tokens that can never satisfy a staff
+`RequirePermission` gate (FM1). Business routes carry
+`RequireMemberPrincipal` — the per-request live-link re-check (FM2) —
+and the consent/release services re-verify the link again INSIDE the
+transaction under the guarantee row lock.
+
+```mermaid
+flowchart LR
+    R22["genesis/api/member.py<br/>POST /member/auth/otp/request|otp/verify|refresh,<br/>POST /member/guarantees/id/consent|release"] --> RL22["genesis/infrastructure/rate_limit.py<br/>rate guard shared with genesis/api/auth.py (gate 1.1)"]
+    R22 --> PERM22["genesis/api/authz.py<br/>RequireMemberPrincipal — per-request<br/>live-link re-check (FM2)"]
+    R22 --> S22A["genesis/application/member_auth.py<br/>request_member_otp, verify_member_otp,<br/>rotate_member_refresh_token — identity resolves through<br/>member_credentials (0035), never users.email<br/>(locks: lock-order.md §3 member OTP / refresh rows)"]
+    S22A --> S22B["genesis/application/auth.py<br/>MemberAuthContext — MEMBER-audience<br/>token issue/decode (FM1)"]
+    S22A --> D22A["genesis/domain/otp.py<br/>6-digit, TTL, constant-time compare"]
+    S22A --> D22B["genesis/domain/members.py<br/>MemberStatus gate"]
+    S22A --> OB22["genesis/application/outbox.py<br/>OTP delivery via outbox"]
+    R22 --> S22C["genesis/application/guarantees.py<br/>consent_guarantee_as_member, release_guarantee_as_member<br/>— in-txn link re-verify under the guarantee row lock<br/>(locks: lock-order.md §3 guarantee-consent row, GUAR alone)"]
+```
+
 ## Verification
 
-- **Router completeness**: the 20 groups above are exactly the
-  `include_router` calls in `genesis/api/app.py` `create_app` at the
-  reconciliation SHA (health, auth, members, member_kyc, member_exits,
+- **Router completeness**: the 22 groups above are exactly the
+  router modules resolved from the `include_router` calls in
+  `genesis/api/app.py` `create_app` at the reconciliation SHA (health,
+  auth, members, member_kyc, member_exits, member_identity, member,
   loans, loan_book, transactions, dashboard, dividends, reports,
   tenant_settings, accounting_periods, me, access, users, audit_log,
   branches, corrections, recovery).
