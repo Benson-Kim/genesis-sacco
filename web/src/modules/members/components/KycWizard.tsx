@@ -198,7 +198,7 @@ export function KycWizard({
             </label>
           </div>
           <p className={styles.panelNote}>
-            The prototype's remaining membership inputs (registration fee, share capital,
+            The prototype&apos;s remaining membership inputs (registration fee, share capital,
             contribution amounts and method, home branch, recruited-by, dividend payout
             preference) have NO backend contract on the member record — recorded as
             contract follow-ups on issue #31, never faked here.
@@ -207,7 +207,7 @@ export function KycWizard({
             <>
               <ErrorBanner error={create.error} />
               <p className={styles.panelNote} role="note">
-                If this member's profile already exists (a 409), open their KYC drawer
+                If this member&apos;s profile already exists (a 409), open their KYC drawer
                 from the register instead — nothing was created twice.
               </p>
             </>
