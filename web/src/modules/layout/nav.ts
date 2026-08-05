@@ -22,8 +22,8 @@ export interface NavSection {
 
 /**
  * Sidebar structure mirroring the prototype NAV. Prototype entries
- * without their own RBAC module (guarantors, committee, member exit)
- * live under their owning modules.
+ * without their own RBAC module (guarantors, committee, member exit,
+ * recovery) live under their owning modules.
  */
 export const NAV_SECTIONS: NavSection[] = [
   {
@@ -39,9 +39,6 @@ export const NAV_SECTIONS: NavSection[] = [
       },
       { label: "Loan book", href: "/modules/loan_book", module: "loan_book", icon: "loan_book" },
       {
-        // Prototype Operations ▸ Guarantors; lives under the
-        // applications RBAC module (P9/P13.14 guarantee routes are
-        // gated on applications:edit/view server-side).
         label: "Guarantors",
         href: "/modules/applications/guarantors",
         module: "applications",
@@ -58,8 +55,6 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Governance",
     items: [
-      // Prototype Governance ▸ Credit committee; lives under the
-      // applications RBAC module (P15 module 3).
       {
         label: "Credit committee",
         href: "/modules/applications/committee",
@@ -67,14 +62,30 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: "committee",
       },
       {
-        // Prototype Governance ▸ Member exit; lives under the members
-        // RBAC module (every P12 /member-exits route is gated on
-        // members view/edit/approve server-side — there is no
-        // dedicated exit module in the P4 matrix).
         label: "Member exit",
         href: "/modules/members/exits",
         module: "members",
         icon: "exit",
+      },
+      {
+        // P13.15 corrections console (issue #31 batch 1 — audit #30
+        // R1): the fraud channel's DEDICATED corrections RBAC module,
+        // never generic transactions (A3 maker-checker).
+        label: "Corrections",
+        href: "/modules/corrections",
+        module: "corrections",
+        icon: "transactions",
+      },
+      {
+        // P13.16 recovery worklist (issue #31 batch 1 — audit #30 R1);
+        // lives under the loan_book RBAC module (every /recovery-cases
+        // route is gated on loan_book view/create/edit server-side —
+        // there is no dedicated recovery module in the P4 matrix; the
+        // member-exit-under-members precedent).
+        label: "Recovery",
+        href: "/modules/loan_book/recovery",
+        module: "loan_book",
+        icon: "loan_book",
       },
     ],
   },
