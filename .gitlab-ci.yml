@@ -90,6 +90,34 @@ docs:diagrams:
     - ls -l /tmp/rendered
 
 # -----------------------------------------------------------------------------
+# Docs — semantic spot-check (!38 review R1). The render job above is a
+# SYNTAX gate only; this job runs the checked-in SEMANTIC gate
+# `docs/diagrams/c4-spot-check.py` (stdlib only, no dependencies) from
+# the repo root, so a diagram citing an invented module path, an
+# undocumented router, or a function claim without a matching def is a
+# red pipeline — the drift gate can no longer rot silently as
+# manual-only. Scoped to the exact inputs the check reads: the diagram
+# files AND the router wiring in backend/src/genesis/api/app.py.
+# -----------------------------------------------------------------------------
+docs:spot-check:
+  stage: lint
+  needs: []
+  image: python:3.12-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - docs/diagrams/**/*
+        - backend/src/genesis/api/app.py
+        - backend/migrations/versions/**/*
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes:
+        - docs/diagrams/**/*
+        - backend/src/genesis/api/app.py
+        - backend/migrations/versions/**/*
+  script:
+    - python3 docs/diagrams/c4-spot-check.py
+
+# -----------------------------------------------------------------------------
 # Backend — Python 3.12 / FastAPI
 # -----------------------------------------------------------------------------
 .backend:
@@ -179,6 +207,7 @@ backend:test:
     - cat backend/perf/explain_p136.txt || true
     - cat backend/perf/explain_p137.txt || true
     - cat backend/perf/explain_p138.txt || true
+    - cat backend/perf/explain_p1310.txt || true
     - cat backend/perf/explain_p1311.txt || true
     - cat backend/perf/explain_p1312.txt || true
     - cat backend/perf/explain_p1316.txt || true
