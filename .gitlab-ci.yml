@@ -121,6 +121,7 @@ docs:spot-check:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   script:
     - python3 docs/diagrams/c4-spot-check.py
+    - python3 docs/diagrams/erd-spot-check.py
 
 # -----------------------------------------------------------------------------
 # Backend — Python 3.12 / FastAPI
