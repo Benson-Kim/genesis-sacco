@@ -2982,6 +2982,35 @@
         "title": "MemberActBody",
         "type": "object"
       },
+      "MemberAggregatesOut": {
+        "description": "Advisory financial aggregates on the single-member read (#31).\n\nAll four figures are canonical decimal strings scaled by the\ndatabase (numeric(18,2)); clients render them verbatim and never\ncompute money (P15 blocker (a)). Advisory only: every BINDING money\ndecision recomputes under the established row locks.",
+        "properties": {
+          "deposits_total": {
+            "title": "Deposits Total",
+            "type": "string"
+          },
+          "guarantees_pledged": {
+            "title": "Guarantees Pledged",
+            "type": "string"
+          },
+          "loans_outstanding": {
+            "title": "Loans Outstanding",
+            "type": "string"
+          },
+          "shares_total": {
+            "title": "Shares Total",
+            "type": "string"
+          }
+        },
+        "required": [
+          "deposits_total",
+          "shares_total",
+          "loans_outstanding",
+          "guarantees_pledged"
+        ],
+        "title": "MemberAggregatesOut",
+        "type": "object"
+      },
       "MemberCreateBody": {
         "properties": {
           "email": {
@@ -3023,6 +3052,73 @@
           "name"
         ],
         "title": "MemberCreateBody",
+        "type": "object"
+      },
+      "MemberDetailOut": {
+        "description": "MemberOut expanded with aggregates \u2014 the DETAIL read only.\n\nExpand-only contract change: every MemberOut field is unchanged and\nthe register LIST keeps its flat rows (aggregating every row of a\npage would fan four subqueries out per member, gate 1.3).",
+        "properties": {
+          "aggregates": {
+            "$ref": "#/components/schemas/MemberAggregatesOut"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "member_no": {
+            "title": "Member No",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "member_no",
+          "type",
+          "name",
+          "phone",
+          "email",
+          "status",
+          "version",
+          "aggregates"
+        ],
+        "title": "MemberDetailOut",
         "type": "object"
       },
       "MemberListResponse": {
@@ -10073,6 +10169,7 @@
     },
     "/members/{member_id}": {
       "get": {
+        "description": "Single-member read with advisory aggregates (#31, members:view).\n\nThe existence check runs FIRST: unknown ids (including cross-tenant\nids hidden by RLS) surface 404 before any aggregate is computed, so\nno rejection path ever echoes an amount (least disclosure, gate\n1.6).",
         "operationId": "get_member_members__member_id__get",
         "parameters": [
           {
@@ -10091,7 +10188,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MemberOut"
+                  "$ref": "#/components/schemas/MemberDetailOut"
                 }
               }
             },

@@ -1466,7 +1466,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Member */
+        /**
+         * Get Member
+         * @description Single-member read with advisory aggregates (#31, members:view).
+         *
+         *     The existence check runs FIRST: unknown ids (including cross-tenant
+         *     ids hidden by RLS) surface 404 before any aggregate is computed, so
+         *     no rejection path ever echoes an amount (least disclosure, gate
+         *     1.6).
+         */
         get: operations["get_member_members__member_id__get"];
         /** Update Member */
         put: operations["update_member_members__member_id__put"];
@@ -3165,6 +3173,25 @@ export interface components {
             /** Version */
             version: number;
         };
+        /**
+         * MemberAggregatesOut
+         * @description Advisory financial aggregates on the single-member read (#31).
+         *
+         *     All four figures are canonical decimal strings scaled by the
+         *     database (numeric(18,2)); clients render them verbatim and never
+         *     compute money (P15 blocker (a)). Advisory only: every BINDING money
+         *     decision recomputes under the established row locks.
+         */
+        MemberAggregatesOut: {
+            /** Deposits Total */
+            deposits_total: string;
+            /** Guarantees Pledged */
+            guarantees_pledged: string;
+            /** Loans Outstanding */
+            loans_outstanding: string;
+            /** Shares Total */
+            shares_total: string;
+        };
         /** MemberCreateBody */
         MemberCreateBody: {
             /** Email */
@@ -3174,6 +3201,33 @@ export interface components {
             /** Phone */
             phone?: string | null;
             type: components["schemas"]["MemberType"];
+        };
+        /**
+         * MemberDetailOut
+         * @description MemberOut expanded with aggregates — the DETAIL read only.
+         *
+         *     Expand-only contract change: every MemberOut field is unchanged and
+         *     the register LIST keeps its flat rows (aggregating every row of a
+         *     page would fan four subqueries out per member, gate 1.3).
+         */
+        MemberDetailOut: {
+            aggregates: components["schemas"]["MemberAggregatesOut"];
+            /** Email */
+            email: string | null;
+            /** Id */
+            id: string;
+            /** Member No */
+            member_no: string;
+            /** Name */
+            name: string;
+            /** Phone */
+            phone: string | null;
+            /** Status */
+            status: string;
+            /** Type */
+            type: string;
+            /** Version */
+            version: number;
         };
         /** MemberListResponse */
         MemberListResponse: {
@@ -6731,7 +6785,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MemberOut"];
+                    "application/json": components["schemas"]["MemberDetailOut"];
                 };
             };
             /** @description Validation Error */
