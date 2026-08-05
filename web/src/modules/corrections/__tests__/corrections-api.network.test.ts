@@ -22,7 +22,8 @@
  *   (0025 NOT NULL — a missing key is a contract violation);
  *   checker_id / recovery_case_id are nullable, never optional.
  * - A 409 surfaces as a typed ApiError from ONE request (no
- *   transport-level retry).
+ *   transport-level retry); a 422 surfaces field-level messages as a
+ *   typed ApiError with CANONICAL field keys (W56-5).
  */
 
 // Module scope (two global-script suites would collide under tsc).
@@ -40,6 +41,7 @@ const ADJ_ID = "aaaaaaaa-1111-2222-3333-444444444444";
 const WO_ID = "bbbbbbbb-1111-2222-3333-444444444444";
 
 const calls: FetchCall[] = [];
+let requestStatus = 201;
 let approvalStatus = 201;
 let receiptStatus = 201;
 
@@ -118,6 +120,13 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
     return json(401, { category: "unauthenticated", correlation_id: "corr-a" });
   }
   if (path === "/corrections/repayment-adjustments" && request.method === "POST") {
+    if (requestStatus === 422) {
+      // FastAPI validation body — the loc head is stripped to the
+      // CANONICAL field key by toApiError (W56-5).
+      return json(422, {
+        detail: [{ loc: ["body", "reason"], msg: "String should have at least 10 characters" }],
+      });
+    }
     return json(201, { ...adjustmentOut, internal_lock_note: "ROW-LOCK-SECRET" });
   }
   if (path === `/corrections/repayment-adjustments/${ADJ_ID}` && request.method === "GET") {
@@ -241,6 +250,7 @@ const REFRESH_VALUE = "per-tab-refresh-value";
 
 beforeEach(() => {
   calls.length = 0;
+  requestStatus = 201;
   approvalStatus = 201;
   receiptStatus = 201;
   session.clearSession();
@@ -393,6 +403,21 @@ test("a drifted approval (snapshot re-verification failed, NOTHING posted) surfa
     .catch((error: unknown) => error);
   expect(thrown).toBeInstanceOf(ApiError);
   expect((thrown as InstanceType<typeof ApiError>).status).toBe(409);
+  expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
+});
+
+test("a 422 surfaces field-level messages as ONE typed ApiError (canonical field keys, W56-5) — never a silent success", async () => {
+  requestStatus = 422;
+  const thrown = await correctionsApi
+    .requestAdjustment(REPAYMENT_ID, "too short", "key-adj-422")
+    .catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(ApiError);
+  const apiError = thrown as InstanceType<typeof ApiError>;
+  expect(apiError.status).toBe(422);
+  expect(apiError.category).toBe("validation_error");
+  expect(apiError.fields).toEqual([
+    { field: "reason", message: "String should have at least 10 characters" },
+  ]);
   expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
 });
 

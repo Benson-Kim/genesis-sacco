@@ -19,7 +19,9 @@
  * - LEAST DISCLOSURE (addendum A5): no money key exists anywhere in
  *   the parse; garbage timestamps and unknown vocabulary are REJECTED
  *   at the Zod boundary (the !63 F-R4 lesson); extra keys STRIPPED.
- * - A 409 surfaces as a typed ApiError from ONE request.
+ * - A 409 surfaces as a typed ApiError from ONE request; a 422
+ *   surfaces field-level messages as a typed ApiError with CANONICAL
+ *   field keys (W56-5).
  */
 
 // Module scope (two global-script suites would collide under tsc).
@@ -35,6 +37,7 @@ const LOAN_ID = "22222222-3333-4444-5555-666666666666";
 const CASE_ID = "cccccccc-1111-2222-3333-444444444444";
 
 const calls: FetchCall[] = [];
+let openStatus = 201;
 let dispositionStatus = 200;
 let worklistVariant: "canonical" | "money-smuggle" | "unknown-status" | "garbage-timestamp" =
   "canonical";
@@ -122,6 +125,13 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
     return json(200, { items: [worklistRowOut], next_cursor: "cursor-page-2" });
   }
   if (path === "/recovery-cases" && request.method === "POST") {
+    if (openStatus === 422) {
+      // FastAPI validation body — the loc head is stripped to the
+      // CANONICAL field key by toApiError (W56-5).
+      return json(422, {
+        detail: [{ loc: ["body", "loan_id"], msg: "Input should be a valid UUID" }],
+      });
+    }
     return json(201, { ...caseOut, internal_lock_note: "ROW-LOCK-SECRET" });
   }
   if (path === `/recovery-cases/${CASE_ID}` && request.method === "GET") {
@@ -191,6 +201,7 @@ const REFRESH_VALUE = "per-tab-refresh-value";
 
 beforeEach(() => {
   calls.length = 0;
+  openStatus = 201;
   dispositionStatus = 200;
   worklistVariant = "canonical";
   session.clearSession();
@@ -347,6 +358,19 @@ test("an illegal move through the single gatekeeper (or version drift) surfaces 
     .catch((error: unknown) => error);
   expect(thrown).toBeInstanceOf(ApiError);
   expect((thrown as InstanceType<typeof ApiError>).status).toBe(409);
+  expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
+});
+
+test("a 422 surfaces field-level messages as ONE typed ApiError (canonical field keys, W56-5) — never a silent success", async () => {
+  openStatus = 422;
+  const thrown = await recoveryApi
+    .openCase(LOAN_ID, "key-open-422")
+    .catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(ApiError);
+  const apiError = thrown as InstanceType<typeof ApiError>;
+  expect(apiError.status).toBe(422);
+  expect(apiError.category).toBe("validation_error");
+  expect(apiError.fields).toEqual([{ field: "loan_id", message: "Input should be a valid UUID" }]);
   expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
 });
 
