@@ -11,7 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { Providers } from "@/app/providers";
 import { AuditScreen } from "../components/AuditScreen";
 import * as auditApi from "../api";
-import type { AuditEntry } from "../schemas";
+import { auditEntrySchema, type AuditEntry } from "../schemas";
 
 jest.mock("../api", () => {
   const actual = jest.requireActual<typeof import("../api")>("../api");
@@ -127,4 +127,28 @@ test("actor filter must be a UUID before any request leaves the client", async (
   await user.click(screen.getByRole("button", { name: "Apply filters" }));
   await waitFor(() => expect(mocked.fetchAuditPage).toHaveBeenCalledTimes(2));
   expect(mocked.fetchAuditPage.mock.calls[1]?.[0]).toMatchObject({ actorId: ACTOR });
+});
+
+test("issue #30 A2/S2 accept/reject matrix: `at` asserts the datetime.isoformat() shape (api/audit_log.py) — fmtDateTime can never render 'Invalid Date'", () => {
+  const withAt = (at: string) => auditEntrySchema.safeParse(entry({ at })).success;
+
+  // Legitimate serialisations ACCEPTED (hand-computed from
+  // datetime.isoformat(): naive, fractional-seconds, offset, Zulu).
+  expect(withAt("2026-07-30T12:00:00")).toBe(true);
+  expect(withAt("2026-07-30T12:00:00.123456")).toBe(true);
+  expect(withAt("2026-07-30T12:00:00+00:00")).toBe(true);
+  expect(withAt("2026-07-30T12:00:00Z")).toBe(true);
+
+  // Garbage REJECTED — each previously flowed into fmtDateTime
+  // unchallenged (bare z.string()) on the register AND the drawer.
+  for (const at of [
+    "yesterday-ish",
+    "2026-07-30",
+    "2026-07-30 12:00:00",
+    "30/07/2026T12:00:00",
+    "2026-07-30T12:00",
+    "",
+  ]) {
+    expect(withAt(at)).toBe(false);
+  }
 });

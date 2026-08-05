@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isoTimestampSchema } from "@/lib/schemas";
 
 /**
  * Audit-log entry (P15; salvaged from
@@ -11,7 +12,11 @@ import { z } from "zod";
  */
 export const auditEntrySchema = z.object({
   id: z.number().int(),
-  at: z.string(),
+  /** `datetime.isoformat()` shape (api/audit_log.py `at=entry.at.isoformat()`)
+   * — feeds fmtDateTime in the register row AND the detail drawer
+   * (AuditScreen.tsx): a garbage value is REJECTED at the boundary,
+   * never rendered "Invalid Date" (issue #30 A2/S2 retrofit). */
+  at: isoTimestampSchema,
   actor_id: z.string().nullable(),
   action: z.string(),
   entity: z.string(),

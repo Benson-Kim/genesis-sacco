@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { components } from "@genesis/api-client";
+import { isoTimestampSchema } from "@/lib/schemas";
 
 /**
  * Zod-validated response boundary for the users administration API (P15;
@@ -25,7 +26,12 @@ export const userSchema = z.object({
   // never a styled affordance. The known vocabulary is compile-time
   // pinned to the generated enum below, so it can never silently drift.
   status: z.string(),
-  last_active_at: z.string().nullable(),
+  /** `datetime.isoformat()` or null (api/users.py — serialised only
+   * when the column is set) — feeds fmtDateTime (UserDetailDrawer,
+   * UsersScreen title) and relTime (UsersScreen row): a garbage value
+   * is REJECTED at the boundary, never rendered "Invalid Date"
+   * (issue #30 A2/S2 retrofit). */
+  last_active_at: isoTimestampSchema.nullable(),
   version: z.number().int(),
 });
 

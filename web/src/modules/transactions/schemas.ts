@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isoTimestampSchema, moneySchema } from "@/lib/schemas";
 
 /**
  * Zod-validated response boundary for the transactions module (P15
@@ -94,11 +95,17 @@ export const transactionSchema = z.object({
   txn_ref: z.string(),
   member_id: z.string().nullable(),
   type: txnTypeSchema,
-  /** Decimal string — never a number (blocker (a)). */
-  amount: z.string(),
+  /** CANONICAL server money shape (issue #30 A2/S2 retrofit):
+   * `transactions.amount` is numeric(18,2) CHECK (amount > 0)
+   * (migration 0001) serialised via `str(Decimal)` (_txn_out,
+   * api/transactions.py) — a '-' or a garbage shape is a contract
+   * violation, REJECTED before it can reach fmtKes. */
+  amount: moneySchema,
   channel: channelSchema,
   direction: sideSchema,
-  occurred_at: z.string(),
+  /** `datetime.isoformat()` shape — feeds fmtDateTime on the register
+   * (the !63 F-R4 lesson): garbage is REJECTED, never "Invalid Date". */
+  occurred_at: isoTimestampSchema,
   is_reversal: z.boolean(),
 });
 
@@ -110,8 +117,12 @@ export type Transaction = z.infer<typeof transactionSchema>;
 export const accountTxnSchema = z.object({
   txn_id: z.string(),
   txn_ref: z.string(),
-  amount: z.string(),
-  balance_after: z.string(),
+  /** to_cents results (application/transactions.py), both fmtKes-fed:
+   * canonical two-place shape; `deposit_accounts.balance` carries
+   * CHECK (balance >= 0) (migration 0001) so a '-' is a contract
+   * violation on either field (issue #30 A2/S2 retrofit). */
+  amount: moneySchema,
+  balance_after: moneySchema,
 });
 
 export type AccountTxn = z.infer<typeof accountTxnSchema>;
@@ -120,14 +131,23 @@ export type AccountTxn = z.infer<typeof accountTxnSchema>;
  * server's (period resolved server-side in strict quarter order; the
  * rate comes exclusively from tenant configuration). */
 export const interestRunSchema = z.object({
+  /** Quarter bounds are DATE isoformat ("YYYY-MM-DD",
+   * api/transactions.py period.start.isoformat()) rendered VERBATIM in
+   * the dialog — deliberately NOT isoTimestampSchema, which would
+   * reject every legitimate response (issue #30 A2/S2 sweep note). */
   period_start: z.string(),
   period_end: z.string(),
+  /** Tenant-configured rate string (not money, never fmtKes-fed) —
+   * scale is the stored configuration's, so no shape is asserted. */
   annual_rate_pct: z.string(),
   scanned: z.number().int(),
   posted: z.number().int(),
   skipped_existing: z.number().int(),
   rate_mismatches: z.number().int(),
-  total_interest: z.string(),
+  /** ZERO ("0.00") plus to_cents postings (deposit_interest.py) — the
+   * canonical two-place shape even for an all-skipped run; fmtKes-fed
+   * (issue #30 A2/S2 retrofit). */
+  total_interest: moneySchema,
   batches: z.number().int(),
 });
 

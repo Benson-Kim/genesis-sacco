@@ -23,6 +23,7 @@ const calls: FetchCall[] = [];
 let refreshStatus = 200;
 let refreshCount = 0;
 let lastIssuedAccess: string | null = null;
+let userGarbageLastActive = false;
 
 function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -77,6 +78,9 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
     return json(200, { items: [userOut], next_cursor: null });
   }
   if (path === `/users/${USER_ID}` && request.method === "GET") {
+    if (userGarbageLastActive) {
+      return json(200, { ...userOut, last_active_at: "yesterday-ish" });
+    }
     return json(200, userOut);
   }
   if (path === "/users" && request.method === "POST") {
@@ -124,6 +128,7 @@ const tabStorage = new Map<string, string>();
 /* eslint-disable @typescript-eslint/no-require-imports */
 const session = require("@/modules/auth/session") as typeof import("@/modules/auth/session");
 const usersApi = require("../api") as typeof import("../api");
+const userSchemas = require("../schemas") as typeof import("../schemas");
 const auditApi = require("@/modules/audit/api") as typeof import("@/modules/audit/api");
 const { ApiError } = require("@genesis/api-client") as typeof import("@genesis/api-client");
 /* eslint-enable @typescript-eslint/no-require-imports */
@@ -136,6 +141,7 @@ beforeEach(() => {
   refreshStatus = 200;
   refreshCount = 0;
   lastIssuedAccess = null;
+  userGarbageLastActive = false;
   session.clearSession();
   session.setSession({ accessToken: jwt(USER_ID, 900), refreshToken: REFRESH_SECRET });
 });
@@ -209,4 +215,38 @@ test("failed refresh tears the session down and surfaces 401 (re-login flow)", a
 
   const thrown = await usersApi.fetchUser(USER_ID).catch((error: unknown) => error);
   expect(thrown).toBeInstanceOf(ApiError);
+});
+
+test("a garbage last_active_at is REJECTED at the wire boundary (issue #30 A2/S2) — the record can never reach fmtDateTime/relTime", async () => {
+  userGarbageLastActive = true;
+  const thrown = await usersApi.fetchUser(USER_ID).catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("last_active_at");
+});
+
+test("issue #30 A2/S2 accept/reject matrix: last_active_at asserts the datetime.isoformat() shape (api/users.py — null only when the column is unset)", () => {
+  const withLastActive = (value: string | null) =>
+    userSchemas.userSchema.safeParse({ ...userOut, last_active_at: value }).success;
+
+  // Legitimate serialisations ACCEPTED (hand-computed from
+  // datetime.isoformat(): naive, fractional-seconds, offset, Zulu).
+  expect(withLastActive(null)).toBe(true);
+  expect(withLastActive("2026-07-30T12:00:00")).toBe(true);
+  expect(withLastActive("2026-07-30T12:00:00.123456")).toBe(true);
+  expect(withLastActive("2026-07-30T12:00:00+00:00")).toBe(true);
+  expect(withLastActive("2026-07-30T12:00:00Z")).toBe(true);
+
+  // Garbage REJECTED — each previously flowed into fmtDateTime/relTime
+  // unchallenged (bare z.string()) and rendered "Invalid Date".
+  for (const value of [
+    "yesterday-ish",
+    "2026-07-30",
+    "2026-07-30 12:00:00",
+    "30/07/2026T12:00:00",
+    "2026-07-30T12:00",
+    "",
+  ]) {
+    expect(withLastActive(value)).toBe(false);
+  }
 });
