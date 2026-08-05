@@ -252,5 +252,3 @@ export function CorrectionsScreen() {
     </div>
   );
 }
-;
-}
