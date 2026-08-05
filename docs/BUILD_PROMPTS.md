@@ -1592,10 +1592,10 @@ unchanged; proven on !26–!30; apply to every prompt from here forward):
     `.latest` template variants landed the jobs DO spawn and pass on MR
     pipelines — observed on !64's pipelines 2731230146 / 2731298427 and
     !67's 2731979233, and re-verified IN THIS PROJECT (post-move) on
-    !70's pipeline 2733651430 (`semgrep-sast`, `secret_detection`,
-    `gemnasium-dependency_scanning`,
+    !70's final MR pipeline 2734307715 (`semgrep-sast`,
+    `secret_detection`, `gemnasium-dependency_scanning`,
     `gemnasium-python-dependency_scanning` — all spawned and passed;
-    the pre-move pipeline ids no longer resolve here, so 2733651430 is
+    the pre-move pipeline ids no longer resolve here, so 2734307715 is
     the citable evidence), reconciled here by the issue-#30 close-out
     MR (Hat 6 D7: the standing rule itself had become the stale
     claim). The rule's HONESTY core is unchanged:
