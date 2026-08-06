@@ -114,6 +114,17 @@ export async function requestAdjustment(
   return adjustmentSchema.parse(data);
 }
 
+/** Single adjustment record — the FRESH read (record class, staleTime
+ * 0) behind the checker writes (corrections:view). */
+export async function fetchAdjustment(adjustmentId: string): Promise<AdjustmentRecord> {
+  const { data, error, response } = await api.GET(
+    "/corrections/repayment-adjustments/{adjustment_id}",
+    { params: { path: { adjustment_id: adjustmentId } } },
+  );
+  if (error !== undefined || data === undefined) throw toApiError(error, response);
+  return adjustmentSchema.parse(data);
+}
+
 /**
  * CHECKER phase (issue #24, corrections:approve): approve the
  * PERSISTED snapshot. The body is DELIBERATELY EMPTY (v1.1 rule 3) —
