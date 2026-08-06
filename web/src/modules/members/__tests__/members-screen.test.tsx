@@ -38,6 +38,18 @@ const MEMBER = {
     version: 1,
 };
 
+// DELIBERATELY NON-ADDITIVE aggregate fixture (#31 batch 3 review): no
+// figure equals any combination of the others, so a register that
+// summed or derived a figure would surface a string asserted ABSENT.
+const AGGREGATES = {
+    deposits_total: "1000.11",
+    shares_total: "200.22",
+    loans_outstanding: "300.33",
+    guarantees_pledged: "40.04",
+};
+
+const MEMBER_WITH_AGGREGATES = { ...MEMBER, aggregates: AGGREGATES };
+
 /**
  * Minimal Response stand-in: toApiError reads ONLY `.status` and jsdom has
  * no fetch globals (same pattern as contract-helpers.test.ts).
@@ -51,10 +63,20 @@ function ok(data: unknown) {
 }
 
 function wirePermissions(payload: unknown) {
-    mockGet.mockImplementation((path: string) => {
+    mockGet.mockImplementation((path: string, options?: unknown) => {
         if (path === "/me/permissions") return Promise.resolve(ok(payload));
-        if (path === "/members")
+        if (path === "/members") {
+            // The wire mirrors the server contract (#31 batch 3
+            // review): rows carry aggregates ONLY when the request
+            // opted in with include=aggregates.
+            const query = (options as { params?: { query?: Record<string, unknown> } } | undefined)
+                ?.params?.query;
+            if (query?.["include"] === "aggregates")
+                return Promise.resolve(
+                    ok({ items: [MEMBER_WITH_AGGREGATES], next_cursor: null }),
+                );
             return Promise.resolve(ok({ items: [MEMBER], next_cursor: null }));
+        }
         return Promise.reject(new Error(`unexpected GET ${path}`));
     });
 }
@@ -99,7 +121,7 @@ describe("route guard (FM: deny-by-default)", () => {
 });
 
 describe("MembersScreen", () => {
-    it("lists members via the keyset contract — cursor/limit only, no offsets", async () => {
+    it("lists members via the keyset contract — cursor/limit only, no offsets; the register OPTS IN to aggregates with include=aggregates", async () => {
         wirePermissions(FULL_PERMISSIONS);
         renderScreen(<MembersScreen />);
         expect(await screen.findByText("Amina Odhiambo")).toBeInTheDocument();
@@ -107,9 +129,65 @@ describe("MembersScreen", () => {
         expect(listCall).toBeDefined();
         const query = (listCall?.[1] as { params: { query: Record<string, unknown> } }).params
             .query;
-        expect(Object.keys(query).sort()).toEqual(["cursor", "limit", "status", "type"]);
+        expect(Object.keys(query).sort()).toEqual([
+            "cursor",
+            "include",
+            "limit",
+            "status",
+            "type",
+        ]);
+        expect(query["include"]).toBe("aggregates");
         expect(query).not.toHaveProperty("offset");
         expect(query).not.toHaveProperty("page");
+    });
+
+    it("renders the four server aggregate strings VERBATIM per row and NEVER sums them — the non-additive fixture proves no derived figure exists (#31 batch 3 review)", async () => {
+        wirePermissions(FULL_PERMISSIONS);
+        renderScreen(<MembersScreen />);
+        expect(await screen.findByText("Amina Odhiambo")).toBeInTheDocument();
+        // All four SERVER strings, byte-identical (no KES prefix, no
+        // grouping, no re-formatting).
+        expect(await screen.findByText("1000.11")).toBeInTheDocument();
+        expect(screen.getByText("200.22")).toBeInTheDocument();
+        expect(screen.getByText("300.33")).toBeInTheDocument();
+        expect(screen.getByText("40.04")).toBeInTheDocument();
+        // Hand-computed HERE, in the test, from the fixture: deposits
+        // with shares would read 1200.33; a grand figure across all
+        // four would read 1540.70; deposits net of loans would read
+        // 699.78. None may exist anywhere on the register.
+        expect(screen.queryByText("1200.33")).toBeNull();
+        expect(screen.queryByText("1540.70")).toBeNull();
+        expect(screen.queryByText("699.78")).toBeNull();
+    });
+
+    it("renders a hostile aggregate string byte-identical as inert TEXT (never a parser sink)", async () => {
+        const hostileFigure = "<img src=x onerror=window.__pwned=7>";
+        mockGet.mockImplementation((path: string, options?: unknown) => {
+            if (path === "/me/permissions") return Promise.resolve(ok(FULL_PERMISSIONS));
+            if (path === "/members") {
+                const query = (
+                    options as { params?: { query?: Record<string, unknown> } } | undefined
+                )?.params?.query;
+                if (query?.["include"] === "aggregates")
+                    return Promise.resolve(
+                        ok({
+                            items: [
+                                {
+                                    ...MEMBER_WITH_AGGREGATES,
+                                    aggregates: { ...AGGREGATES, deposits_total: hostileFigure },
+                                },
+                            ],
+                            next_cursor: null,
+                        }),
+                    );
+                return Promise.resolve(ok({ items: [MEMBER], next_cursor: null }));
+            }
+            return Promise.reject(new Error(`unexpected GET ${path}`));
+        });
+        const { container } = renderScreen(<MembersScreen />);
+        expect(await screen.findByText(hostileFigure)).toBeInTheDocument();
+        expect(container.querySelector("img")).toBeNull();
+        expect(container.querySelector("script")).toBeNull();
     });
 
     it("hides the register affordance without can_create (UI never offers what the API forbids)", async () => {

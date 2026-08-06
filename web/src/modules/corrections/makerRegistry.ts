@@ -20,10 +20,16 @@
  * (gate 1.6): the requester can never vote on nor post their own
  * write-off (403, keyed on the persisted requested_by), and the
  * decision needs the committee quorum (the P9 machinery).
+ *
+ * Storage (issue #30 finding S3): the shared createSessionScopedRegistry
+ * primitive — teardown on BOTH session-death paths (the query-path 401
+ * dual-cache teardown and explicit sign-out) is wired by construction
+ * (W58-2, the !60 F2 class). This wrapper keeps the module's exported
+ * vocabulary byte-compatible.
  */
-import { registerSessionScopedStore } from "@/modules/auth/sessionScopedStores";
+import { createSessionScopedRegistry } from "@/modules/auth/createSessionScopedRegistry";
 
-const makers = new Map<string, string>();
+const makers = createSessionScopedRegistry<string, string>();
 
 /** Sentinel for "maker not witnessed by this tab" — never a valid UUID. */
 export const WRITE_OFF_MAKER_UNKNOWN = "write-off-maker-unknown";
@@ -38,15 +44,8 @@ export function writeOffMakerOf(writeOffId: string): string {
   return makers.get(writeOffId) ?? WRITE_OFF_MAKER_UNKNOWN;
 }
 
-/** Session-teardown hygiene (W58-2, the !60 F2 class): registered as a
- * session-scoped store below, so BOTH teardown paths — the query-path
- * 401 dual-cache teardown and explicit sign-out — clear it. A prior
- * operator's requests never feed the next session's MakerCheckerPanel
- * SoD decision. Also test hygiene. */
+/** Session-teardown hygiene (W58-2): the registry is torn down by
+ * construction; this named clear stays for test hygiene and callers. */
 export function clearWriteOffMakers(): void {
   makers.clear();
 }
-
-// Teardown wiring by construction (W58-2): registration at module scope
-// means the registry cannot exist without dying on session teardown.
-registerSessionScopedStore(clearWriteOffMakers);

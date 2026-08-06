@@ -16,30 +16,23 @@
  * registered below, so both teardown paths clear it and the next
  * operator's tab never inherits a previous operator's spent votes.
  *
- * NOTE (issue #30 finding S3 discipline): this is the fifth copy of
- * the session-scoped registry pattern; the S3 disposition on #30
- * assigns the `createSessionScopedRegistry` consolidation to the
- * FIRST #31 batch that adds another registry copy. Batch 1
- * (corrections/recoveries) is IN FLIGHT on its own branch adding its
- * own copies — consolidating here would collide file-for-file with
- * that concurrent session, so the refactor is deferred to the first
- * batch that lands AFTER both (recorded in the MR; extending, never
- * weakening, the S3 disposition's intent).
+ * RESOLVED (issue #30 finding S3): the S3 disposition assigned the
+ * `createSessionScopedRegistry` consolidation to the first #31 batch
+ * landing after both in-flight batches — batch 3 delivered it; this
+ * wrapper now consumes the shared primitive.
+ *
+ * Storage: the shared createSessionScopedRegistry primitive — teardown
+ * on both session-death paths and the reactive read are wired by
+ * construction. This wrapper keeps the module's exported vocabulary
+ * byte-compatible.
  */
-import { useSyncExternalStore } from "react";
-import { registerSessionScopedStore } from "@/modules/auth/sessionScopedStores";
+import { createSessionScopedRegistry } from "@/modules/auth/createSessionScopedRegistry";
 
-const voted = new Set<string>();
-const listeners = new Set<() => void>();
-
-function emit(): void {
-  for (const listener of listeners) listener();
-}
+const voted = createSessionScopedRegistry<string, true>();
 
 /** Record that THIS TAB cast a vote on declaration `declarationId`. */
 export function recordVotedDeclaration(declarationId: string): void {
-  voted.add(declarationId);
-  emit();
+  voted.set(declarationId, true);
 }
 
 /** Whether THIS TAB already voted on declaration `declarationId`. */
@@ -47,29 +40,13 @@ export function hasVotedOnDeclaration(declarationId: string): boolean {
   return voted.has(declarationId);
 }
 
-/** Session-teardown hygiene (W58-2): registered as a session-scoped
- * store below. Also test hygiene. */
+/** Session-teardown hygiene (W58-2): the registry is torn down by
+ * construction; this named clear stays for test hygiene and callers. */
 export function clearVotedDeclarations(): void {
   voted.clear();
-  emit();
-}
-
-// Teardown wiring by construction (W58-2): registration at module scope
-// means the registry cannot exist without dying on session teardown.
-registerSessionScopedStore(clearVotedDeclarations);
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
 }
 
 /** Reactive read for the detail drawer (re-renders on record/clear). */
 export function useHasVotedOnDeclaration(declarationId: string): boolean {
-  return useSyncExternalStore(
-    subscribe,
-    () => voted.has(declarationId),
-    () => false,
-  );
+  return voted.useHas(declarationId);
 }

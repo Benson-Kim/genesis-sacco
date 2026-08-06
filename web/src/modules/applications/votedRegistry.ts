@@ -15,21 +15,19 @@
  * those the server's 409 remains the enforcer (gate 1.6). Session-scoped
  * per W58-2: registered below, so both teardown paths clear it and the
  * next operator's tab never inherits a previous operator's spent votes.
+ *
+ * Storage (issue #30 finding S3): the shared createSessionScopedRegistry
+ * primitive — teardown on both session-death paths and the reactive
+ * read are wired by construction. This wrapper keeps the module's
+ * exported vocabulary byte-compatible.
  */
-import { useSyncExternalStore } from "react";
-import { registerSessionScopedStore } from "@/modules/auth/sessionScopedStores";
+import { createSessionScopedRegistry } from "@/modules/auth/createSessionScopedRegistry";
 
-const voted = new Set<string>();
-const listeners = new Set<() => void>();
-
-function emit(): void {
-  for (const listener of listeners) listener();
-}
+const voted = createSessionScopedRegistry<string, true>();
 
 /** Record that THIS TAB cast a vote on `applicationId`. */
 export function recordVotedApplication(applicationId: string): void {
-  voted.add(applicationId);
-  emit();
+  voted.set(applicationId, true);
 }
 
 /** Whether THIS TAB already voted on `applicationId`. */
@@ -37,29 +35,13 @@ export function hasVotedOn(applicationId: string): boolean {
   return voted.has(applicationId);
 }
 
-/** Session-teardown hygiene (W58-2): registered as a session-scoped
- * store below. Also test hygiene. */
+/** Session-teardown hygiene (W58-2): the registry is torn down by
+ * construction; this named clear stays for test hygiene and callers. */
 export function clearVotedApplications(): void {
   voted.clear();
-  emit();
-}
-
-// Teardown wiring by construction (W58-2): registration at module scope
-// means the registry cannot exist without dying on session teardown.
-registerSessionScopedStore(clearVotedApplications);
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
 }
 
 /** Reactive read for the review panel (re-renders on record/clear). */
 export function useHasVotedOn(applicationId: string): boolean {
-  return useSyncExternalStore(
-    subscribe,
-    () => voted.has(applicationId),
-    () => false,
-  );
+  return voted.useHas(applicationId);
 }

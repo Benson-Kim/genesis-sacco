@@ -21,10 +21,16 @@
  * cannot match). The ENFORCED invariants are server-side regardless
  * (gate 1.6): both self-acts 403 on the persisted requested_by, and
  * the decision needs the configured quorum (the P9 machinery).
+ *
+ * Storage (issue #30 finding S3): the shared createSessionScopedRegistry
+ * primitive — teardown on BOTH session-death paths (the query-path 401
+ * dual-cache teardown and explicit sign-out) is wired by construction
+ * (W58-2, the !60 F2 class). This wrapper keeps the module's exported
+ * vocabulary byte-compatible.
  */
-import { registerSessionScopedStore } from "@/modules/auth/sessionScopedStores";
+import { createSessionScopedRegistry } from "@/modules/auth/createSessionScopedRegistry";
 
-const makers = new Map<string, string>();
+const makers = createSessionScopedRegistry<string, string>();
 
 /** Sentinel for "maker not witnessed by this tab" — never a valid UUID. */
 export const DIVIDEND_MAKER_UNKNOWN = "dividend-maker-unknown";
@@ -39,15 +45,8 @@ export function dividendMakerOf(declarationId: string): string {
   return makers.get(declarationId) ?? DIVIDEND_MAKER_UNKNOWN;
 }
 
-/** Session-teardown hygiene (W58-2, the !60 F2 class): registered as a
- * session-scoped store below, so BOTH teardown paths — the query-path
- * 401 dual-cache teardown and explicit sign-out — clear it. A prior
- * operator's declarations never feed the next session's
- * MakerCheckerPanel SoD decision. Also test hygiene. */
+/** Session-teardown hygiene (W58-2): the registry is torn down by
+ * construction; this named clear stays for test hygiene and callers. */
 export function clearDividendMakers(): void {
   makers.clear();
 }
-
-// Teardown wiring by construction (W58-2): registration at module scope
-// means the registry cannot exist without dying on session teardown.
-registerSessionScopedStore(clearDividendMakers);

@@ -37,6 +37,9 @@ const calls: FetchCall[] = [];
 let createStatus = 201;
 let listUnknownStatus = false;
 let listUnknownType = false;
+let detailWithoutAggregates = false;
+let listItemWithoutAggregates = false;
+let listVolunteersAggregates = false;
 
 function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -56,6 +59,18 @@ const memberOut = {
   email: null,
   status: "active",
   version: 1,
+};
+
+// The DETAIL read (#31 batch 3): the same GET also carries the four
+// advisory aggregates as decimal STRINGS (MemberDetailOut).
+const memberDetailOut = {
+  ...memberOut,
+  aggregates: {
+    deposits_total: "1500.50",
+    shares_total: "750.25",
+    loans_outstanding: "2500.10",
+    guarantees_pledged: "1000.40",
+  },
 };
 
 function json(status: number, body: unknown): Response {
@@ -80,6 +95,20 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
     if (listUnknownType) {
       return json(200, { items: [{ ...memberOut, type: "trust" }], next_cursor: null });
     }
+    // The OPT-IN expand (#31 batch 3 review): items carry the
+    // aggregates object ONLY when the request asked for it.
+    if (new URL(request.url).searchParams.get("include") === "aggregates") {
+      if (listItemWithoutAggregates) {
+        return json(200, { items: [memberOut], next_cursor: null });
+      }
+      return json(200, {
+        items: [{ ...memberDetailOut, internal_row_hint: "LEDGER-SECRET" }],
+        next_cursor: "cursor-page-2",
+      });
+    }
+    if (listVolunteersAggregates) {
+      return json(200, { items: [memberDetailOut], next_cursor: null });
+    }
     return json(200, { items: [memberOut], next_cursor: "cursor-page-2" });
   }
   if (path === "/members" && request.method === "POST") {
@@ -96,7 +125,10 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
     return json(201, { ...memberOut, internal_account_seed: "LEDGER-SECRET" });
   }
   if (path === `/members/${MEMBER_ID}` && request.method === "GET") {
-    return json(200, memberOut);
+    if (detailWithoutAggregates) {
+      return json(200, memberOut);
+    }
+    return json(200, { ...memberDetailOut, internal_ledger_hint: "LEDGER-SECRET" });
   }
   return json(404, { category: "not_found", correlation_id: "corr-n" });
 }
@@ -144,6 +176,9 @@ beforeEach(() => {
   createStatus = 201;
   listUnknownStatus = false;
   listUnknownType = false;
+  detailWithoutAggregates = false;
+  listItemWithoutAggregates = false;
+  listVolunteersAggregates = false;
   session.clearSession();
   session.setSession({ accessToken: jwt(USER_ID, 900), refreshToken: REFRESH_VALUE });
 });
@@ -165,6 +200,9 @@ test("GET /members: keyset params ONLY (no offset/page); the opaque cursor echoe
   expect(first.searchParams.has("page")).toBe(false);
   expect(first.searchParams.has("status")).toBe(false);
   expect(first.searchParams.has("type")).toBe(false);
+  // The flat fetch NEVER opts in: without include the request (and so
+  // the response) is byte-identical to the pre-expand contract.
+  expect(first.searchParams.has("include")).toBe(false);
 
   const second = new URL(calls[1]!.url);
   expect(second.searchParams.get("cursor")).toBe("cursor-page-2");
@@ -189,6 +227,57 @@ test("GET /members: status and type filters are SERVER-side query parameters", a
   expect(url.searchParams.has("page")).toBe(false);
 });
 
+test("GET /members?include=aggregates (#31 batch 3 review): the OPT-IN expand sends the include parameter, keeps the keyset contract, and every row's aggregates parses KEY-EXACT with the decimal strings VERBATIM; extra response keys are STRIPPED", async () => {
+  const page = await membersApi.fetchMembersPageWithAggregates(EMPTY_FILTERS, null);
+  await membersApi.fetchMembersPageWithAggregates(EMPTY_FILTERS, "cursor-page-2");
+  expect(calls).toHaveLength(2);
+
+  const first = new URL(calls[0]!.url);
+  expect(first.pathname).toBe("/members");
+  expect(first.searchParams.get("include")).toBe("aggregates");
+  expect(first.searchParams.get("limit")).toBe(String(membersApi.MEMBERS_PAGE_SIZE));
+  expect(first.searchParams.has("offset")).toBe(false);
+  expect(first.searchParams.has("page")).toBe(false);
+  const second = new URL(calls[1]!.url);
+  expect(second.searchParams.get("include")).toBe("aggregates");
+  expect(second.searchParams.get("cursor")).toBe("cursor-page-2");
+
+  const row = page.items[0]!;
+  // Key-exactness: exactly the four contract fields per row.
+  expect(Object.keys(row.aggregates).sort()).toEqual([
+    "deposits_total",
+    "guarantees_pledged",
+    "loans_outstanding",
+    "shares_total",
+  ]);
+  // Decimal STRINGS, byte-identical to the wire (never numbers — no
+  // client-side money math can even start from here).
+  expect(row.aggregates.deposits_total).toBe("1500.50");
+  expect(row.aggregates.shares_total).toBe("750.25");
+  expect(row.aggregates.loans_outstanding).toBe("2500.10");
+  expect(row.aggregates.guarantees_pledged).toBe("1000.40");
+  // The stubbed internal field can never reach a screen (STRIPPED).
+  expect("internal_row_hint" in row).toBe(false);
+  expect(page.nextCursor).toBe("cursor-page-2");
+});
+
+test("GET /members?include=aggregates: a row MISSING the aggregates object is a contract violation and is REJECTED (required, not optional)", async () => {
+  listItemWithoutAggregates = true;
+  const thrown = await membersApi
+    .fetchMembersPageWithAggregates(EMPTY_FILTERS, null)
+    .catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("aggregates");
+});
+
+test("GET /members (flat): a server that VOLUNTEERS aggregates without the opt-in gets them STRIPPED — the flat projection can never render money", async () => {
+  listVolunteersAggregates = true;
+  const page = await membersApi.fetchMembersPage(EMPTY_FILTERS, null);
+  expect(page.items).toHaveLength(1);
+  expect("aggregates" in page.items[0]!).toBe(false);
+});
+
 test("GET /members/{id}: the id travels as a PATH parameter with no query string", async () => {
   const member = await membersApi.fetchMember(MEMBER_ID);
   expect(calls).toHaveLength(1);
@@ -197,6 +286,41 @@ test("GET /members/{id}: the id travels as a PATH parameter with no query string
   expect(url.search).toBe("");
   expect(member.member_no).toBe("GP-0001");
   expect(member.version).toBe(1);
+  // The name-resolve projection strips the aggregates object entirely:
+  // cross-module consumers can never accidentally render money.
+  expect("aggregates" in member).toBe(false);
+});
+
+test("GET /members/{id} DETAIL: the aggregates object parses KEY-EXACT — the four decimal strings VERBATIM and nothing else; extra response keys are STRIPPED", async () => {
+  const detail = await membersApi.fetchMemberDetail(MEMBER_ID);
+  expect(calls).toHaveLength(1);
+  const url = new URL(calls[0]!.url);
+  expect(url.pathname).toBe(`/members/${MEMBER_ID}`);
+  expect(url.search).toBe("");
+  // Key-exactness: exactly the four contract fields (falsifiable: add
+  // or drop a key in the schema and this fails).
+  expect(Object.keys(detail.aggregates).sort()).toEqual([
+    "deposits_total",
+    "guarantees_pledged",
+    "loans_outstanding",
+    "shares_total",
+  ]);
+  // Decimal STRINGS, byte-identical to the wire (never numbers — no
+  // client-side money math can even start from here).
+  expect(detail.aggregates.deposits_total).toBe("1500.50");
+  expect(detail.aggregates.shares_total).toBe("750.25");
+  expect(detail.aggregates.loans_outstanding).toBe("2500.10");
+  expect(detail.aggregates.guarantees_pledged).toBe("1000.40");
+  // The stubbed internal field can never reach a screen (STRIPPED).
+  expect("internal_ledger_hint" in detail).toBe(false);
+});
+
+test("GET /members/{id} DETAIL: a response MISSING the aggregates object is a contract violation and is REJECTED (required, not optional)", async () => {
+  detailWithoutAggregates = true;
+  const thrown = await membersApi.fetchMemberDetail(MEMBER_ID).catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(ApiError);
+  expect(String(thrown)).toContain("aggregates");
 });
 
 test("POST /members (create flow): the body carries {type, name, phone, email} and NOTHING else; the Idempotency-Key travels as a HEADER; the write query string is EMPTY; EXTRA response keys are STRIPPED", async () => {
