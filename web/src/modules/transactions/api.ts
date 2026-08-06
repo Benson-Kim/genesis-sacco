@@ -25,11 +25,13 @@ import { api } from "@/lib/api";
 import {
   accountTxnSchema,
   interestRunSchema,
+  transactionLegsSchema,
   transactionSchema,
   type AccountTxn,
   type CashChannel,
   type Channel,
   type InterestRun,
+  type LedgerLeg,
   type Side,
   type Transaction,
   type TxnType,
@@ -83,6 +85,24 @@ export async function fetchTransactionsPage(
   });
   if (error !== undefined || data === undefined) throw toApiError(error, response);
   return transactionPageSchema.parse(data);
+}
+
+/**
+ * The double-entry DR/CR legs of one posting (#31 ledger (g) — the
+ * expand-only drill-down, transactions:view). Verbatim ledger_entries
+ * facts in the server's total order (debits first), parsed strictly
+ * at the Zod boundary and rendered VERBATIM: never summed, never
+ * netted (P15 blocker (a)) — the 0004/0014 DB trigger proved balance
+ * at commit time. Unpaginated BY CONSTRUCTION (bounded leg count per
+ * posting); the id travels as a path parameter serialized by the
+ * generated client (gate 1.6).
+ */
+export async function fetchTransactionLegs(txnId: string): Promise<LedgerLeg[]> {
+  const { data, error, response } = await api.GET("/transactions/{transaction_id}/legs", {
+    params: { path: { transaction_id: txnId } },
+  });
+  if (error !== undefined || data === undefined) throw toApiError(error, response);
+  return transactionLegsSchema.parse(data).items;
 }
 
 /** The wire body of every P11 teller write: the typed decimal STRING

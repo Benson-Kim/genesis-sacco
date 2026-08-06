@@ -120,6 +120,39 @@ export const transactionSchema = z.object({
 
 export type Transaction = z.infer<typeof transactionSchema>;
 
+/** One DR or CR leg of a posting (LedgerLegOut — #31 ledger (g), the
+ * expand-only legs drill-down under transactions:view). Verbatim
+ * ledger_entries facts, one row per leg, NOTHING derived:
+ * - account: the chart-of-accounts KEY (backend Account enum). An
+ *   OPEN vocabulary at this boundary by design — the chart grows with
+ *   backend features (issue #19 added a liability account; #21/#23
+ *   added recovery accounts) and a stale client pin would REJECT
+ *   legitimate ledger facts; the key renders exclusively as inert
+ *   React text and never drives a parser or a branch.
+ * - side: the CLOSED two-value vocabulary (shared sideSchema) — an
+ *   unknown side is a contract violation and is REJECTED.
+ * - amount: `ledger_entries.amount` is numeric(18,2) CHECK (amount >
+ *   0) (migration 0001) serialised via str(Decimal) — the shared
+ *   moneySchema shape; a sign or a garbage shape is REJECTED before
+ *   it can reach fmtKes. Legs render VERBATIM and are never summed or
+ *   netted (P15 blocker (a)): the 0004/0014 DB trigger proved balance
+ *   at commit time — no client-side balancing total exists. */
+export const ledgerLegSchema = z.object({
+  account: z.string(),
+  side: sideSchema,
+  amount: moneySchema,
+});
+
+export type LedgerLeg = z.infer<typeof ledgerLegSchema>;
+
+/** TransactionLegsResponse: items ONLY — the contract is unpaginated
+ * BY CONSTRUCTION (the widest posting builder writes 7 legs) and
+ * carries NO derived key (neither a sum nor a net figure); anything
+ * wider is stripped, never rendered. */
+export const transactionLegsSchema = z.object({
+  items: z.array(ledgerLegSchema),
+});
+
 /** Teller-write result (AccountTxnOut): the posted amount and the
  * SERVER-computed balance after, verbatim. Extra keys are STRIPPED at
  * this boundary. */

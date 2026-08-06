@@ -23,9 +23,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Banner, Modal } from "@genesis/design-system";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
+import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { fmtDateTime, fmtKes } from "@/lib/format";
 import { STALE_TIME } from "@/lib/query";
 import { fetchMember } from "@/modules/members/api";
+import { fetchTransactionLegs } from "../api";
 import { CHANNEL_LABELS, SIDE_LABELS, type Transaction } from "../schemas";
 import { directionPill, reversalPill, txnTypePill } from "./pills";
 import styles from "./Transactions.module.css";
@@ -48,6 +50,19 @@ export function TransactionDetailDrawer({
 }>) {
   const permissions = usePermissions();
   const mayViewMembers = can(permissions.data, "members", "view");
+  const mayViewTransactions = can(permissions.data, "transactions", "view");
+
+  // Double-entry legs drill-down (#31 ledger (g)): the append-only
+  // ledger_entries truth behind this row, one item per DR/CR leg.
+  // Structurally withheld without transactions:view (deny-by-default:
+  // no grant, no probe — gate 1.6); ledger rows are immutable server
+  // facts, so the register staleness class applies.
+  const legs = useQuery({
+    queryKey: ["transactions", "legs", txn.id],
+    queryFn: () => fetchTransactionLegs(txn.id),
+    enabled: mayViewTransactions,
+    staleTime: STALE_TIME.record,
+  });
 
   const memberId = txn.member_id;
   const member = useQuery({
@@ -110,6 +125,54 @@ export function TransactionDetailDrawer({
           <span className={styles.mono}>{txn.id}</span>
         </Kv>
       </div>
+
+      {/* Double-entry legs (#31 ledger (g)): the per-posting DR/CR
+          rows from the append-only ledger_entries truth, rendered
+          VERBATIM — never summed, never netted, no client-side
+          balancing total (blocker (a)); the 0004/0014 DB trigger
+          proved balance at commit time. Structurally withheld without
+          transactions:view. */}
+      {mayViewTransactions && (
+        <div>
+          <div className={styles.subhead}>Double-entry legs</div>
+          {legs.isPending && <div className={styles.muted}>Loading legs…</div>}
+          {legs.isError && <ErrorBanner error={legs.error} />}
+          {legs.data !== undefined && (
+            <table className={styles.legsTable}>
+              <thead>
+                <tr>
+                  <th scope="col">Account</th>
+                  <th scope="col">Side</th>
+                  <th scope="col" className={styles.legsAmountHead}>
+                    Amount
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {legs.data.map((leg, index) => (
+                  <tr key={`${leg.account}-${leg.side}-${index}`}>
+                    <td>
+                      {/* The account key is server data rendered as
+                          inert React text (XSS-tested). */}
+                      <span className={styles.mono}>{leg.account}</span>
+                    </td>
+                    <td>{directionPill(leg.side)}</td>
+                    <td className={leg.side === "debit" ? styles.drCell : styles.crCell}>
+                      {fmtKes(leg.amount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div className={styles.formNote}>
+            One row per ledger leg, verbatim from the server — debits and
+            credits are never summed or netted here: the database proved the
+            posting balanced when it committed.
+          </div>
+        </div>
+      )}
+
       <div className={styles.formNote}>
         Ledger rows are immutable server facts. This contract serves no
         per-row running balance — account balances appear on posting

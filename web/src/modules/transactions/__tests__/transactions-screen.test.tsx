@@ -30,6 +30,7 @@ jest.mock("../api", () => {
   return {
     ...actual,
     fetchTransactionsPage: jest.fn(),
+    fetchTransactionLegs: jest.fn(),
     postDeposit: jest.fn(),
     postWithdrawal: jest.fn(),
     postShareTopup: jest.fn(),
@@ -205,6 +206,10 @@ beforeEach(() => {
   setSession({ accessToken: fakeJwt(ADMIN_ID), refreshToken: "refresh-1" });
   grantPermissions(FULL_PERMS);
   mocked.fetchTransactionsPage.mockResolvedValue(page([debitTxn(), creditTxn()]));
+  // Legs drill-down (#31 (g)): a safe default so detail-drawer tests
+  // that are not about legs never hit the real network; the legs
+  // suite (transaction-legs-screen.test.tsx) owns the assertions.
+  mocked.fetchTransactionLegs.mockResolvedValue([]);
   mocked.postMoneyWrite.mockResolvedValue(ACCOUNT_TXN);
   mocked.runDepositInterest.mockResolvedValue(INTEREST_RUN);
   mockedMembers.fetchMembersPage.mockResolvedValue(page([MEMBER]));
