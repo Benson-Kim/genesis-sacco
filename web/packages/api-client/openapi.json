@@ -844,6 +844,63 @@
         "title": "BranchListResponse",
         "type": "object"
       },
+      "BranchMemberRosterOut": {
+        "description": "One member assigned to a branch (#31 (j).1) \u2014 identity facts only.\n\nLeast disclosure (gate 1.6): no contact details, no figures; the\nmember record stays on the P8 /members reads under the same\nmembers:view gate.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "member_no": {
+            "title": "Member No",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "member_no",
+          "name",
+          "status"
+        ],
+        "title": "BranchMemberRosterOut",
+        "type": "object"
+      },
+      "BranchMemberRosterResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BranchMemberRosterOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "BranchMemberRosterResponse",
+        "type": "object"
+      },
       "BranchOut": {
         "properties": {
           "created_at": {
@@ -892,6 +949,63 @@
           "name"
         ],
         "title": "BranchUpdateBody",
+        "type": "object"
+      },
+      "BranchUserRosterOut": {
+        "description": "One user assigned to a branch (#31 (j).1) \u2014 identity facts only.\n\nLeast disclosure (gate 1.6): who is assigned, nothing more \u2014 no\nrole, no last-active, no phone; the full user record stays on the\nP13.5 /users reads under the same access_control:view gate.",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "full_name",
+          "email",
+          "status"
+        ],
+        "title": "BranchUserRosterOut",
+        "type": "object"
+      },
+      "BranchUserRosterResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BranchUserRosterOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "BranchUserRosterResponse",
         "type": "object"
       },
       "CaseAssignBody": {
@@ -2957,6 +3071,30 @@
         "title": "InterestRunOut",
         "type": "object"
       },
+      "LedgerLegOut": {
+        "description": "One DR or CR leg of a posting (#31 ledger (g), audit #30 A3).\n\nVerbatim ledger_entries facts: the chart-of-accounts key, the side\nand the leg amount as a canonical decimal string \u2014 one row per leg,\nNOTHING derived (no netting, no totals; the 0004/0014 constraint\ntrigger proved balance at commit time). Least disclosure (gate\n1.6): no member, actor or channel rides on a leg row \u2014 those live\non the transaction the caller already holds.",
+        "properties": {
+          "account": {
+            "title": "Account",
+            "type": "string"
+          },
+          "amount": {
+            "title": "Amount",
+            "type": "string"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account",
+          "side",
+          "amount"
+        ],
+        "title": "LedgerLegOut",
+        "type": "object"
+      },
       "LoanClass": {
         "enum": [
           "normal",
@@ -3219,6 +3357,17 @@
           "aggregates": {
             "$ref": "#/components/schemas/MemberAggregatesOut"
           },
+          "branch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
           "email": {
             "anyOf": [
               {
@@ -3275,6 +3424,7 @@
           "email",
           "status",
           "version",
+          "branch_id",
           "aggregates"
         ],
         "title": "MemberDetailOut",
@@ -3339,6 +3489,17 @@
       },
       "MemberOut": {
         "properties": {
+          "branch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
           "email": {
             "anyOf": [
               {
@@ -3394,7 +3555,8 @@
           "phone",
           "email",
           "status",
-          "version"
+          "version",
+          "branch_id"
         ],
         "title": "MemberOut",
         "type": "object"
@@ -5637,6 +5799,23 @@
         "title": "TokenResponse",
         "type": "object"
       },
+      "TransactionLegsResponse": {
+        "description": "All legs of one posting. Unpaginated BY CONSTRUCTION: the widest\nposting builder (the P12 exit settlement) writes 7 legs, so the\nresponse is bounded without a cursor.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerLegOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "TransactionLegsResponse",
+        "type": "object"
+      },
       "TransactionListResponse": {
         "properties": {
           "items": {
@@ -7625,6 +7804,78 @@
         ]
       }
     },
+    "/branches/{branch_id}/members": {
+      "get": {
+        "description": "Keyset MEMBER roster of a branch (#31 (j).1, members:view).\n\nExpand-only read model over the 0016 assignment column, mirroring\nthe batch-4 assignment permission split: the entity being READ is\nthe member record, so the roster sits behind members x view (the\nP8 precedent) \u2014 settings rights alone must not disclose people\nrecords. 404-BEFORE-FACTS: an unknown or cross-tenant branch id\nsurfaces 404 before any roster row is read.",
+        "operationId": "list_branch_members_branches__branch_id__members_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchMemberRosterResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Branch Members",
+        "tags": [
+          "branches"
+        ]
+      }
+    },
     "/branches/{branch_id}/members/{member_id}": {
       "put": {
         "description": "Assign a member to a branch (members x edit \u2014 P8 precedent).",
@@ -7684,6 +7935,78 @@
           }
         },
         "summary": "Assign Member",
+        "tags": [
+          "branches"
+        ]
+      }
+    },
+    "/branches/{branch_id}/users": {
+      "get": {
+        "description": "Keyset USER roster of a branch (#31 (j).1, access_control:view).\n\nExpand-only read model over the 0016 assignment column, mirroring\nthe batch-4 assignment permission split: the entity being READ is\nthe user record, so the roster sits behind access_control x view\n(the P13.5 users precedent) \u2014 settings rights alone must not\ndisclose people records. 404-BEFORE-FACTS: an unknown or\ncross-tenant branch id surfaces 404 before any roster row is read.",
+        "operationId": "list_branch_users_branches__branch_id__users_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchUserRosterResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Branch Users",
         "tags": [
           "branches"
         ]
@@ -12144,6 +12467,50 @@
           }
         },
         "summary": "List Ledger",
+        "tags": [
+          "transactions"
+        ]
+      }
+    },
+    "/transactions/{transaction_id}/legs": {
+      "get": {
+        "description": "The double-entry DR/CR legs of one posting (transactions:view).\n\nExpand-only read model (#31 ledger (g), audit #30 A3): the\nappend-only ledger_entries truth behind a TransactionOut row, one\nitem per leg, each amount a canonical decimal string rendered\nverbatim by clients \u2014 never summed or netted (P15 blocker (a)).\n404-BEFORE-FACTS: the existence probe runs before any leg is read,\nso unknown and cross-tenant ids (hidden by RLS) surface 404 with no\naccount or amount echoed; 403 rejections carry no figures either\n(least disclosure, gate 1.6).",
+        "operationId": "list_transaction_legs_transactions__transaction_id__legs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transaction_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Transaction Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionLegsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Transaction Legs",
         "tags": [
           "transactions"
         ]
