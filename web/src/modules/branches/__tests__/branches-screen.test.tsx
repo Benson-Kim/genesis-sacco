@@ -45,6 +45,8 @@ jest.mock("../api", () => {
     ...actual,
     fetchBranchesPage: jest.fn(),
     fetchBranch: jest.fn(),
+    fetchBranchUsersRosterPage: jest.fn(),
+    fetchBranchMembersRosterPage: jest.fn(),
     createBranch: jest.fn(),
     updateBranch: jest.fn(),
     assignUserToBranch: jest.fn(),
@@ -183,6 +185,11 @@ beforeEach(() => {
   grantPermissions(FULL_PERMS);
   mocked.fetchBranchesPage.mockResolvedValue({ items: [branch()], nextCursor: null });
   mocked.fetchBranch.mockResolvedValue(branch());
+  // Roster reads (#31 (j).1): empty defaults so suites not about
+  // rosters never hit the real network; the roster suite
+  // (branches-rosters-screen.test.tsx) owns the assertions.
+  mocked.fetchBranchUsersRosterPage.mockResolvedValue({ items: [], nextCursor: null });
+  mocked.fetchBranchMembersRosterPage.mockResolvedValue({ items: [], nextCursor: null });
   mocked.createBranch.mockResolvedValue(branch());
   mocked.updateBranch.mockResolvedValue(branch({ name: "Nairobi West HQ", version: 2 }));
   mocked.assignUserToBranch.mockResolvedValue({
