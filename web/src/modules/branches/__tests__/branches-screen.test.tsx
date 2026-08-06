@@ -121,6 +121,7 @@ const memberRow = {
   email: null,
   status: "active" as const,
   version: 6,
+  branch_id: null,
 };
 
 /** Every grant this console can use (register + rename + both panels). */

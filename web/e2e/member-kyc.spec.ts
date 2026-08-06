@@ -64,6 +64,7 @@ const MEMBER_OUT = {
   email: "jane@sacco.co.ke",
   status: "active",
   version: 1,
+  branch_id: null,
 };
 
 // DETAIL read (#31 batch 3): the drawer's financial summary renders

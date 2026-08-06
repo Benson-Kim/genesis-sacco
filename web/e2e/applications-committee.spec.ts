@@ -85,6 +85,7 @@ const MEMBER_OUT = {
   email: null,
   status: "active",
   version: 1,
+  branch_id: null,
 };
 
 interface ApiState {

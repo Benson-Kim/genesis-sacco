@@ -61,6 +61,7 @@ const MEMBER = {
   email: null,
   status: "active" as const,
   version: 3,
+  branch_id: null,
 };
 
 /** Distinct counts so each row's VERBATIM value is unambiguous. */

@@ -99,6 +99,7 @@ const BORROWER_OUT = {
   email: null,
   status: "active",
   version: 1,
+  branch_id: null,
 };
 
 const GUARANTOR_OUT = {
@@ -110,6 +111,7 @@ const GUARANTOR_OUT = {
   email: null,
   status: "active",
   version: 1,
+  branch_id: null,
 };
 
 const GUARANTEE_OUT = {

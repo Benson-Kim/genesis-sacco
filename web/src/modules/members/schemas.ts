@@ -23,6 +23,16 @@ export const memberSchema = z.object({
     email: z.string().nullable(),
     status: memberStatusSchema,
     version: z.number().int(),
+    /** Branch attribution (#31 ledger (j).2) — the 0016 FK written
+     * ONLY by the batch-4 assignment route, as the bare branch UUID.
+     * NULLABLE, NOT optional: every member read carries the key, so a
+     * response missing it is a contract violation and is REJECTED
+     * (network-tested). NULL renders the honest "unassigned"
+     * affordance — attribution is never invented. Resolving the
+     * branch NAME stays behind settings:view (GET /branches/{id});
+     * without that grant the drawer renders the short id only and
+     * fetches nothing (the created_by least-disclosure precedent). */
+    branch_id: z.string().nullable(),
 });
 
 export type Member = z.infer<typeof memberSchema>;

@@ -143,6 +143,7 @@ async function mockApi(page: Page, state: ApiState): Promise<void> {
         email: body["email"],
         status: "active",
         version: 1,
+        branch_id: null,
       });
       return;
     }
