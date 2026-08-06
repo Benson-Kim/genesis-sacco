@@ -1792,13 +1792,18 @@ def test_a1_register_adjustments_lists_pending_first_with_exact_keyset_order() -
             assert page["items"][0]["status"] == "pending_approval"
             assert page["items"][3]["status"] == "posted"
 
-            # limit=1 keyset walk reproduces the exact sequence.
+            # limit=1 keyset walk reproduces the exact sequence. The
+            # opaque cursor travels URL-ENCODED via params (the house
+            # walk convention — it embeds an ISO timestamp whose "+"
+            # a raw interpolation would decode as a space).
             seen: list[str] = []
             cursor: str | None = None
             for _ in range(4):
-                query = f"?limit=1{f'&cursor={cursor}' if cursor else ''}"
+                params: dict[str, str | int] = {"limit": 1}
+                if cursor:
+                    params["cursor"] = cursor
                 res = await client.get(
-                    f"/corrections/repayment-adjustments{query}", headers=_headers(token)
+                    "/corrections/repayment-adjustments", params=params, headers=_headers(token)
                 )
                 assert res.status_code == 200, res.text
                 body = res.json()
@@ -1861,11 +1866,17 @@ def test_a2_register_write_offs_lists_live_first_with_exact_keyset_order() -> No
             # 24,000.00, penalty 0.00 -> total 24,000.00).
             assert page["items"][0]["total_written_off"] == "24000.00"
 
+            # The opaque cursor travels URL-ENCODED via params (the
+            # house walk convention — it embeds an ISO timestamp).
             seen: list[str] = []
             cursor: str | None = None
             for _ in range(4):
-                query = f"?limit=1{f'&cursor={cursor}' if cursor else ''}"
-                res = await client.get(f"/corrections/write-offs{query}", headers=_headers(token))
+                params: dict[str, str | int] = {"limit": 1}
+                if cursor:
+                    params["cursor"] = cursor
+                res = await client.get(
+                    "/corrections/write-offs", params=params, headers=_headers(token)
+                )
                 assert res.status_code == 200, res.text
                 body = res.json()
                 assert len(body["items"]) == 1
