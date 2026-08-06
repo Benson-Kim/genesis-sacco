@@ -31,10 +31,9 @@ import uuid
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import text
 
 from db_helpers import api_client, factory
-from export_helpers import add_user, seed_actor, seed_member
+from export_helpers import add_user, seed_actor, seed_member, seed_three_leg_repayment
 from genesis.application.ledger import post_deposit
 from genesis.domain.ledger import Channel
 from genesis.domain.rbac import ROLE_NAMES, Action, Module, seed_matrix
@@ -43,58 +42,6 @@ from genesis.infrastructure.tenancy import tenant_session
 pytestmark = pytest.mark.skipif(
     not os.environ.get("DATABASE_URL"), reason="requires a migrated database"
 )
-
-
-async def _seed_three_leg_repayment(tid: uuid.UUID, mid: uuid.UUID) -> uuid.UUID:
-    """A balanced 3-leg posting with hand-computed figures.
-
-    100.00 repayment split 60.00 principal + 40.00 interest:
-      DR cash.mpesa        100.00
-      CR income.interest    40.00
-      CR loans.receivable   60.00
-    Balanced AND equal to transactions.amount, so the deferred 0004/
-    0014 trigger accepts the commit — the same shape the P10 allocated
-    repayment writes. Deliberately NON-ADDITIVE-looking figures (no
-    leg equals the sum of the others' complement pattern a client
-    might "helpfully" total).
-    """
-    txn_id = uuid.uuid4()
-    async with tenant_session(factory(), tid) as session:
-        await session.execute(
-            text(
-                "INSERT INTO transactions "
-                "(id, tenant_id, txn_ref, member_id, type, amount, channel) "
-                "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :ref, "
-                "CAST(:mid AS uuid), 'loan_repayment', 100.00, 'mpesa')"
-            ),
-            {
-                "id": str(txn_id),
-                "tid": str(tid),
-                "mid": str(mid),
-                "ref": f"RP-{txn_id.hex[:8]}",
-            },
-        )
-        await session.execute(
-            text(
-                "INSERT INTO ledger_entries "
-                "(id, tenant_id, transaction_id, account, side, amount) "
-                "VALUES "
-                "(CAST(:dr AS uuid), CAST(:tid AS uuid), "
-                "CAST(:txn AS uuid), 'cash.mpesa', 'debit', 100.00), "
-                "(CAST(:cr1 AS uuid), CAST(:tid AS uuid), "
-                "CAST(:txn AS uuid), 'income.interest', 'credit', 40.00), "
-                "(CAST(:cr2 AS uuid), CAST(:tid AS uuid), "
-                "CAST(:txn AS uuid), 'loans.receivable', 'credit', 60.00)"
-            ),
-            {
-                "dr": str(uuid.uuid4()),
-                "cr1": str(uuid.uuid4()),
-                "cr2": str(uuid.uuid4()),
-                "tid": str(tid),
-                "txn": str(txn_id),
-            },
-        )
-    return txn_id
 
 
 def test_legs_multi_leg_composition_verbatim_and_ordered() -> None:
@@ -107,7 +54,7 @@ def test_legs_multi_leg_composition_verbatim_and_ordered() -> None:
     async def run() -> None:
         tid, _, token = await seed_actor()
         mid = await seed_member(tid, name="Legs Member")
-        txn_id = await _seed_three_leg_repayment(tid, mid)
+        txn_id = await seed_three_leg_repayment(tid, mid)
         async with api_client() as client:
             res = await client.get(
                 f"/transactions/{txn_id}/legs",
@@ -164,7 +111,7 @@ def test_legs_route_matrix_every_role() -> None:
         matrix = seed_matrix()
         tid, _, _ = await seed_actor()
         mid = await seed_member(tid, name="Matrix Legs Member")
-        txn_id = await _seed_three_leg_repayment(tid, mid)
+        txn_id = await seed_three_leg_repayment(tid, mid)
         for role_name in ROLE_NAMES:
             _, token = await add_user(tid, role_name)
             can_view = matrix[role_name][Module.TRANSACTIONS][Action.VIEW]
@@ -192,7 +139,7 @@ def test_legs_404_before_facts_unknown_and_cross_tenant() -> None:
         tid_a, _, token_a = await seed_actor()
         tid_b, _, _ = await seed_actor()
         mid_b = await seed_member(tid_b, name="Foreign Legs Member")
-        foreign_txn = await _seed_three_leg_repayment(tid_b, mid_b)
+        foreign_txn = await seed_three_leg_repayment(tid_b, mid_b)
         async with api_client() as client:
             headers = {"authorization": f"Bearer {token_a}"}
             res = await client.get(f"/transactions/{uuid.uuid4()}/legs", headers=headers)

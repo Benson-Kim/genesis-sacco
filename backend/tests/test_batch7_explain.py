@@ -37,11 +37,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_helpers import factory
-from export_helpers import seed_actor, seed_member
+from export_helpers import seed_actor, seed_member, seed_three_leg_repayment
 from genesis.application.branches import branch_members_roster_sql, branch_users_roster_sql
 from genesis.application.transactions import TRANSACTION_LEGS_SQL
 from genesis.infrastructure.tenancy import tenant_session
-from test_transaction_legs import _seed_three_leg_repayment
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("DATABASE_URL"), reason="requires a migrated database"
@@ -69,7 +68,7 @@ def test_batch7_reads_are_index_backed() -> None:
     async def run() -> None:
         tid, _, _ = await seed_actor()
         mid = await seed_member(tid, name="Explain Legs Member")
-        txn_id = await _seed_three_leg_repayment(tid, mid)
+        txn_id = await seed_three_leg_repayment(tid, mid)
         branch_id = uuid.uuid4()
         async with tenant_session(factory(), tid) as session:
             await session.execute(
