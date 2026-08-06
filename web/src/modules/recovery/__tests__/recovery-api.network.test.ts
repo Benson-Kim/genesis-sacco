@@ -408,7 +408,7 @@ test("a 422 surfaces field-level messages as ONE typed ApiError (canonical field
 
 test("LEAST DISCLOSURE (addendum A5): a money key smuggled onto a worklist row is STRIPPED at the boundary — no money field exists in the parsed shape", async () => {
   worklistVariant = "money-smuggle";
-  const page = await recoveryApi.fetchWorklistPage(null);
+  const page = await recoveryApi.fetchWorklistPage(NO_FILTERS, null);
   const row = page.items[0]!;
   // The A5 posture: the stripped row carries workflow facts only.
   expect("balance" in row).toBe(false);
