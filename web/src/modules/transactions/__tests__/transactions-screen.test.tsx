@@ -113,6 +113,7 @@ const MEMBER = {
   status: "active" as const,
   version: 3,
   branch_id: null,
+  dividend_payout: null,
 };
 
 const ACCOUNT_TXN: AccountTxn = {

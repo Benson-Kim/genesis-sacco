@@ -187,6 +187,7 @@ const MEMBER = {
   status: "active" as const,
   version: 1,
   branch_id: null,
+  dividend_payout: null,
 };
 
 const FULL_PERMS = {
