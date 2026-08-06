@@ -17,6 +17,11 @@ import { expect, test, type Page } from "@playwright/test";
 const API_ORIGIN = "http://localhost:8000";
 const ADMIN_ID = "99999999-9999-9999-9999-999999999999";
 const DECL_ID = "dddddddd-aaaa-bbbb-cccc-111111111111";
+/** The declarer the SERVER attributes (issue #31 ledger (a).4 — the
+ * 0020 requested_by column on the read contract): a DIFFERENT officer
+ * than the signed-in ADMIN, so the SoD panel arms the checker side on
+ * server truth. */
+const DECLARER_ID = "88888888-8888-8888-8888-888888888888";
 
 /** ConfirmDangerModal phrase for the distribution (record id prefix). */
 const PHRASE = DECL_ID.slice(0, 8);
@@ -63,6 +68,10 @@ const APPROVED_DECLARATION = {
   total_rebate: "108000.00",
   total_payout: "178000.10",
   status: "approved",
+  // Declarer attribution (issue #31 ledger (a).4): server truth —
+  // nullable-not-optional on the contract; a missing key refuses to
+  // parse at the client's Zod boundary.
+  requested_by: DECLARER_ID,
   decided_at: "2026-08-02T10:00:00+00:00",
   distributed_at: null,
   version: 7,
@@ -206,6 +215,10 @@ test("happy path: OTP login → dividends register renders every figure VERBATIM
   await expect(page.getByText("14.00% / 9.00%")).toBeVisible();
   await expect(page.getByText("KES 14.00")).toHaveCount(0);
   await expect(page.getByText(/Totals/)).toHaveCount(0);
+  // Declarer attribution (issue #31 ledger (a).4): the SERVER's bare
+  // staff UUID via the short-id convention on the register — never a
+  // name or email anywhere on the page.
+  await expect(page.getByTitle(DECLARER_ID)).toHaveText(DECLARER_ID.slice(0, 8));
 
   // Register row → detail drawer (fresh record read) → run dialog.
   await page.getByText("KES 178,000.10").click();
@@ -213,6 +226,12 @@ test("happy path: OTP login → dividends register renders every figure VERBATIM
   await page.getByRole("button", { name: "Run distribution…" }).click();
   await expect(page.getByText("Pinned record version")).toBeVisible();
   expect(state.declarationReads).toBeGreaterThan(0);
+  // SoD arms on SERVER truth (ledger (a).4): the signed-in checker is
+  // NOT the attributed declarer — the run affordance mounts with the
+  // server-attribution label (the per-tab witness played no part).
+  await expect(
+    page.getByText(`Declaring officer ${DECLARER_ID.slice(0, 8)} (server attribution).`),
+  ).toBeVisible();
 
   // Typed confirmation: the danger button starts DISABLED; nothing has
   // reached the wire yet.
