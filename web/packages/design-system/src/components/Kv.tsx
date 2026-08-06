@@ -18,7 +18,7 @@ export interface KvProps {
  * promoted from 28 module-local copies (#31 batch 9, drift-audit
  * DA-72.2, gate 1.1). Label and value render exclusively through React
  * text interpolation — attacker-influenced strings stay inert (no HTML
- * parsing, no `dangerouslySetInnerHTML`).
+ * parsing, no React parser sink).
  */
 export function Kv({ label, children, variant = "default" }: Readonly<KvProps>) {
   const rowClass =
