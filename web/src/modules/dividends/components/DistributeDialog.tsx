@@ -290,7 +290,7 @@ export function DistributeDialog({
 
       {runnable && (
         <MakerCheckerPanel
-          makerId={witnessedMakerId}
+          makerId={makerId}
           makerLabel={makerLabel}
           makerAt={fmtDateTime(record.created_at)}
           checkerActions={
