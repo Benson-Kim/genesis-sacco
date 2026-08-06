@@ -31,10 +31,12 @@ import { keysetPageSchema, type KeysetPage } from "@/modules/table/schemas";
 import { api } from "@/lib/api";
 import type { CashChannel } from "@/modules/transactions/schemas";
 import {
+  exitEligibilitySchema,
   exitSchema,
   exitStatementSchema,
   exitVoteResultSchema,
   settlementResultSchema,
+  type ExitEligibility,
   type ExitRecord,
   type ExitStatement,
   type ExitStatus,
@@ -170,4 +172,22 @@ export async function fetchExitStatement(exitId: string): Promise<ExitStatement>
   });
   if (error !== undefined || data === undefined) throw toApiError(error, response);
   return exitStatementSchema.parse(data);
+}
+
+/**
+ * Advisory eligibility facts BEFORE a request is submitted
+ * (`GET /member-exits/eligibility/{member_id}`, members:view — P15
+ * batch 5, U6). COUNTS/BOOLEANS ONLY: the contract carries no amount,
+ * so nothing returned here can ever feed fmtKes. ADVISORY: the read is
+ * lock-free — the server re-verdicts every blocker under locks at
+ * request time and again at settlement; the binding verdict never
+ * lives in this response. The member id rides the contract's PATH
+ * parameter through the generated client; auth/tenant stay HEADERS.
+ */
+export async function fetchExitEligibility(memberId: string): Promise<ExitEligibility> {
+  const { data, error, response } = await api.GET("/member-exits/eligibility/{member_id}", {
+    params: { path: { member_id: memberId } },
+  });
+  if (error !== undefined || data === undefined) throw toApiError(error, response);
+  return exitEligibilitySchema.parse(data);
 }
