@@ -61,6 +61,31 @@ export function isLiveCaseStatus(status: CaseStatus): boolean {
   return LIVE_CASE_STATUSES.includes(status);
 }
 
+/**
+ * DECLARED worklist filter vocabularies (issue #31 ledger (a).3 — the
+ * human-authorized read-contract expansion; until it, the worklist
+ * declared NO filter params and no filter UI existed). Code-owned
+ * values ONLY, mirroring the contract's declared params exactly:
+ * `status` narrows to one LIVE posture — exactly the backend
+ * WorklistStatusParam Literal (the jest suite pins this array to
+ * LIVE_CASE_STATUSES so the two can never drift) — and
+ * `classification` to one STORED prudential label (the full LoanClass
+ * set the worklist row accepts). The api layer sends a member of
+ * these arrays or NOTHING; anything else is unrepresentable in the
+ * generated client's types, and an out-of-vocabulary or undeclared
+ * param stays the server's 422. Keyset and the server's
+ * most-delinquent-first default ordering are preserved — nothing is
+ * filtered or re-sorted locally.
+ */
+export const WORKLIST_STATUS_FILTERS = [
+  "open",
+  "irrecoverable_pending_write_off",
+  "disputed",
+] as const;
+export type WorklistStatusFilter = (typeof WORKLIST_STATUS_FILTERS)[number];
+
+export type WorklistClass = z.infer<typeof worklistClassSchema>;
+
 /** The two staff PAUSE targets (!53 F2 — a reason is REQUIRED on the
  * record for both). */
 export const PAUSE_TARGETS = ["disputed", "irrecoverable_pending_write_off"] as const;

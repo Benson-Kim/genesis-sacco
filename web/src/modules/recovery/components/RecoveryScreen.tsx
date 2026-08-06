@@ -16,9 +16,15 @@
  *   balance, penalty or provision column exists on the contract or
  *   this screen; the loan's money lives behind the Loan book, for the
  *   entitled.
- * - Keyset pagination only (opaque cursors — gate 1.3); the contract
- *   declares NO filter parameters, so no filter UI exists (nothing is
- *   filtered locally).
+ * - Keyset pagination only (opaque cursors — gate 1.3). The worklist
+ *   offers exactly the contract's two DECLARED filters (issue #31
+ *   ledger (a).3 — the human-authorized read-contract expansion):
+ *   status (one LIVE posture, segmented control) and classification
+ *   (one stored LoanClass label, labelled select — 5 values + All
+ *   exceeds the ≤5 segment rule). Every value is a code-owned
+ *   vocabulary member bound server-side; the server keeps its
+ *   most-delinquent-first default order and NOTHING is filtered or
+ *   re-sorted locally.
  * - Staff UUIDs (assignees) render via the !70 short-id convention;
  *   NULL is the honest "unassigned"; a suspended-after-assignment
  *   officer renders the honest flag pill (assignee_unassignable) — the
@@ -34,8 +40,16 @@ import { can } from "@/modules/authz/schemas";
 import { getOwnUserId } from "@/modules/auth/session";
 import { fmtDateTime } from "@/lib/format";
 import { loanClassPill } from "@/modules/loans/components/pills";
-import { fetchWorklistPage } from "../api";
-import type { WorklistRow } from "../schemas";
+import { LOAN_CLASS_LABELS } from "@/modules/loans/schemas";
+import { fetchWorklistPage, type WorklistFilters } from "../api";
+import {
+  CASE_STATUS_LABELS,
+  WORKLIST_CLASSES,
+  WORKLIST_STATUS_FILTERS,
+  type WorklistClass,
+  type WorklistRow,
+  type WorklistStatusFilter,
+} from "../schemas";
 import styles from "./Recovery.module.css";
 
 // Drawer-level code splitting (P15 Phase B speed).
@@ -49,14 +63,63 @@ const CaseDetailDrawer = dynamic(
 
 type DrawerState = null | { mode: "open" } | { mode: "detail"; caseId: string };
 
+/** The two PAUSE postures as explicit segments; the default segment
+ * sends NO status param at all — the server's as-built default (OPEN
+ * cases) is preserved byte-identically, never re-requested as an
+ * explicit status=open (the declared value stays contract-valid and
+ * is exercised by the network suite). ≤5 options per issue #8. */
+const STATUS_SEGMENTS = WORKLIST_STATUS_FILTERS.filter((option) => option !== "open");
+
+function StatusFilter({
+  value,
+  onChange,
+}: Readonly<{
+  value: WorklistStatusFilter | "";
+  onChange: (next: WorklistStatusFilter | "") => void;
+}>) {
+  return (
+    <div className={styles.filterGroup}>
+      <span className={styles.filterLabel}>Status</span>
+      <div className={styles.segment} role="group" aria-label="Status">
+        <button
+          type="button"
+          className={styles.segmentButton}
+          aria-pressed={value === ""}
+          onClick={() => onChange("")}
+        >
+          {CASE_STATUS_LABELS.open} (default)
+        </button>
+        {STATUS_SEGMENTS.map((option) => (
+          <button
+            key={option}
+            type="button"
+            className={styles.segmentButton}
+            aria-pressed={value === option}
+            onClick={() => onChange(option)}
+          >
+            {CASE_STATUS_LABELS[option]}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function RecoveryScreen() {
   const permissions = usePermissions();
   const [drawer, setDrawer] = useState<DrawerState>(null);
+  const [status, setStatus] = useState<WorklistStatusFilter | "">("");
+  const [classification, setClassification] = useState<WorklistClass | "">("");
   const ownId = getOwnUserId();
 
+  // The two DECLARED contract filters ONLY (issue #31 ledger (a).3):
+  // code-owned vocabulary values, bound server-side; the filters are
+  // part of the query key so each combination is its own keyset walk
+  // (never a locally filtered view of another one).
+  const filters: WorklistFilters = { status, classification };
   const list = useKeysetList<WorklistRow>({
-    queryKey: ["recovery", "worklist"],
-    fetchPage: (cursor) => fetchWorklistPage(cursor),
+    queryKey: ["recovery", "worklist", filters],
+    fetchPage: (cursor) => fetchWorklistPage(filters, cursor),
   });
 
   const mayOpen = can(permissions.data, "loan_book", "create");
@@ -129,6 +192,30 @@ export function RecoveryScreen() {
   return (
     <div>
       <div className={styles.toolbar}>
+        <div className={styles.filters}>
+          <StatusFilter value={status} onChange={setStatus} />
+          <div className={styles.filterGroup}>
+            <label className={styles.filterLabel} htmlFor="worklist-classification">
+              Classification
+            </label>
+            {/* Labelled select (5 stored labels + All — over the ≤5
+                segment budget): values are the code-owned LoanClass
+                vocabulary verbatim; "" sends NO parameter at all. */}
+            <select
+              id="worklist-classification"
+              className={styles.select}
+              value={classification}
+              onChange={(event) => setClassification(event.target.value as WorklistClass | "")}
+            >
+              <option value="">All classifications</option>
+              {WORKLIST_CLASSES.map((option) => (
+                <option key={option} value={option}>
+                  {LOAN_CLASS_LABELS[option]}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
         {mayOpen && (
           <Button type="button" variant="primary" onClick={() => setDrawer({ mode: "open" })}>
             + Initiate recovery
@@ -148,7 +235,7 @@ export function RecoveryScreen() {
           columns={columns}
           query={list}
           rowKey={(row) => row.case_id}
-          emptyMessage="No open recovery cases — nothing is more than 90 days past due, or every case has closed."
+          emptyMessage="No recovery cases in this view — no case matches the selected posture/classification (the default view lists OPEN cases, most overdue first)."
           onRowClick={(row) => setDrawer({ mode: "detail", caseId: row.case_id })}
         />
       </Card>
