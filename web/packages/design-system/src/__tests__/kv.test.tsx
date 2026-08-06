@@ -43,12 +43,13 @@ describe("Kv (label/value detail row — #31 batch 9, DA-72.2)", () => {
         </Kv>
       </>,
     );
-    const rows = Array.from(container.children) as HTMLElement[];
-    expect(rows).toHaveLength(2);
-    expect(rows[0].className).toContain("kvRow");
-    expect(rows[0].className).not.toContain("quiet");
-    expect(rows[1].className).toContain("kvRow");
-    expect(rows[1].className).toContain("quiet");
+    expect(container.children).toHaveLength(2);
+    const defaultRow = screen.getByText("Default row").closest("div") as HTMLElement;
+    const quietRow = screen.getByText("Quiet row").closest("div") as HTMLElement;
+    expect(defaultRow.className).toContain("kvRow");
+    expect(defaultRow.className).not.toContain("quiet");
+    expect(quietRow.className).toContain("kvRow");
+    expect(quietRow.className).toContain("quiet");
   });
 
   it("FM3: hostile label/value strings are inert — no element injection, no script execution", () => {
