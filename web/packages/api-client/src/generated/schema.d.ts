@@ -7589,7 +7589,7 @@ export interface operations {
             query?: {
                 cursor?: string | null;
                 limit?: number;
-                status?: "open" | "irrecoverable_pending_write_off" | "disputed" | null;
+                status?: ("open" | "irrecoverable_pending_write_off" | "disputed") | null;
                 classification?: components["schemas"]["LoanClass"] | null;
             };
             header?: never;
