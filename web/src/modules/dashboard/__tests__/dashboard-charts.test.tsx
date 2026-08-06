@@ -107,7 +107,8 @@ describe("charts contract (Zod — geometry is server-computed integers ONLY)", 
     );
     expect(dashboardSummarySchema.safeParse(CHART_SUMMARY).success).toBe(true);
     // The charts slice stays OPTIONAL: pre-expand payloads still parse.
-    const { charts: _omitted, ...withoutCharts } = CHART_SUMMARY;
+    const withoutCharts: Record<string, unknown> = { ...CHART_SUMMARY };
+    delete withoutCharts["charts"];
     expect(dashboardSummarySchema.safeParse(withoutCharts).success).toBe(true);
   });
 
