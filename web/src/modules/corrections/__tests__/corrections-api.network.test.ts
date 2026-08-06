@@ -12,8 +12,10 @@
  *   decimal STRING (P13.15 FM5/v1.1 rule 1): every wire body is
  *   asserted KEY-BY-KEY; the approval and posting bodies are
  *   DELIBERATELY EMPTY objects (v1.1 rule 3).
- * - The ONLY keyset read is the per-write-off receipts trail (gate
- *   1.3): opaque cursor echoed VERBATIM; no offset/page parameter.
+ * - Keyset reads (gate 1.3): the per-write-off receipts trail PLUS
+ *   the two batch-6 registers (ledger (a).1/(a).2 — pending-first
+ *   adjustments, live-first write-offs): opaque cursor echoed
+ *   VERBATIM; no offset/page/filter parameter exists on any of them.
  * - Response money arrives as decimal STRINGS byte-identically; money
  *   as numbers, garbage decimal shapes, unknown statuses/classes and
  *   garbage timestamps are REJECTED at the Zod boundary (blocker (a)
@@ -27,7 +29,7 @@
  */
 
 // Module scope (two global-script suites would collide under tsc).
-export {};
+export { };
 
 type FetchCall = { url: string; method: string; headers: Headers; body: string | null };
 
@@ -44,6 +46,7 @@ const calls: FetchCall[] = [];
 let requestStatus = 201;
 let approvalStatus = 201;
 let receiptStatus = 201;
+let registerVariant: "canonical" | "money-number" | "unknown-status" = "canonical";
 
 function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -118,6 +121,21 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
   const path = new URL(request.url).pathname;
   if (request.headers.get("authorization") === null) {
     return json(401, { category: "unauthenticated", correlation_id: "corr-a" });
+  }
+  if (path === "/corrections/repayment-adjustments" && request.method === "GET") {
+    if (registerVariant === "money-number") {
+      return json(200, { items: [{ ...adjustmentOut, amount: 500 }], next_cursor: null });
+    }
+    if (registerVariant === "unknown-status") {
+      return json(200, { items: [{ ...adjustmentOut, status: "escalated" }], next_cursor: null });
+    }
+    return json(200, {
+      items: [{ ...adjustmentOut, internal_lock_note: "ROW-LOCK-SECRET" }],
+      next_cursor: "adj-cursor-2",
+    });
+  }
+  if (path === "/corrections/write-offs" && request.method === "GET") {
+    return json(200, { items: [writeOffOut], next_cursor: "wo-cursor-2" });
   }
   if (path === "/corrections/repayment-adjustments" && request.method === "POST") {
     if (requestStatus === 422) {
@@ -253,6 +271,7 @@ beforeEach(() => {
   requestStatus = 201;
   approvalStatus = 201;
   receiptStatus = 201;
+  registerVariant = "canonical";
   session.clearSession();
   session.setSession({ accessToken: jwt(USER_ID, 900), refreshToken: REFRESH_VALUE });
 });

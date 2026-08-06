@@ -140,6 +140,7 @@ export function AdjustmentDetailDrawer({
       setNotice("");
       announce("Adjustment approved — the reversal posted to the ledger.");
       void queryClient.invalidateQueries({ queryKey: ["corrections", "adjustment", adjustmentId] });
+      void queryClient.invalidateQueries({ queryKey: ["corrections", "adjustments-register"] });
       void queryClient.invalidateQueries({ queryKey: ["transactions", "list"] });
       void queryClient.invalidateQueries({ queryKey: ["loans", "list"] });
     },
@@ -181,6 +182,7 @@ export function AdjustmentDetailDrawer({
       setNotice("");
       announce("Adjustment rejected — the repayment's adjustment slot is free again.");
       void queryClient.invalidateQueries({ queryKey: ["corrections", "adjustment", adjustmentId] });
+      void queryClient.invalidateQueries({ queryKey: ["corrections", "adjustments-register"] });
     },
     onError: () => {
       setConfirmReject(false);

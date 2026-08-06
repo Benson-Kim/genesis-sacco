@@ -46,11 +46,13 @@ jest.mock("../api", () => {
     ...actual,
     requestAdjustment: jest.fn(),
     fetchAdjustment: jest.fn(),
+    fetchAdjustmentsPage: jest.fn(),
     approveAdjustment: jest.fn(),
     rejectAdjustment: jest.fn(),
     postFee: jest.fn(),
     requestWriteOff: jest.fn(),
     fetchWriteOff: jest.fn(),
+    fetchWriteOffsPage: jest.fn(),
     voteOnWriteOff: jest.fn(),
     voidWriteOff: jest.fn(),
     postWriteOff: jest.fn(),
@@ -306,6 +308,9 @@ beforeEach(() => {
   clearVotedWriteOffs();
   grantPermissions(FULL_PERMS);
   mocked.fetchAdjustment.mockResolvedValue(pendingAdjustment());
+  // Registers default EMPTY: the register tests seed their own pages.
+  mocked.fetchAdjustmentsPage.mockResolvedValue({ items: [], nextCursor: null });
+  mocked.fetchWriteOffsPage.mockResolvedValue({ items: [], nextCursor: null });
   mocked.requestAdjustment.mockResolvedValue(pendingAdjustment());
   mocked.approveAdjustment.mockResolvedValue(ADJUSTMENT_RESULT);
   mocked.rejectAdjustment.mockResolvedValue(
@@ -751,7 +756,7 @@ test("FEE: NO amount field exists anywhere (FM5/v1.1 rule 1); the result renders
   expect(mocked.postFee).toHaveBeenCalledTimes(1);
 });
 
-test("MAKER REQUEST (adjustment): one write per intent; the result panel renders the snapshot verbatim and hands the id to the checker (no register exists on the contract — never faked)", async () => {
+test("MAKER REQUEST (adjustment): one write per intent; the result panel renders the snapshot verbatim and points the checker at the (a).1 register", async () => {
   const user = userEvent.setup();
   mountScreen();
 
@@ -767,9 +772,12 @@ test("MAKER REQUEST (adjustment): one write per intent; the result panel renders
   await waitFor(() => expect(mocked.requestAdjustment).toHaveBeenCalledTimes(1));
   expect(mocked.requestAdjustment.mock.calls[0]?.[0]).toBe(REPAYMENT_ID);
   expect(await screen.findByText(/Adjustment requested · awaiting a distinct checker/)).toBeInTheDocument();
-  // The honest no-register handoff: the record id renders for sharing.
+  // The record id renders, and the panel points the checker at the
+  // register the (a).1 contract expansion delivered.
   expect(within(drawer).getByText(ADJ_ID)).toBeInTheDocument();
-  expect(within(drawer).getByText(/no pending-adjustments register exists/)).toBeInTheDocument();
+  expect(
+    within(drawer).getByText(/leads the pending-adjustments\\s+checker register/),
+  ).toBeInTheDocument();
   expect(within(drawer).queryByRole("button", { name: "Request adjustment…" })).toBeNull();
 });
 
@@ -816,6 +824,68 @@ test("query-path 401 tears the session down AND empties BOTH per-tab registries 
   await waitFor(() => expect(hasSession()).toBe(false), { timeout: 4000 });
   expect(writeOffMakerOf(WO_ID)).toBe(WRITE_OFF_MAKER_UNKNOWN);
   expect(hasVotedOnWriteOff(WO_ID)).toBe(false);
+});
+
+test("REGISTERS (ledger (a).1/(a).2): rows render in the SERVER page order with VERBATIM money — the component sums (450.10 / 41,500.10) never render; a row click opens the matching drawer", async () => {
+  const user = userEvent.setup();
+  const secondAdj = pendingAdjustment({
+    id: "aaaaaaaa-2222-3333-4444-555555555555",
+    status: "posted",
+    checker_id: OTHER_OFFICER_ID,
+    amount: "999.99",
+
+});
+// The SERVER's pending-first order: pending leads, posted trails —
+// rendered EXACTLY as served (never re-sorted locally).
+mocked.fetchAdjustmentsPage.mockResolvedValue({
+    items: [pendingAdjustment(), secondAdj],
+    nextCursor: null,
+
+});
+mocked.fetchWriteOffsPage.mockResolvedValue({
+    items: [requestedWriteOff()],
+    nextCursor: null,
+
+});
+mountScreen();
+
+// Adjustments register: server order preserved row-for-row.
+const adjRows = await screen.findAllByRole("button", { name: new RegExp("KES 500.00") });
+expect(adjRows.length).toBeGreaterThan(0);
+const tables = screen.getAllByRole("region", { name: "Table" });
+const adjTable = tables[0]!;
+const rows = within(adjTable).getAllByRole("button");
+expect(rows[0]).toHaveTextContent("Pending approval");
+expect(rows[0]).toHaveTextContent("KES 500.00");
+expect(rows[1]).toHaveTextContent("Posted");
+expect(rows[1]).toHaveTextContent("KES 999.99");
+// Non-additive fixture (blocker (a)): the component sum is nowhere.
+expect(screen.queryByText("KES 450.10")).toBeNull();
+
+// Write-off register: snapshot figure verbatim, never summed.
+expect(screen.getByText("KES 77,777.77")).toBeInTheDocument();
+expect(screen.queryByText("KES 41,500.10")).toBeNull();
+// Maker attribution: bare-UUID short id (!70 render), full on title.
+expect(within(adjTable).getAllByTitle(OTHER_OFFICER_ID)[0]).toHaveTextContent(
+    OTHER_OFFICER_ID.slice(0, 8),
+);
+
+// Row click drills into the SAME detail drawer the lookup opens.
+await user.click(rows[0]!);
+expect(await screen.findByRole("dialog", { name: "Repayment adjustment" })).toBeInTheDocument();
+expect(mocked.fetchAdjustment).toHaveBeenCalledWith(ADJ_ID);
+});
+
+test("REGISTERS: empty pages render the honest empty message; a failed page renders the shared error alert — never a fabricated register", async () => {
+  mocked.fetchWriteOffsPage.mockRejectedValue(new ApiError(500, "internal_error", "corr-reg"));
+  mountScreen();
+
+  expect(
+    await screen.findByText("No repayment adjustments yet — nothing awaits a checker."),
+).toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent(/Could not load this list/);
+  expect(screen.getByText(/ref corr-reg/)).toBeInTheDocument();
+
 });
 
 test("W56-3: a stray overlay click never discards the half-completed correction entry or the armed money drawers", async () => {

@@ -161,9 +161,10 @@ export function WriteOffDetailDrawer({
           : "Committee decision reached on the write-off.",
       );
       void queryClient.invalidateQueries({ queryKey: ["corrections", "write-off", writeOffId] });
+      void queryClient.invalidateQueries({ queryKey: ["corrections", "write-offs-register"] });
     },
     onError: () => {
-      setConfirmVote(null);
+        setConfirmVote(null);
       announce("The write-off vote was NOT recorded.");
     },
   });
@@ -197,6 +198,7 @@ export function WriteOffDetailDrawer({
       setNotice("");
       announce("Write-off voided — the loan's write-off slot is free again.");
       void queryClient.invalidateQueries({ queryKey: ["corrections", "write-off", writeOffId] });
+      void queryClient.invalidateQueries({ queryKey: ["corrections", "write-offs-register"] });
     },
     onError: () => {
       setConfirmVoid(false);
@@ -238,8 +240,8 @@ export function WriteOffDetailDrawer({
       setNotice("");
       announce("Write-off posted — the receivable is derecognised; the claim survives.");
       void queryClient.invalidateQueries({ queryKey: ["corrections", "write-off", writeOffId] });
+      void queryClient.invalidateQueries({ queryKey: ["corrections", "write-offs-register"] });
       void queryClient.invalidateQueries({ queryKey: ["transactions", "list"] });
-      void queryClient.invalidateQueries({ queryKey: ["loans", "list"] });
     },
     onError: () => {
       setConfirmPost(false);
