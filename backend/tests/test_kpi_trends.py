@@ -221,10 +221,12 @@ async def _seed_member_history(tid: uuid.UUID) -> tuple[date, date]:
     created_early = datetime.combine(m0 - timedelta(days=10), noon, tzinfo=UTC)
     await member(created_early, "active", "A Stays")
     b = await member(created_early, "exited", "B Exits")
-    await status_fact(b, datetime.combine(m1 - timedelta(days=5), noon, tzinfo=UTC), "active", "exited")
+    b_exit_at = datetime.combine(m1 - timedelta(days=5), noon, tzinfo=UTC)
+    await status_fact(b, b_exit_at, "active", "exited")
     await member(datetime.combine(m1 - timedelta(days=3), noon, tzinfo=UTC), "active", "C Joins")
     d = await member(created_early, "dormant", "D Sleeps")
-    await status_fact(d, datetime.combine(m0 + timedelta(days=2), noon, tzinfo=UTC), "active", "dormant")
+    d_sleep_at = datetime.combine(m0 + timedelta(days=2), noon, tzinfo=UTC)
+    await status_fact(d, d_sleep_at, "active", "dormant")
     return m0, m1
 
 
