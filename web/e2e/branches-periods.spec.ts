@@ -231,7 +231,7 @@ test("happy path: OTP login → branches register + create (ONE wire POST, body 
 
   await page.getByRole("button", { name: "+ Register branch" }).click();
   await page.getByLabel("Branch name").fill("Kisumu Central");
-  await page.getByRole("button", { name: "Register branch" }).click();
+  await page.getByRole("button", { name: "Register branch", exact: true }).click();
 
   // The SERVER's record renders verbatim in the result panel…
   await expect(page.getByText("Branch registered")).toBeVisible();
