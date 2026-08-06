@@ -83,6 +83,59 @@ async def seed_member(
     return mid
 
 
+async def seed_three_leg_repayment(tid: uuid.UUID, mid: uuid.UUID) -> uuid.UUID:
+    """A balanced 3-leg posting with hand-computed figures (#31 (g)).
+
+    100.00 repayment split 60.00 principal + 40.00 interest:
+      DR cash.mpesa        100.00
+      CR income.interest    40.00
+      CR loans.receivable   60.00
+    Balanced AND equal to transactions.amount, so the deferred 0004/
+    0014 trigger accepts the commit — the same shape the P10 allocated
+    repayment writes. Deliberately NON-ADDITIVE-looking figures (no
+    leg equals the sum of the others' complement pattern a client
+    might "helpfully" total). Shared by the legs read suite and the
+    batch-7 EXPLAIN capture (never a private cross-suite import).
+    """
+    txn_id = uuid.uuid4()
+    async with tenant_session(factory(), tid) as session:
+        await session.execute(
+            text(
+                "INSERT INTO transactions "
+                "(id, tenant_id, txn_ref, member_id, type, amount, channel) "
+                "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :ref, "
+                "CAST(:mid AS uuid), 'loan_repayment', 100.00, 'mpesa')"
+            ),
+            {
+                "id": str(txn_id),
+                "tid": str(tid),
+                "mid": str(mid),
+                "ref": f"RP-{txn_id.hex[:8]}",
+            },
+        )
+        await session.execute(
+            text(
+                "INSERT INTO ledger_entries "
+                "(id, tenant_id, transaction_id, account, side, amount) "
+                "VALUES "
+                "(CAST(:dr AS uuid), CAST(:tid AS uuid), "
+                "CAST(:txn AS uuid), 'cash.mpesa', 'debit', 100.00), "
+                "(CAST(:cr1 AS uuid), CAST(:tid AS uuid), "
+                "CAST(:txn AS uuid), 'income.interest', 'credit', 40.00), "
+                "(CAST(:cr2 AS uuid), CAST(:tid AS uuid), "
+                "CAST(:txn AS uuid), 'loans.receivable', 'credit', 60.00)"
+            ),
+            {
+                "dr": str(uuid.uuid4()),
+                "cr1": str(uuid.uuid4()),
+                "cr2": str(uuid.uuid4()),
+                "tid": str(tid),
+                "txn": str(txn_id),
+            },
+        )
+    return txn_id
+
+
 async def drain_export_queue(tid: uuid.UUID) -> ExportCycleSummary:
     """Run the real worker path: snapshot transactions per job."""
     return await run_pending_exports(partial(tenant_snapshot_session, factory(), tid), tid)

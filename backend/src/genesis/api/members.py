@@ -87,6 +87,13 @@ class MemberOut(BaseModel):
     email: str | None
     status: str
     version: int
+    #: Branch attribution (#31 ledger (j).2) — expand-only NULLABLE
+    #: field: the 0016 FK written ONLY by the batch-4 assignment route
+    #: (PUT /branches/{id}/members/{member_id}, members:edit). NULL is
+    #: the honest "unassigned" state (attribution is never invented);
+    #: the bare branch UUID only — resolving the branch name stays
+    #: behind settings:view (GET /branches/{id}), least disclosure.
+    branch_id: str | None
 
 
 class MemberAggregatesOut(BaseModel):
@@ -156,6 +163,7 @@ def _out(record: members_service.MemberRecord) -> MemberOut:
         email=record.email,
         status=record.status.value,
         version=record.version,
+        branch_id=str(record.branch_id) if record.branch_id is not None else None,
     )
 
 

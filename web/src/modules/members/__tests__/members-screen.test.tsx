@@ -36,6 +36,7 @@ const MEMBER = {
     email: "amina@example.com",
     status: "active",
     version: 1,
+    branch_id: null,
 };
 
 // DELIBERATELY NON-ADDITIVE aggregate fixture (#31 batch 3 review): no

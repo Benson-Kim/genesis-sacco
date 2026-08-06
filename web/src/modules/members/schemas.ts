@@ -23,6 +23,16 @@ export const memberSchema = z.object({
     email: z.string().nullable(),
     status: memberStatusSchema,
     version: z.number().int(),
+    /** Branch attribution (#31 ledger (j).2) — the 0016 FK written
+     * ONLY by the batch-4 assignment route, as the bare branch UUID.
+     * NULLABLE, NOT optional: every member read carries the key, so a
+     * response missing it is a contract violation and is REJECTED
+     * (network-tested). NULL renders the honest "unassigned"
+     * affordance — attribution is never invented. Resolving the
+     * branch NAME stays behind settings:view (GET /branches/{id});
+     * without that grant the drawer renders the short id only and
+     * fetches nothing (the created_by least-disclosure precedent). */
+    branch_id: z.string().nullable(),
 });
 
 export type Member = z.infer<typeof memberSchema>;
@@ -51,6 +61,28 @@ export const memberDetailSchema = memberSchema.extend({
 });
 
 export type MemberDetail = z.infer<typeof memberDetailSchema>;
+
+/**
+ * Dormancy run report (DormancyRunOut — #31 ledger (f)): SERVER facts
+ * only. as_of/cutoff are DATE isoformat strings ("YYYY-MM-DD",
+ * api/members.py date.isoformat()) rendered VERBATIM — deliberately
+ * NOT isoTimestampSchema, which would reject every legitimate
+ * response (the InterestRunOut precedent). Counts are integers; NO
+ * money field exists on this contract and none is asserted or
+ * invented (fake validation is a rejected posture). The dormancy
+ * period itself resolves exclusively from tenant settings server-side
+ * (period_months is the server's echo, never an input).
+ */
+export const dormancyRunSchema = z.object({
+    as_of: z.string(),
+    cutoff: z.string(),
+    period_months: z.number().int(),
+    scanned: z.number().int(),
+    transitioned: z.number().int(),
+    batches: z.number().int(),
+});
+
+export type DormancyRun = z.infer<typeof dormancyRunSchema>;
 
 /** Client-side pre-validation of the create form (server re-validates). */
 export const memberCreateSchema = z.object({

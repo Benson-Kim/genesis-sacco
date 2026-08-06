@@ -231,6 +231,7 @@ const MEMBER = {
   email: null,
   status: "active" as const,
   version: 3,
+  branch_id: null,
 };
 
 const FULL_PERMS = {
@@ -883,7 +884,12 @@ test("REGISTERS: empty pages render the honest empty message; a failed page rend
   expect(
     await screen.findByText("No repayment adjustments yet — nothing awaits a checker."),
 ).toBeInTheDocument();
-  expect(await screen.findByRole("alert")).toHaveTextContent(/Could not load this list/);
+  // The Providers default retries queries ONCE (~1s backoff) before
+  // surfacing the error state — allow for it (the house pattern; this
+  // leg flaked at the default 1s timeout on a loaded runner).
+  expect(await screen.findByRole("alert", undefined, { timeout: 5000 })).toHaveTextContent(
+    /Could not load this list/,
+  );
   expect(screen.getByText(/ref corr-reg/)).toBeInTheDocument();
 
 });

@@ -47,6 +47,12 @@ class MemberRecord:
     email: str | None
     status: MemberStatus
     version: int
+    #: Branch attribution (#31 ledger (j).2): the 0016 nullable FK
+    #: written ONLY by the batch-4 assignment route (PUT
+    #: /branches/{id}/members/{member_id}) and the P13.6 service it
+    #: calls — never invented here. NULL is the honest "unassigned"
+    #: state every member starts in (expand-only read fact).
+    branch_id: uuid.UUID | None
 
 
 @dataclass(frozen=True)
@@ -151,6 +157,7 @@ MEMBER_AGGREGATES_SQL = (
 #: so zero-activity rows serialize '0.00', never bare '0'.
 MEMBER_LIST_AGGREGATES_SQL = (
     "SELECT m.id, m.member_no, m.type, m.name, m.phone, m.email, m.status, m.version, "
+    "m.branch_id, "
     "CAST(COALESCE(d.balance, 0) AS numeric(18,2)), "
     "CAST(COALESCE(s.balance, 0) AS numeric(18,2)), "
     "CAST(COALESCE(l.total, 0) AS numeric(18,2)), "
@@ -212,6 +219,7 @@ def _row_to_record(row: Any) -> MemberRecord:
         email=str(row[5]) if row[5] is not None else None,
         status=MemberStatus(str(row[6])),
         version=int(row[7]),
+        branch_id=uuid.UUID(str(row[8])) if row[8] is not None else None,
     )
 
 
@@ -350,6 +358,9 @@ async def create_member(
         email=email,
         status=MemberStatus.ACTIVE,
         version=1,
+        # Every member starts unassigned; only the batch-4 assignment
+        # route writes the 0016 column (attribution never invented).
+        branch_id=None,
     )
 
 
@@ -361,7 +372,7 @@ async def get_member(
     row = (
         await session.execute(
             text(
-                "SELECT id, member_no, type, name, phone, email, status, version "
+                "SELECT id, member_no, type, name, phone, email, status, version, branch_id "
                 "FROM members WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
             ),
             {"id": str(member_id), "tid": str(tenant_id)},
@@ -426,7 +437,8 @@ async def list_members(
     rows = (
         await session.execute(
             text(
-                "SELECT id, member_no, type, name, phone, email, status, version "  # noqa: S608
+                "SELECT id, member_no, type, name, phone, email, status, version, "  # noqa: S608
+                "branch_id "
                 f"FROM members {where}"
                 "ORDER BY member_no LIMIT :limit"
             ),
@@ -478,10 +490,10 @@ async def list_members_with_aggregates(
         MemberWithAggregates(
             record=_row_to_record(row),
             aggregates=MemberAggregates(
-                deposits_total=Decimal(str(row[8])),
-                shares_total=Decimal(str(row[9])),
-                loans_outstanding=Decimal(str(row[10])),
-                guarantees_pledged=Decimal(str(row[11])),
+                deposits_total=Decimal(str(row[9])),
+                shares_total=Decimal(str(row[10])),
+                loans_outstanding=Decimal(str(row[11])),
+                guarantees_pledged=Decimal(str(row[12])),
             ),
         )
         for row in page_rows
@@ -561,6 +573,9 @@ async def update_member(
         email=new_email,
         status=current.status,
         version=current.version + 1,
+        # The profile edit never touches branch attribution (the
+        # batch-4 assignment route is the sole writer of the column).
+        branch_id=current.branch_id,
     )
 
 

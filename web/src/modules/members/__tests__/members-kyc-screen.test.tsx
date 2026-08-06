@@ -102,6 +102,7 @@ const MEMBER = {
   email: null,
   status: "active" as const,
   version: 1,
+  branch_id: null,
 };
 
 // DELIBERATELY NON-ADDITIVE aggregate fixture (#31 batch 3): no figure

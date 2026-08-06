@@ -322,6 +322,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/branches/{branch_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Branch Members
+         * @description Keyset MEMBER roster of a branch (#31 (j).1, members:view).
+         *
+         *     Expand-only read model over the 0016 assignment column, mirroring
+         *     the batch-4 assignment permission split: the entity being READ is
+         *     the member record, so the roster sits behind members x view (the
+         *     P8 precedent) — settings rights alone must not disclose people
+         *     records. 404-BEFORE-FACTS: an unknown or cross-tenant branch id
+         *     surfaces 404 before any roster row is read.
+         */
+        get: operations["list_branch_members_branches__branch_id__members_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/branches/{branch_id}/members/{member_id}": {
         parameters: {
             query?: never;
@@ -335,6 +362,33 @@ export interface paths {
          * @description Assign a member to a branch (members x edit — P8 precedent).
          */
         put: operations["assign_member_branches__branch_id__members__member_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/branches/{branch_id}/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Branch Users
+         * @description Keyset USER roster of a branch (#31 (j).1, access_control:view).
+         *
+         *     Expand-only read model over the 0016 assignment column, mirroring
+         *     the batch-4 assignment permission split: the entity being READ is
+         *     the user record, so the roster sits behind access_control x view
+         *     (the P13.5 users precedent) — settings rights alone must not
+         *     disclose people records. 404-BEFORE-FACTS: an unknown or
+         *     cross-tenant branch id surfaces 404 before any roster row is read.
+         */
+        get: operations["list_branch_users_branches__branch_id__users_get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1991,6 +2045,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/transactions/{transaction_id}/legs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Transaction Legs
+         * @description The double-entry DR/CR legs of one posting (transactions:view).
+         *
+         *     Expand-only read model (#31 ledger (g), audit #30 A3): the
+         *     append-only ledger_entries truth behind a TransactionOut row, one
+         *     item per leg, each amount a canonical decimal string rendered
+         *     verbatim by clients — never summed or netted (P15 blocker (a)).
+         *     404-BEFORE-FACTS: the existence probe runs before any leg is read,
+         *     so unknown and cross-tenant ids (hidden by RLS) surface 404 with no
+         *     account or amount echoed; 403 rejections carry no figures either
+         *     (least disclosure, gate 1.6).
+         */
+        get: operations["list_transaction_legs_transactions__transaction_id__legs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users": {
         parameters: {
             query?: never;
@@ -2439,6 +2522,31 @@ export interface components {
             /** Next Cursor */
             next_cursor: string | null;
         };
+        /**
+         * BranchMemberRosterOut
+         * @description One member assigned to a branch (#31 (j).1) — identity facts only.
+         *
+         *     Least disclosure (gate 1.6): no contact details, no figures; the
+         *     member record stays on the P8 /members reads under the same
+         *     members:view gate.
+         */
+        BranchMemberRosterOut: {
+            /** Id */
+            id: string;
+            /** Member No */
+            member_no: string;
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+        };
+        /** BranchMemberRosterResponse */
+        BranchMemberRosterResponse: {
+            /** Items */
+            items: components["schemas"]["BranchMemberRosterOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** BranchOut */
         BranchOut: {
             /** Created At */
@@ -2456,6 +2564,31 @@ export interface components {
             name: string;
             /** Version */
             version: number;
+        };
+        /**
+         * BranchUserRosterOut
+         * @description One user assigned to a branch (#31 (j).1) — identity facts only.
+         *
+         *     Least disclosure (gate 1.6): who is assigned, nothing more — no
+         *     role, no last-active, no phone; the full user record stays on the
+         *     P13.5 /users reads under the same access_control:view gate.
+         */
+        BranchUserRosterOut: {
+            /** Email */
+            email: string;
+            /** Full Name */
+            full_name: string;
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+        };
+        /** BranchUserRosterResponse */
+        BranchUserRosterResponse: {
+            /** Items */
+            items: components["schemas"]["BranchUserRosterOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /** CaseAssignBody */
         CaseAssignBody: {
@@ -3243,6 +3376,25 @@ export interface components {
             total_interest: string;
         };
         /**
+         * LedgerLegOut
+         * @description One DR or CR leg of a posting (#31 ledger (g), audit #30 A3).
+         *
+         *     Verbatim ledger_entries facts: the chart-of-accounts key, the side
+         *     and the leg amount as a canonical decimal string — one row per leg,
+         *     NOTHING derived (no netting, no totals; the 0004/0014 constraint
+         *     trigger proved balance at commit time). Least disclosure (gate
+         *     1.6): no member, actor or channel rides on a leg row — those live
+         *     on the transaction the caller already holds.
+         */
+        LedgerLegOut: {
+            /** Account */
+            account: string;
+            /** Amount */
+            amount: string;
+            /** Side */
+            side: string;
+        };
+        /**
          * LoanClass
          * @enum {string}
          */
@@ -3360,6 +3512,8 @@ export interface components {
          */
         MemberDetailOut: {
             aggregates: components["schemas"]["MemberAggregatesOut"];
+            /** Branch Id */
+            branch_id: string | null;
             /** Email */
             email: string | null;
             /** Id */
@@ -3399,6 +3553,8 @@ export interface components {
         };
         /** MemberOut */
         MemberOut: {
+            /** Branch Id */
+            branch_id: string | null;
             /** Email */
             email: string | null;
             /** Id */
@@ -4128,6 +4284,16 @@ export interface components {
             expires_in: number;
             /** Refresh Token */
             refresh_token: string;
+        };
+        /**
+         * TransactionLegsResponse
+         * @description All legs of one posting. Unpaginated BY CONSTRUCTION: the widest
+         *     posting builder (the P12 exit settlement) writes 7 legs, so the
+         *     response is bounded without a cursor.
+         */
+        TransactionLegsResponse: {
+            /** Items */
+            items: components["schemas"]["LedgerLegOut"][];
         };
         /** TransactionListResponse */
         TransactionListResponse: {
@@ -5122,6 +5288,40 @@ export interface operations {
             };
         };
     };
+    list_branch_members_branches__branch_id__members_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchMemberRosterResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     assign_member_branches__branch_id__members__member_id__put: {
         parameters: {
             query?: never;
@@ -5145,6 +5345,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BranchAssignmentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_branch_users_branches__branch_id__users_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchUserRosterResponse"];
                 };
             };
             /** @description Validation Error */
@@ -8074,6 +8308,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TransactionListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_transaction_legs_transactions__transaction_id__legs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transaction_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionLegsResponse"];
                 };
             };
             /** @description Validation Error */

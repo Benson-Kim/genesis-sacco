@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { isoTimestampSchema } from "@/lib/schemas";
+import { memberStatusSchema } from "@/modules/members/schemas";
+import { USER_STATUSES } from "@/modules/users/schemas";
 
 /**
  * Zod-validated response boundary for the branches registry console
@@ -64,6 +66,38 @@ export const backfillRunSchema = z.object({
 });
 
 export type BackfillRun = z.infer<typeof backfillRunSchema>;
+
+/* ------------------------------------------------------------------ *
+ * Branch rosters (#31 ledger (j).1) — the expand-only reads over the
+ * 0016 assignment columns, mirroring the batch-4 assignment
+ * permission split on READS: the user roster is access_control:view,
+ * the member roster is members:view — never a settings right.
+ * Identity facts ONLY (least disclosure, gate 1.6): no role, no
+ * last-active, no contact details, NO money field — none is asserted
+ * or invented (the batch-4 fake-validation posture). Status
+ * vocabularies are the OWNING modules' pinned enums (reuse-first,
+ * gate 1.1): an unknown status is a contract violation, REJECTED.
+ * ------------------------------------------------------------------ */
+export const branchUserRosterSchema = z.object({
+  id: z.string(),
+  /** Operator free text — rendered exclusively as inert React text
+   * (the module's named XSS threat). */
+  full_name: z.string(),
+  email: z.string(),
+  status: z.enum(USER_STATUSES),
+});
+
+export type BranchUserRosterRow = z.infer<typeof branchUserRosterSchema>;
+
+export const branchMemberRosterSchema = z.object({
+  id: z.string(),
+  member_no: z.string(),
+  /** Operator free text — inert React text only. */
+  name: z.string(),
+  status: memberStatusSchema,
+});
+
+export type BranchMemberRosterRow = z.infer<typeof branchMemberRosterSchema>;
 
 /* ------------------------------------------------------------------ *
  * Form-side entry shape (client Zod message only — the server's

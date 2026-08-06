@@ -53,6 +53,10 @@ const MEMBER_OUT = {
   email: "jane@sacco.co.ke",
   status: "active",
   version: 1,
+  // #31 batch 7 (j).2: member reads carry the expand-only NULLABLE
+  // branch attribution — the key is ALWAYS present (nullable-never-
+  // optional), so the fixture must carry it for the Zod parse.
+  branch_id: null,
 };
 
 // #31 batch 3 review: the register opts in to the LIST aggregates.
@@ -143,6 +147,7 @@ async function mockApi(page: Page, state: ApiState): Promise<void> {
         email: body["email"],
         status: "active",
         version: 1,
+        branch_id: null,
       });
       return;
     }
