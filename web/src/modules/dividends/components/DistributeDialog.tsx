@@ -13,11 +13,12 @@
  * - SEPARATION OF DUTIES (blocker (f)): the run affordance mounts ONLY
  *   inside MakerCheckerPanel — the contract bans the declarer from
  *   executing their own distribution (403, keyed on the PERSISTED
- *   requested_by). The maker identity here is the PER-TAB WITNESS
- *   ONLY (DeclarationOut exposes no attribution field — recorded on
- *   #31 as a contract follow-up; see makerRegistry.ts); controls are
- *   structurally withheld for the witnessed maker (no override prop
- *   exists); the server enforces regardless.
+ *   requested_by). The maker identity is the CONTRACT's requested_by
+ *   FIRST (issue #31 ledger (a).4 — server truth, the exits !66/0036
+ *   precedent); the per-tab witness (makerRegistry.ts) is a fallback
+ *   for unattributed rows only. Controls are structurally withheld
+ *   for the identified maker (no override prop exists); the server
+ *   enforces regardless.
  * - EXACTLY ONE write per intent: ConfirmDangerModal typed phrase,
  *   pending short-circuit + disabled controls, `retry: 0`, one
  *   Idempotency-Key per logical intent — key material folds the fresh
@@ -175,18 +176,27 @@ export function DistributeDialog({
   const runnable = record.status === "approved";
   const completed = lastRun !== null && lastRun.status === "distributed";
 
-  // PER-TAB WITNESS ONLY (contract honesty — see makerRegistry.ts):
-  // DeclarationOut exposes no attribution field; the server 403s the
-  // declarer's self-distribution on the persisted requested_by
-  // regardless (gate 1.6).
+  // SERVER TRUTH FIRST (issue #31 ledger (a).4, the exits !66/0036
+  // precedent): requested_by is the contract's declarer attribution;
+  // the per-tab witness (makerRegistry.ts) is a fallback for
+  // unattributed rows ONLY — nothing is invented. The server 403s the
+  // declarer's self-distribution on the persisted column regardless
+  // (gate 1.6).
   const witnessedMakerId = dividendMakerOf(record.id);
+  const makerId = record.requested_by ?? witnessedMakerId;
   const ownId = getOwnUserId();
   const makerLabel =
-    witnessedMakerId === DIVIDEND_MAKER_UNKNOWN
-      ? "Declaring officer — not exposed by the read contract (recorded on #31 as a contract follow-up; attribution is never invented) and not witnessed by this tab. The server still refuses the declarer's own distribution."
-      : witnessedMakerId === ownId
-        ? "You declared this dividend (witnessed by this tab)."
-        : "Declaring officer (witnessed by this tab).";
+    record.requested_by !== null
+      ? record.requested_by === ownId
+        ? "You declared this dividend (server attribution)."
+        : // Least disclosure: the bare staff UUID via the short-id
+          // convention — never a name or email.
+          `Declaring officer ${record.requested_by.slice(0, 8)} (server attribution).`
+      : witnessedMakerId === DIVIDEND_MAKER_UNKNOWN
+        ? "Declaring officer — unattributed on the server record (attribution is never invented); no declaration witnessed by this tab. The server still refuses the declarer's own distribution."
+        : witnessedMakerId === ownId
+          ? "You declared this dividend (witnessed by this tab)."
+          : "Declaring officer (witnessed by this tab).";
 
   function reloadRecord() {
     // Explicit reload flow (!60 F5): refetch the record (the snapshot
