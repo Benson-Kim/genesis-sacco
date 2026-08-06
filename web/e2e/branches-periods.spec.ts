@@ -245,8 +245,14 @@ test("happy path: OTP login → branches register + create (ONE wire POST, body 
   expect(state.createHeaders[0]?.["idempotency-key"]).toBeTruthy();
   expect(state.createHeaders[0]?.["authorization"]).toMatch(/^Bearer /);
   expect(new URL(state.createUrls[0] ?? "").search).toBe("");
-  // Dismiss the (spent) drawer — Escape is the explicit dismissal path.
-  await page.keyboard.press("Escape");
+  // Dismiss the (spent) drawer via the result panel's Close button —
+  // the submit unmounted with the SPENT form, so focus (and Escape)
+  // no longer live inside the dialog (the reports.spec pattern).
+  await page
+    .getByRole("dialog", { name: "Register branch" })
+    .getByRole("status")
+    .getByRole("button", { name: "Close" })
+    .click();
   await expect(page.getByRole("dialog", { name: "Register branch" })).toHaveCount(0);
 
   // ---- Periods register + typed close ---------------------------
@@ -282,8 +288,9 @@ test("happy path: OTP login → branches register + create (ONE wire POST, body 
   expect(state.closeHeaders[0]?.["authorization"]).toMatch(/^Bearer /);
   expect(new URL(state.closeUrls[0] ?? "").search).toBe("");
 
-  // Dismiss the (spent) dialog before navigating on.
-  await page.keyboard.press("Escape");
+  // Dismiss the (spent) dialog via the result panel's Close button
+  // before navigating on (same focus reasoning as the drawer above).
+  await dialog.getByRole("status").getByRole("button", { name: "Close" }).click();
   await expect(page.getByRole("dialog", { name: "Close accounting period" })).toHaveCount(0);
 
   // ---- A5: period context NEXT TO the figures operators read ----
