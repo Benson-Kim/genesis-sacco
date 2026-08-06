@@ -11,14 +11,17 @@ Covers (hand-computed oracles, MASTER_PROMPT §4):
 - roster mixes proving scoping: only the probed branch's people come
   back; the other branch's and the unassigned stay invisible,
 - keyset claims: page walks are exhaustive, non-overlapping and in
-  the documented order (users: id ASC; members: member_no ASC), the
-  last page carries next_cursor null,
+  the documented order (users: the house created_at DESC, id DESC
+  cursor — review F4; members: member_no ASC), the last page carries
+  next_cursor null,
 - the permission SPLIT route x every role (P4 seed matrix): a role
   with members:view but NOT access_control:view (Teller, Accountant)
   reads the member roster and is REFUSED the user roster,
 - 404-BEFORE-FACTS: unknown and cross-tenant branch ids surface 404
   before any roster row is read; rejections echo no roster fact,
-- a malformed users-roster cursor is a 400 (semantic validation).
+- a malformed cursor on EITHER roster is a 400 (semantic validation;
+  review F3 added the members leg — bounded length + the as-built
+  GP-#### member_no shape), never a silently empty page.
 
 Falsifiability: drop a tenant/branch predicate, flip an ORDER BY, or
 move a roster behind the settings gate, and the exact-equality and
@@ -97,8 +100,9 @@ async def _seed_member_no(
 
 def test_branch_users_roster_scoping_and_keyset() -> None:
     """Hand-computed mix: 3 users on branch A, 1 on branch B, 1
-    unassigned. limit=2 walks branch A exhaustively in id ASC order
-    with no overlap; B's user and the unassigned never appear."""
+    unassigned. limit=2 walks branch A exhaustively on the house
+    (created_at DESC, id DESC) keyset (review F4) with no overlap;
+    B's user and the unassigned never appear."""
 
     async def run() -> None:
         tid, _, admin_token = await seed_actor()
@@ -112,7 +116,28 @@ def test_branch_users_roster_scoping_and_keyset() -> None:
         b_user, _ = await add_user(tid, "Teller")
         await _assign_user(tid, b_user, branch_b)
         await add_user(tid, "Teller")  # stays unassigned
-        expected = [str(u) for u in sorted(a_users)]  # id ASC (uuid byte order)
+
+        # Hand-computed oracle: read the roster's (created_at, id)
+        # pairs back and sort them the documented way — created_at
+        # DESC with id DESC breaking same-instant ties (uuid byte
+        # order, matching Postgres uuid comparison).
+        async with tenant_session(factory(), tid) as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT id, created_at FROM users "
+                        "WHERE tenant_id = CAST(:tid AS uuid) "
+                        "AND branch_id = CAST(:bid AS uuid)"
+                    ),
+                    {"tid": str(tid), "bid": branch_a},
+                )
+            ).all()
+        assert {str(r[0]) for r in rows} == {str(u) for u in a_users}
+        ordered = sorted(((r[1], uuid.UUID(str(r[0]))) for r in rows), reverse=True)
+        expected = [str(u) for _, u in ordered]
+        # The page-1 cursor is the SERVED position of its last row —
+        # the house '<created_at iso>|<id>' encoding.
+        expected_cursor = f"{ordered[1][0].isoformat()}|{ordered[1][1]}"
 
         headers = {"authorization": f"Bearer {admin_token}"}
         async with api_client() as client:
@@ -122,7 +147,7 @@ def test_branch_users_roster_scoping_and_keyset() -> None:
             assert res.status_code == 200, res.text
             page1 = res.json()
             assert [u["id"] for u in page1["items"]] == expected[:2]
-            assert page1["next_cursor"] == expected[1]
+            assert page1["next_cursor"] == expected_cursor
             res = await client.get(
                 f"/branches/{branch_a}/users",
                 params={"limit": 2, "cursor": page1["next_cursor"]},
@@ -132,13 +157,15 @@ def test_branch_users_roster_scoping_and_keyset() -> None:
             page2 = res.json()
             assert [u["id"] for u in page2["items"]] == expected[2:]
             assert page2["next_cursor"] is None
-            # Identity facts only — least disclosure (gate 1.6).
+            # Identity facts only — least disclosure (gate 1.6): the
+            # keyset's created_at is a cursor position, never a
+            # serialized field.
             for item in page1["items"] + page2["items"]:
                 assert set(item.keys()) == {"id", "full_name", "email", "status"}
             # A malformed cursor is a semantic 400, never a 500.
             res = await client.get(
                 f"/branches/{branch_a}/users",
-                params={"cursor": "not-a-uuid"},
+                params={"cursor": "not-a-cursor"},
                 headers=headers,
             )
             assert res.status_code == 400, res.text
@@ -189,6 +216,18 @@ def test_branch_members_roster_scoping_keyset_and_status_mix() -> None:
             # Identity facts only — no contact details, no figures.
             for item in page1["items"] + page2["items"]:
                 assert set(item.keys()) == {"id", "member_no", "name", "status"}
+            # Review F3 — the mirror of the users malformed-cursor
+            # leg: anything outside the bounded as-built GP-####
+            # member_no shape is a semantic 400, never a silently
+            # empty page (a raw bind would return 200 with zero rows).
+            for bad in ("not-a-member-no", "GP-", "GP-12", "G" * 64):
+                res = await client.get(
+                    f"/branches/{branch_a}/members",
+                    params={"cursor": bad},
+                    headers=headers,
+                )
+                assert res.status_code == 400, (bad, res.text)
+                assert "GP-7001" not in res.text
 
     asyncio.run(run())
 

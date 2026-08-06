@@ -113,7 +113,7 @@ def test_batch7_reads_are_index_backed() -> None:
                     "users",
                     await _explain(
                         session,
-                        branch_users_roster_sql(with_after=False),
+                        branch_users_roster_sql(with_cursor=False),
                         {"tid": str(tid), "bid": str(branch_id), "limit": 21},
                     ),
                 )
