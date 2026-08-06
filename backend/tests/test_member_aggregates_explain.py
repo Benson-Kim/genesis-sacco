@@ -55,9 +55,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 OUT_PATH = Path(__file__).resolve().parents[1] / "perf" / "explain_member_aggregates.txt"
-LIST_OUT_PATH = (
-    Path(__file__).resolve().parents[1] / "perf" / "explain_member_list_aggregates.txt"
-)
+LIST_OUT_PATH = Path(__file__).resolve().parents[1] / "perf" / "explain_member_list_aggregates.txt"
 
 
 async def _explain(session: AsyncSession, sql: str, params: dict[str, object]) -> str:

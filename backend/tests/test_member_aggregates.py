@@ -390,9 +390,7 @@ def test_member_list_with_aggregates_matches_hand_computed_oracles() -> None:
         # yields a cursor and the follow-up page still carries the
         # aggregates object per row.
         async with api_client() as client:
-            page1 = await client.get(
-                "/members?include=aggregates&limit=2", headers=_headers(token)
-            )
+            page1 = await client.get("/members?include=aggregates&limit=2", headers=_headers(token))
             assert page1.status_code == 200, page1.text
             cursor = page1.json()["next_cursor"]
             assert cursor is not None
@@ -479,9 +477,7 @@ def test_member_list_aggregates_rbac_and_no_rejection_path_echoes_amounts() -> N
             over_cap = await client.get(
                 "/members?include=aggregates&limit=101", headers=_headers(admin_token)
             )
-            cross = await client.get(
-                "/members?include=aggregates", headers=_headers(foreign_token)
-            )
+            cross = await client.get("/members?include=aggregates", headers=_headers(foreign_token))
         assert forbidden.status_code == 403
         assert malformed.status_code == 422
         assert over_cap.status_code == 422

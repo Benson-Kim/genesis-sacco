@@ -118,7 +118,16 @@ async function mockApi(page: Page, state: ApiState): Promise<void> {
     }
     if (path === "/members" && method === "GET") {
       state.listCalls += 1;
-      await respond(200, { items: [MEMBER_OUT], next_cursor: null });
+      // Rows carry the aggregates object ONLY when the register opted
+      // in with include=aggregates (#31 batch 3 review).
+      const include = new URL(request.url()).searchParams.get("include");
+      state.listIncludes.push(include);
+      await respond(200, {
+        items: [
+          include === "aggregates" ? { ...MEMBER_OUT, aggregates: AGGREGATES_OUT } : MEMBER_OUT,
+        ],
+        next_cursor: null,
+      });
       return;
     }
     if (path === "/members" && method === "POST") {
