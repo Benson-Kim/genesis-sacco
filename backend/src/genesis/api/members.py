@@ -40,17 +40,35 @@ EditCtx = Annotated[AuthContext, Depends(_edit)]
 
 
 class MemberCreateBody(BaseModel):
+    """extra="forbid" (gate 1.6): unknown fields are a 422, never
+    silently dropped. dividend_payout (#31 ledger (c)) is typed as a
+    bounded STRING, deliberately not the enum: the service resolves it
+    against the CODE-OWNED vocabulary and an unknown value surfaces as
+    the sanitized 422 category ONLY — a pydantic enum here would echo
+    the permitted values in FastAPI's structural 422 (least
+    disclosure). Stored PREFERENCE only; nothing routes money by it
+    (batch-8 fence)."""
+
+    model_config = ConfigDict(extra="forbid")
+
     type: MemberType
     name: str = Field(min_length=1, max_length=200)
     phone: str | None = Field(default=None, max_length=32)
     email: str | None = Field(default=None, max_length=254)
+    dividend_payout: str | None = Field(default=None, max_length=32)
 
 
 class MemberUpdateBody(BaseModel):
+    """Versioned optimistic-lock edit body (stale = 409); extra="forbid"
+    and the dividend_payout string posture per MemberCreateBody."""
+
+    model_config = ConfigDict(extra="forbid")
+
     version: int = Field(ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=200)
     phone: str | None = Field(default=None, max_length=32)
     email: str | None = Field(default=None, max_length=254)
+    dividend_payout: str | None = Field(default=None, max_length=32)
 
 
 class MemberStatusBody(BaseModel):
@@ -87,6 +105,10 @@ class MemberOut(BaseModel):
     email: str | None
     status: str
     version: int
+    #: Dividend payout PREFERENCE (#31 ledger (c)) — nullable, NEVER
+    #: optional: the key is always serialized; null is the honest
+    #: "not chosen" state clients render with an explicit affordance.
+    dividend_payout: str | None
 
 
 class MemberAggregatesOut(BaseModel):
@@ -156,6 +178,9 @@ def _out(record: members_service.MemberRecord) -> MemberOut:
         email=record.email,
         status=record.status.value,
         version=record.version,
+        dividend_payout=(
+            record.dividend_payout.value if record.dividend_payout is not None else None
+        ),
     )
 
 
@@ -180,6 +205,7 @@ async def create_member(body: MemberCreateBody, ctx: CreateCtx) -> MemberOut:
             name=body.name,
             phone=body.phone,
             email=body.email,
+            dividend_payout=body.dividend_payout,
         )
     return _out(record)
 
@@ -299,6 +325,7 @@ async def update_member(member_id: uuid.UUID, body: MemberUpdateBody, ctx: EditC
             name=body.name,
             phone=body.phone,
             email=body.email,
+            dividend_payout=body.dividend_payout,
         )
     return _out(record)
 

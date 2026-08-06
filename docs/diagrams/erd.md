@@ -22,6 +22,12 @@
   (0037_committee_recommender.py, down_revision = "0036" — alters
   loan_applications only, no new table); diagram 2.B, §3 and §6
   updated accordingly (v1.2 rules 11/14).
+  Extended for 0039 by the issue-#31 batch-8 MR, IN THE SAME MR as
+  the migration: alembic head 0038 -> 0039
+  (0039_member_dividend_payout.py, down_revision = "0038" — alters
+  members only, one nullable CHECK-pinned preference column, no new
+  table; 0038, !77, was index-only on existing corrections tables);
+  diagram 2.A and §3 updated accordingly (v1.2 rules 11/14).
   Derived exclusively from backend/migrations/versions/*.py — every
   entity is a real table from a migration; every edge cites the FK
   that implements it. Falsifiable gate: erd-spot-check.py (§6).
@@ -84,6 +90,7 @@ erDiagram
         text type "person|company|group|vehicle; UNIQUE (id, type) composite-FK anchor (0018)"
         text status "active|arrears|dormant|exited (0001, widened 0021)"
         uuid branch_id FK "nullable, ON DELETE RESTRICT (0016)"
+        text dividend_payout "nullable payout PREFERENCE, CHECK deposit_account|share_capital|mpesa|bank; NULL is the honest not-chosen state; the P13.11 distribution engine does NOT consume it (0039)"
     }
     branches {
         uuid id PK
