@@ -371,9 +371,7 @@ async def list_branch_users(
         params["c_ts"] = c_ts
         params["c_id"] = c_id
     rows = (
-        await session.execute(
-            text(branch_users_roster_sql(with_cursor=cursor is not None)), params
-        )
+        await session.execute(text(branch_users_roster_sql(with_cursor=cursor is not None)), params)
     ).all()
     items = [
         BranchUserRosterRecord(
