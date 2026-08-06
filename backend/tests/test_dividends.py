@@ -966,9 +966,7 @@ def test_declaration_read_contract_exposes_requested_by_verbatim_or_null() -> No
             body = declared.json()
             assert body["requested_by"] == str(admin_id)
 
-            detail = await client.get(
-                f"/dividends/declarations/{body['id']}", headers=headers
-            )
+            detail = await client.get(f"/dividends/declarations/{body['id']}", headers=headers)
             assert detail.status_code == 200
             assert detail.json()["requested_by"] == str(admin_id)
 
@@ -983,9 +981,7 @@ def test_declaration_read_contract_exposes_requested_by_verbatim_or_null() -> No
         # The NULL leg (system-actor declaration): void the live FY
         # slot first, then declare with NO actor — the honest null.
         async with tenant_session(factory(), tid) as session:
-            await void_declaration(
-                session, tid, admin_id, uuid.UUID(body["id"]), version=1
-            )
+            await void_declaration(session, tid, admin_id, uuid.UUID(body["id"]), version=1)
         system_declared = await declare_dividend(_scope(tid), tid, None, today=TODAY)
         assert system_declared.requested_by is None
         async with api_client() as client:

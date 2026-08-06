@@ -1739,9 +1739,7 @@ def test_cross_tenant_corrections_rows_are_invisible() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _reject_adjustment(
-    tid: uuid.UUID, adjustment_id: uuid.UUID, version: int = 1
-) -> None:
+async def _reject_adjustment(tid: uuid.UUID, adjustment_id: uuid.UUID, version: int = 1) -> None:
     """Reject a pending adjustment through a distinct freshly-seeded
     checker (the service enforces maker != checker regardless)."""
     checker, _ = await _seed_extra_user(tid, "System Admin")
@@ -1783,9 +1781,7 @@ def test_a1_register_adjustments_lists_pending_first_with_exact_keyset_order() -
 
         async with api_client() as client:
             # Full page: the whole register in one read.
-            res = await client.get(
-                "/corrections/repayment-adjustments", headers=_headers(token)
-            )
+            res = await client.get("/corrections/repayment-adjustments", headers=_headers(token))
             assert res.status_code == 200, res.text
             page = res.json()
             assert [row["id"] for row in page["items"]] == expected
@@ -1869,9 +1865,7 @@ def test_a2_register_write_offs_lists_live_first_with_exact_keyset_order() -> No
             cursor: str | None = None
             for _ in range(4):
                 query = f"?limit=1{f'&cursor={cursor}' if cursor else ''}"
-                res = await client.get(
-                    f"/corrections/write-offs{query}", headers=_headers(token)
-                )
+                res = await client.get(f"/corrections/write-offs{query}", headers=_headers(token))
                 assert res.status_code == 200, res.text
                 body = res.json()
                 assert len(body["items"]) == 1
@@ -1940,9 +1934,7 @@ def test_registers_cross_tenant_invisible_and_rejections_echo_no_figures() -> No
                 for figure in ("1000.00", "24000.00"):
                     assert figure not in forbidden.text
 
-                forged = await client.get(
-                    f"{path}?cursor=not-a-cursor", headers=_headers(token_b)
-                )
+                forged = await client.get(f"{path}?cursor=not-a-cursor", headers=_headers(token_b))
                 assert forged.status_code == 400
                 assert set(forged.json().keys()) == {"category", "correlation_id"}
                 for figure in ("1000.00", "24000.00"):

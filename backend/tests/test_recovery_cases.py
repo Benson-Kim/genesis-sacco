@@ -733,9 +733,7 @@ def test_a3_worklist_declared_filters_only_with_seeded_mix() -> None:
             assert [r["loan_id"] for r in disputed] == [str(l182)]
             assert [r["days_past_due"] for r in disputed] == [182]
 
-            res = await client.get(
-                "/recovery-cases?classification=substandard", headers=headers
-            )
+            res = await client.get("/recovery-cases?classification=substandard", headers=headers)
             assert res.status_code == 200
             assert [r["days_past_due"] for r in res.json()["items"]] == [151, 120]
 
@@ -753,8 +751,7 @@ def test_a3_worklist_declared_filters_only_with_seeded_mix() -> None:
             assert [r["days_past_due"] for r in page1["items"]] == [151]
             assert page1["next_cursor"] is not None
             res = await client.get(
-                f"/recovery-cases?classification=substandard&limit=1"
-                f"&cursor={page1['next_cursor']}",
+                f"/recovery-cases?classification=substandard&limit=1&cursor={page1['next_cursor']}",
                 headers=headers,
             )
             page2 = res.json()
