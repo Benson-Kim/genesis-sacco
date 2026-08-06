@@ -384,7 +384,15 @@ test("CREATE 409 (duplicate name): EXACTLY ONE attempt + ConflictBanner; the exp
 
 test("RENAME pins the FRESH record version; a double-clicked submit produces exactly ONE write; 409 → ONE attempt + ConflictBanner; the reload refetches the record and the re-entry carries a ROTATED key", async () => {
   const user = userEvent.setup();
-  mocked.updateBranch.mockRejectedValue(new ApiError(409, "conflict", "corr-stale"));
+  // HELD promise: the double-click proof must observe the pending
+  // short-circuit, then the held attempt is rejected with the 409.
+  let rejectRename: (error: unknown) => void = () => undefined;
+  mocked.updateBranch.mockImplementation(
+    () =>
+      new Promise<BranchRecord>((_resolve, reject) => {
+        rejectRename = reject;
+      }),
+  );
   mountScreen();
 
   const drawer = await openDetail(user);
@@ -398,7 +406,8 @@ test("RENAME pins the FRESH record version; a double-clicked submit produces exa
   await user.click(renameButton);
   await user.click(renameButton);
 
-  await waitFor(() => expect(mocked.updateBranch).toHaveBeenCalledTimes(1));
+  expect(mocked.updateBranch).toHaveBeenCalledTimes(1);
+  rejectRename(new ApiError(409, "conflict", "corr-stale"));
   // (branchId, version, name, key): the PINNED fresh version travels.
   expect(mocked.updateBranch.mock.calls[0]?.[0]).toBe(BRANCH_ID);
   expect(mocked.updateBranch.mock.calls[0]?.[1]).toBe(1);
