@@ -75,7 +75,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application.audit import record_audit
-from genesis.application.guarantees import live_pledged_total
+from genesis.application.guarantees import live_guarantee_params, live_pledged_total
 from genesis.application.ledger import post_exit_settlement
 from genesis.application.loans import _close_loan, _interest_due
 from genesis.application.members import mark_member_exited
@@ -104,6 +104,64 @@ _EXIT_COLS = (
 
 #: Application stages that block an exit (P8 blocker set, single list).
 _OPEN_STAGES = "('submitted', 'appraisal', 'committee', 'approved')"
+
+#: Unresolved POSTED write-off claim probe (issue #21) — ONE copy
+#: (gate 1.1) shared verbatim by the locked settlement computation and
+#: the advisory eligibility read, so the two can never diverge on the
+#: rule. Explicit tenant predicates on top of forced RLS (v1.1 rule 4);
+#: served by idx_loan_write_offs_member + idx_loan_recoveries_write_off.
+UNRESOLVED_WRITEOFF_CLAIM_SQL = (
+    "SELECT 1 FROM loan_write_offs w "
+    "WHERE w.member_id = CAST(:m AS uuid) "
+    "AND w.tenant_id = CAST(:tid AS uuid) AND w.status = 'posted' "
+    "AND w.total_written_off > "
+    " (SELECT COALESCE(SUM(r.amount), 0) FROM loan_recoveries r "
+    "  WHERE r.write_off_id = w.id AND r.tenant_id = w.tenant_id) "
+    "LIMIT 1"
+)
+
+# --- Advisory exit-eligibility read (P15 batch 5, U6; issue #31) ----------
+#
+# Blocker FACTS only — counts and booleans, NEVER an amount (least
+# disclosure under the members:view gate; the settlement figures stay
+# on the exit record itself). These reads take NO locks — no FOR
+# UPDATE, no FOR SHARE — and are ADVISORY: the BINDING verdict is
+# request_exit/_compute_under_locks and the settlement's locked
+# recompute, both of which re-check every fact under the full P12 lock
+# chain. Module-level SQL so the EXPLAIN capture asserts each plan.
+
+#: Member status without the row lock (the advisory mirror of
+#: _lock_member); explicit tenant predicate doubles RLS.
+ELIGIBILITY_MEMBER_SQL = (
+    "SELECT status FROM members "
+    "WHERE id = CAST(:m AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+)
+
+#: Live guarantees GIVEN by the member — the SAME status set the P9
+#: enforcement path uses (LIVE_GUARANTEE_STATUSES via
+#: live_guarantee_params, gate 1.1). Served by idx_guarantees_guarantor.
+ELIGIBILITY_GUARANTEES_SQL = (
+    "SELECT COUNT(*) FROM guarantees "
+    "WHERE guarantor_member_id = CAST(:m AS uuid) "
+    "AND tenant_id = CAST(:tid AS uuid) AND status IN (:live0, :live1)"
+)
+
+#: Active loans — informational, NOT a blocker (the settlement nets
+#: them); served by idx_loans_member.
+ELIGIBILITY_LOANS_SQL = (
+    "SELECT COUNT(*) FROM loans "
+    "WHERE member_id = CAST(:m AS uuid) "
+    "AND tenant_id = CAST(:tid AS uuid) AND status = 'active'"
+)
+
+#: An open (requested/approved) exit already holds the member's single
+#: open-settlement slot (uq_member_exits_open) — a fresh request would
+#: 409. The partial unique index itself serves this probe.
+ELIGIBILITY_OPEN_EXIT_SQL = (
+    "SELECT 1 FROM member_exits "
+    "WHERE member_id = CAST(:m AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+    "AND status IN ('requested', 'approved') LIMIT 1"
+)
 
 
 @dataclass(frozen=True)
@@ -329,18 +387,9 @@ async def _compute_under_locks(
     # full recovery is the only unblock.
     unresolved_claim = (
         await session.execute(
-            text(
-                # Explicit tenant predicates on top of forced RLS
-                # (v1.1 rule 4); served by idx_loan_write_offs_member
-                # + idx_loan_recoveries_write_off.
-                "SELECT 1 FROM loan_write_offs w "
-                "WHERE w.member_id = CAST(:m AS uuid) "
-                "AND w.tenant_id = CAST(:tid AS uuid) AND w.status = 'posted' "
-                "AND w.total_written_off > "
-                " (SELECT COALESCE(SUM(r.amount), 0) FROM loan_recoveries r "
-                "  WHERE r.write_off_id = w.id AND r.tenant_id = w.tenant_id) "
-                "LIMIT 1"
-            ),
+            # ONE copy of the claim rule (gate 1.1): the module-level
+            # constant is shared with the advisory eligibility read.
+            text(UNRESOLVED_WRITEOFF_CLAIM_SQL),
             {"m": str(member_id), "tid": str(tenant_id)},
         )
     ).first()
@@ -456,6 +505,96 @@ async def request_exit(
         },
     )
     return await get_exit(session, tenant_id, exit_id)
+
+
+@dataclass(frozen=True)
+class ExitEligibility:
+    """Advisory blocker facts for an up-front eligibility checklist
+    (P15 batch 5, U6 — the prototype's vExit() criteria rows).
+
+    Facts only, never a figure: counts and booleans under members:view.
+    ADVISORY by design — computed WITHOUT locks; the binding verdict is
+    the locked recompute at request and settlement time (which also
+    checks the negative-settlement rule this read deliberately cannot:
+    that rule needs the money computation under the full lock chain).
+    """
+
+    member_id: uuid.UUID
+    member_status: str
+    #: The P13.13 capability map's verdict (member_may EXIT_REQUEST) —
+    #: exited members are structurally ineligible.
+    status_allows_exit: bool
+    open_exit_exists: bool
+    live_guarantees_count: int
+    open_applications_count: int
+    #: Informational, NOT a blocker: active loans are netted within the
+    #: settlement (the P10 early-settlement rule).
+    active_loans_count: int
+    unresolved_writeoff_claim: bool
+    #: Server-computed advisory verdict over the blocker facts above
+    #: (single copy of the checklist logic — the client renders, never
+    #: re-derives). True means "no blocker visible in this snapshot",
+    #: NOT a guarantee: the server re-verdicts under locks regardless.
+    advisory_eligible: bool
+    as_of: datetime
+
+
+async def exit_eligibility(
+    session: AsyncSession, tenant_id: uuid.UUID, member_id: uuid.UUID
+) -> ExitEligibility:
+    """Advisory eligibility facts (NO row locks, least disclosure).
+
+    Mirrors the blocker set _compute_under_locks enforces — live
+    guarantees GIVEN (same live-status set via live_guarantee_params),
+    open applications (_open_application_count, the same helper the
+    locked path calls), the unresolved write-off claim (the SAME
+    module-level SQL) and the open-exit slot — as counts/booleans only.
+    Unknown members are a 404 BEFORE any fact is computed; no rejection
+    path echoes a fact.
+    """
+    row = (
+        await session.execute(
+            text(ELIGIBILITY_MEMBER_SQL),
+            {"m": str(member_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"member {member_id} not found")
+    status = str(row[0])
+    status_allows_exit = status != "exited" and member_may(
+        MemberStatus(status), MoneyOperation.EXIT_REQUEST
+    )
+    params = {"m": str(member_id), "tid": str(tenant_id)}
+    open_exit = (await session.execute(text(ELIGIBILITY_OPEN_EXIT_SQL), params)).first()
+    guarantees = (
+        await session.execute(
+            text(ELIGIBILITY_GUARANTEES_SQL), {**params, **live_guarantee_params()}
+        )
+    ).scalar_one()
+    open_applications = await _open_application_count(session, tenant_id, member_id)
+    active_loans = (await session.execute(text(ELIGIBILITY_LOANS_SQL), params)).scalar_one()
+    claim = (await session.execute(text(UNRESOLVED_WRITEOFF_CLAIM_SQL), params)).first()
+    live_guarantees_count = int(guarantees)
+    open_exit_exists = open_exit is not None
+    unresolved_writeoff_claim = claim is not None
+    return ExitEligibility(
+        member_id=member_id,
+        member_status=status,
+        status_allows_exit=status_allows_exit,
+        open_exit_exists=open_exit_exists,
+        live_guarantees_count=live_guarantees_count,
+        open_applications_count=open_applications,
+        active_loans_count=int(active_loans),
+        unresolved_writeoff_claim=unresolved_writeoff_claim,
+        advisory_eligible=(
+            status_allows_exit
+            and not open_exit_exists
+            and live_guarantees_count == 0
+            and open_applications == 0
+            and not unresolved_writeoff_claim
+        ),
+        as_of=datetime.now(UTC),
+    )
 
 
 async def get_exit(session: AsyncSession, tenant_id: uuid.UUID, exit_id: uuid.UUID) -> ExitRecord:
