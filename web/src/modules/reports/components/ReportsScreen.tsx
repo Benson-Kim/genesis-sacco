@@ -8,11 +8,15 @@
  * export workflow ONLY — request an export by `ReportName`, check its
  * requester-only status, drain the tenant queue, download the rendered
  * CSV/PDF via expiring capability tokens. There is NO in-browser
- * report-viewing endpoint (the prototype's on-screen tables are NOT
- * reproduced from client-side queries — that would require exactly the
- * client-computed figures blocker (a) forbids) and NO export list
- * endpoint (the session panel below shows only exports THIS TAB
- * witnessed — the per-tab registry precedent, recorded honestly).
+ * report-COMPUTING endpoint: the prototype's on-screen tables are NOT
+ * reproduced from client-side queries (that would require exactly the
+ * client-computed figures blocker (a) forbids). The on-screen view
+ * (P15 batch 5, U2 — ViewExportDrawer) instead renders the SERVER's
+ * OWN rendered CSV artifact verbatim through the existing download
+ * route — zero contract change; downloads stay canonical. There is
+ * still NO export list endpoint (the session panel below shows only
+ * exports THIS TAB witnessed — the per-tab registry precedent,
+ * recorded honestly).
  *
  * Security posture (transactions/guarantors precedent):
  * - Every rendered string (report names, statuses, filters, column
@@ -44,6 +48,7 @@ import {
   REPORT_NAMES,
   exportFilenameStem,
   reportLabel,
+  type Artifact,
   type ExportOut,
   type ReportName,
 } from "../schemas";
@@ -58,8 +63,16 @@ const RequestExportDrawer = dynamic(
 const RunQueueDialog = dynamic(() => import("./RunQueueDialog").then((m) => m.RunQueueDialog), {
   ssr: false,
 });
+const ViewExportDrawer = dynamic(
+  () => import("./ViewExportDrawer").then((m) => m.ViewExportDrawer),
+  { ssr: false },
+);
 
-type DrawerState = null | { mode: "request"; report: ReportName } | { mode: "queue" };
+type DrawerState =
+  | null
+  | { mode: "request"; report: ReportName }
+  | { mode: "queue" }
+  | { mode: "view"; record: ExportOut; artifact: Artifact };
 
 /** Operator-facing scope line per catalogue card, derived from the
  * report's declared filter surface (never more, never less). */
@@ -107,8 +120,12 @@ function statusPill(status: string) {
   return <Pill>{status}</Pill>;
 }
 
-/** One witnessed export row: requester-only refresh + downloads. */
-function ExportRow({ record }: Readonly<{ record: ExportOut }>) {
+/** One witnessed export row: requester-only refresh, the on-screen
+ * view (U2 — the prototype's "look at it now" job) + downloads. */
+function ExportRow({
+  record,
+  onView,
+}: Readonly<{ record: ExportOut; onView: (record: ExportOut, artifact: Artifact) => void }>) {
   const refresh = useMutation({
     mutationFn: () => fetchExport(record.id),
     onSuccess: (fresh) => {
@@ -164,6 +181,9 @@ function ExportRow({ record }: Readonly<{ record: ExportOut }>) {
           </Button>
           {artifact !== null && (
             <>
+              <Button type="button" onClick={() => onView(record, artifact)}>
+                View
+              </Button>
               <Button
                 type="button"
                 onClick={() =>
@@ -269,7 +289,13 @@ export function ReportsScreen() {
                 </thead>
                 <tbody>
                   {witnessed.map((record) => (
-                    <ExportRow key={record.id} record={record} />
+                    <ExportRow
+                      key={record.id}
+                      record={record}
+                      onView={(viewRecord, artifact) =>
+                        setDrawer({ mode: "view", record: viewRecord, artifact })
+                      }
+                    />
                   ))}
                 </tbody>
               </table>
@@ -283,6 +309,13 @@ export function ReportsScreen() {
       )}
       {drawer !== null && drawer.mode === "queue" && (
         <RunQueueDialog onClose={() => setDrawer(null)} />
+      )}
+      {drawer !== null && drawer.mode === "view" && (
+        <ViewExportDrawer
+          record={drawer.record}
+          artifact={drawer.artifact}
+          onClose={() => setDrawer(null)}
+        />
       )}
     </div>
   );

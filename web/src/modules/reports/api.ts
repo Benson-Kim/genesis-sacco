@@ -132,6 +132,47 @@ export function downloadArtifact(downloadPath: string, filename: string): Promis
   }, filename);
 }
 
+/** The on-screen view's artifact payload: the server-rendered CSV
+ * TEXT plus the truncation headers VERBATIM (P15 batch 5, U2). */
+export interface ArtifactText {
+  text: string;
+  /** X-Export-Truncated response header, verbatim ("true"/"false"). */
+  truncatedHeader: string | null;
+  /** X-Export-Limit response header, verbatim. */
+  limitHeader: string | null;
+}
+
+/**
+ * Fetch a rendered CSV artifact as TEXT for the on-screen report view
+ * (U2 — ZERO contract change: the same capability-token download route
+ * the CSV button uses, through the GENERATED client; bearer/tenant
+ * stay HEADERS). The body is the server's own render; the caller
+ * parses it strictly (csv.ts) and renders every cell VERBATIM — the
+ * download path stays the canonical artifact. Failures surface as the
+ * least-disclosure ApiError; the body is never echoed.
+ */
+export async function fetchArtifactText(downloadPath: string): Promise<ArtifactText> {
+  const token = downloadToken(downloadPath);
+  const { response } = await api.GET("/exports/downloads/{token}", {
+    params: { path: { token } },
+    parseAs: "stream",
+  });
+  if (!response.ok) {
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    throw toApiError(body, response);
+  }
+  return {
+    text: await response.text(),
+    truncatedHeader: response.headers.get("X-Export-Truncated"),
+    limitHeader: response.headers.get("X-Export-Limit"),
+  };
+}
+
 /** Keyset picker read for the exit_id filter (members:view — the
  * caller mounts this ONLY when the grant is present). */
 export async function fetchExitsPage(cursor: string | null): Promise<KeysetPage<ExitPickerRow>> {
