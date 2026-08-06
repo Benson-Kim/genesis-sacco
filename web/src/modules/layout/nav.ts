@@ -121,6 +121,16 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "Settings", href: "/modules/settings", module: "settings", icon: "settings" },
       {
+        // P13.6 branches registry console (issue #31 batch 4): the
+        // registry CRUD sits under settings view/create/edit per the
+        // P4 matrix (the prototype manages branches from Settings);
+        // people assignments in the drawer follow their OWN modules.
+        label: "Branches",
+        href: "/modules/settings/branches",
+        module: "settings",
+        icon: "settings",
+      },
+      {
         label: "Access control",
         href: "/modules/access_control",
         module: "access_control",
