@@ -271,7 +271,7 @@ export function BranchAssignPanel({
           }}
           disabled={assign.isPending || freshEntity === undefined}
         >
-          {assign.isPending ? "Assigning…" : `Assign to ${branchName}`}
+          {assign.isPending ? "Assigning…" : `Assign ${adapter.kind} to ${branchName}`}
         </Button>
       </div>
     </div>
