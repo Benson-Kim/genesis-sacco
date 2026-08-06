@@ -68,6 +68,17 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: "exit",
       },
       {
+        // P13.13 dormancy worklist (issue #31 batch 7, ledger (f)):
+        // the register's own dormant filter + the members:edit
+        // operations run. Lives under the members RBAC module (the
+        // member-exit precedent; no dedicated dormancy module exists
+        // in the P4 matrix).
+        label: "Dormancy",
+        href: "/modules/members/dormancy",
+        module: "members",
+        icon: "members",
+      },
+      {
         // The P13.11 dividends lifecycle console (issue #31 batch 2);
         // lives under the transactions RBAC module (every /dividends
         // route is gated on transactions view/edit/approve server-side

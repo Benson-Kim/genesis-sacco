@@ -62,6 +62,28 @@ export const memberDetailSchema = memberSchema.extend({
 
 export type MemberDetail = z.infer<typeof memberDetailSchema>;
 
+/**
+ * Dormancy run report (DormancyRunOut — #31 ledger (f)): SERVER facts
+ * only. as_of/cutoff are DATE isoformat strings ("YYYY-MM-DD",
+ * api/members.py date.isoformat()) rendered VERBATIM — deliberately
+ * NOT isoTimestampSchema, which would reject every legitimate
+ * response (the InterestRunOut precedent). Counts are integers; NO
+ * money field exists on this contract and none is asserted or
+ * invented (fake validation is a rejected posture). The dormancy
+ * period itself resolves exclusively from tenant settings server-side
+ * (period_months is the server's echo, never an input).
+ */
+export const dormancyRunSchema = z.object({
+    as_of: z.string(),
+    cutoff: z.string(),
+    period_months: z.number().int(),
+    scanned: z.number().int(),
+    transitioned: z.number().int(),
+    batches: z.number().int(),
+});
+
+export type DormancyRun = z.infer<typeof dormancyRunSchema>;
+
 /** Client-side pre-validation of the create form (server re-validates). */
 export const memberCreateSchema = z.object({
     type: memberTypeSchema,
