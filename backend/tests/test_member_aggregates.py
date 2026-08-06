@@ -278,8 +278,9 @@ def test_member_list_stays_flat_without_aggregates() -> None:
     """FM4 REDEFINED (#31 batch 3 review): aggregates on the LIST are
     OPT-IN via include=aggregates. WITHOUT the parameter the register
     page stays byte-identical to the established flat contract — items
-    carry exactly the eight flat keys and NO aggregates key, so
-    existing consumers are unaffected."""
+    carry exactly the nine flat keys (batch 7 (j).2 expanded the flat
+    shape with the human-authorized nullable-never-optional branch_id)
+    and NO aggregates key, so existing consumers are unaffected."""
 
     async def run() -> None:
         tid, _, token = await seed_actor()
@@ -294,6 +295,7 @@ def test_member_list_stays_flat_without_aggregates() -> None:
         # parameterless response fails here).
         for item in items:
             assert sorted(item) == [
+                "branch_id",
                 "email",
                 "id",
                 "member_no",
