@@ -87,6 +87,18 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: "transactions",
       },
       {
+        // P12.5 accounting-periods console (issue #31 batch 4 — audit
+        // #30 A5): period-close visibility + the approve-gated close.
+        // Lives under the transactions RBAC module (every
+        // /accounting-periods route is gated on transactions
+        // view/approve server-side — the dividends precedent; there is
+        // no dedicated periods module in the P4 matrix).
+        label: "Accounting periods",
+        href: "/modules/transactions/periods",
+        module: "transactions",
+        icon: "transactions",
+      },
+      {
         // P13.16 recovery worklist (issue #31 batch 1 — audit #30 R1);
         // lives under the loan_book RBAC module (every /recovery-cases
         // route is gated on loan_book view/create/edit server-side —
@@ -108,6 +120,16 @@ export const NAV_SECTIONS: NavSection[] = [
     utility: true,
     items: [
       { label: "Settings", href: "/modules/settings", module: "settings", icon: "settings" },
+      {
+        // P13.6 branches registry console (issue #31 batch 4): the
+        // registry CRUD sits under settings view/create/edit per the
+        // P4 matrix (the prototype manages branches from Settings);
+        // people assignments in the drawer follow their OWN modules.
+        label: "Branches",
+        href: "/modules/settings/branches",
+        module: "settings",
+        icon: "settings",
+      },
       {
         label: "Access control",
         href: "/modules/access_control",
