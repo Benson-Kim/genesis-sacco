@@ -248,7 +248,9 @@ test("happy path: OTP login → Recovery worklist renders workflow facts with NO
   // The worklist renders workflow facts…
   await expect(page.getByText("Recovery worklist")).toBeVisible();
   await expect(page.getByText("120")).toBeVisible();
-  await expect(page.getByText("Doubtful")).toBeVisible();
+  // Scoped to the register table: the (a).3 classification filter now
+  // ALSO carries the label as an <option> — assert the rendered ROW.
+  await expect(page.getByRole("region", { name: "Table" }).getByText("Doubtful")).toBeVisible();
   await expect(page.getByText("— (unassigned)")).toBeVisible();
   // …and LEAST DISCLOSURE holds across the whole page (addendum A5):
   // no money figure exists anywhere in the DOM.
@@ -309,7 +311,8 @@ test("declared worklist filters (issue #31 ledger (a).3): the DEFAULT view sends
   // with the SERVER's narrowed rows (never a local re-sort).
   await page.getByRole("button", { name: "Paused — disputed" }).click();
   await expect(page.getByText("200")).toBeVisible();
-  await expect(page.getByText("Loss")).toBeVisible();
+  // Scoped to the register table (the filter <option> also says "Loss").
+  await expect(page.getByRole("region", { name: "Table" }).getByText("Loss")).toBeVisible();
   const filtered = state.worklistUrls[state.worklistUrls.length - 1] ?? "";
   const filteredParams = new URL(filtered).searchParams;
   expect(filteredParams.get("status")).toBe("disputed");
@@ -384,7 +387,9 @@ test("adversarial: disposition 409 (the single domain gatekeeper refused / versi
   await page.getByLabel(`Type "${PHRASE}" to confirm`).fill(PHRASE);
   await page.getByRole("button", { name: "Record disposition", exact: true }).click();
 
-  await expect(page.getByText("Paused — disputed")).toBeVisible();
+  // Scoped to the case drawer: the (a).3 status segment in the toolbar
+  // ALSO says "Paused — disputed" — assert the DRAWER's status pill.
+  await expect(page.getByLabel("Recovery case").getByText("Paused — disputed")).toBeVisible();
   expect(state.dispositionBodies).toHaveLength(2);
   const freshKey = state.dispositionHeaders[1]?.["idempotency-key"];
   expect(freshKey).toBeTruthy();

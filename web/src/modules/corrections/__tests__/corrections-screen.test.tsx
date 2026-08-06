@@ -776,7 +776,7 @@ test("MAKER REQUEST (adjustment): one write per intent; the result panel renders
   // register the (a).1 contract expansion delivered.
   expect(within(drawer).getByText(ADJ_ID)).toBeInTheDocument();
   expect(
-    within(drawer).getByText(/leads the pending-adjustments\\s+checker register/),
+    within(drawer).getByText(/leads the pending-adjustments\s+checker register/),
   ).toBeInTheDocument();
   expect(within(drawer).queryByRole("button", { name: "Request adjustment…" })).toBeNull();
 });

@@ -196,7 +196,12 @@ test("LEAST DISCLOSURE (addendum A5): the worklist renders workflow facts ONLY �
   const { container } = mountScreen();
 
   expect(await screen.findByText("120")).toBeInTheDocument();
-  expect(screen.getByText("Doubtful")).toBeInTheDocument();
+  // Scoped to the register table: the (a).3 classification filter now
+  // ALSO carries the vocabulary label as an <option> — the assertion
+  // stays on the rendered ROW pill.
+  expect(
+    within(screen.getByRole("region", { name: "Table" })).getByText("Doubtful"),
+  ).toBeInTheDocument();
   // Falsifiable: render any balance, penalty or provision figure and
   // this fails — the P13.16 contract carries none; neither may the DOM.
   expect(container.textContent).not.toContain("KES");
