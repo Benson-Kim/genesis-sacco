@@ -185,9 +185,7 @@ def test_branch_members_roster_scoping_keyset_and_status_mix() -> None:
         branch_a = await _create_branch(admin_token, f"A-{uuid.uuid4().hex[:8]}")
         branch_b = await _create_branch(admin_token, f"B-{uuid.uuid4().hex[:8]}")
         await _seed_member_no(tid, "GP-7001", name="Alpha", branch_id=branch_a)
-        await _seed_member_no(
-            tid, "GP-7002", name="Bravo", status="dormant", branch_id=branch_a
-        )
+        await _seed_member_no(tid, "GP-7002", name="Bravo", status="dormant", branch_id=branch_a)
         await _seed_member_no(tid, "GP-7003", name="Carol", branch_id=branch_a)
         await _seed_member_no(tid, "GP-7004", name="Delta", branch_id=branch_b)
         await _seed_member_no(tid, "GP-7005", name="Echo")  # unassigned

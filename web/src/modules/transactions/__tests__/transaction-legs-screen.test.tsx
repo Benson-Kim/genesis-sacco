@@ -143,13 +143,15 @@ test("legs render VERBATIM, one row per leg in server order — and the NON-ADDI
   // Header + exactly the three server legs — nothing appended (no
   // footer, no Total row).
   expect(rows).toHaveLength(4);
-  expect(within(rows[1]).getByText("cash.mpesa")).toBeInTheDocument();
-  expect(within(rows[1]).getByText("Debit")).toBeInTheDocument();
-  expect(within(rows[1]).getByText("KES 100.00")).toBeInTheDocument();
-  expect(within(rows[2]).getByText("income.interest")).toBeInTheDocument();
-  expect(within(rows[2]).getByText("KES 40.00")).toBeInTheDocument();
-  expect(within(rows[3]).getByText("loans.receivable")).toBeInTheDocument();
-  expect(within(rows[3]).getByText("KES 60.00")).toBeInTheDocument();
+  // The length assertion above proves the indexes exist (the `!` is
+  // for noUncheckedIndexedAccess — the house mock.calls[0]! pattern).
+  expect(within(rows[1]!).getByText("cash.mpesa")).toBeInTheDocument();
+  expect(within(rows[1]!).getByText("Debit")).toBeInTheDocument();
+  expect(within(rows[1]!).getByText("KES 100.00")).toBeInTheDocument();
+  expect(within(rows[2]!).getByText("income.interest")).toBeInTheDocument();
+  expect(within(rows[2]!).getByText("KES 40.00")).toBeInTheDocument();
+  expect(within(rows[3]!).getByText("loans.receivable")).toBeInTheDocument();
+  expect(within(rows[3]!).getByText("KES 60.00")).toBeInTheDocument();
 
   // NON-ADDITIVE proof: neither the gross (200.00) nor the net (0.00)
   // of the legs exists anywhere on the screen, and no element claims

@@ -107,9 +107,7 @@ def test_member_reads_carry_nullable_branch_attribution() -> None:
             assert rows[member_id]["branch_id"] == branch_id
             # ...and the opted-in aggregates rows: batch-3 contract
             # byte-identical otherwise (same aggregate keys/figures).
-            res = await client.get(
-                "/members", params={"include": "aggregates"}, headers=headers
-            )
+            res = await client.get("/members", params={"include": "aggregates"}, headers=headers)
             assert res.status_code == 200, res.text
             rows = {m["id"]: m for m in res.json()["items"]}
             assert set(rows[member_id].keys()) == FLAT_KEYS | {"aggregates"}
