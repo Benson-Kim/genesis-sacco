@@ -3055,7 +3055,7 @@
         "type": "object"
       },
       "MemberDetailOut": {
-        "description": "MemberOut expanded with aggregates \u2014 the DETAIL read only.\n\nExpand-only contract change: every MemberOut field is unchanged and\nthe register LIST keeps its flat rows (aggregating every row of a\npage would fan four subqueries out per member, gate 1.3).",
+        "description": "MemberOut expanded with aggregates \u2014 always on the DETAIL read.\n\nExpand-only contract: every MemberOut field is unchanged. The\nregister LIST serves the same object per row ONLY when the request\nopts in with include=aggregates (one set-based statement per page,\nnever a per-row fan-out \u2014 gate 1.3); without the parameter list\nrows stay flat.",
         "properties": {
           "aggregates": {
             "$ref": "#/components/schemas/MemberAggregatesOut"
@@ -3119,6 +3119,35 @@
           "aggregates"
         ],
         "title": "MemberDetailOut",
+        "type": "object"
+      },
+      "MemberListDetailResponse": {
+        "description": "Register page whose rows carry the advisory aggregates (#31).\n\nServed ONLY when the request opts in with include=aggregates; the\nflat MemberListResponse stays byte-identical otherwise.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemberDetailOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "MemberListDetailResponse",
         "type": "object"
       },
       "MemberListResponse": {
@@ -9995,6 +10024,7 @@
     },
     "/members": {
       "get": {
+        "description": "Keyset member register page (members:view).\n\nOPT-IN aggregates (#31 batch 3 review): with include=aggregates\nevery row carries the same four advisory decimal-string figures as\nthe detail read, computed by ONE set-based statement per page (the\nkeyset page drives, LEFT JOIN LATERAL supplies the probes \u2014 never\na per-row fan-out). Without the parameter the response is\nbyte-identical to the flat register. No rejection path (403, 422)\ncomputes or echoes an amount.",
         "operationId": "list_members_members_get",
         "parameters": [
           {
@@ -10056,6 +10086,23 @@
               ],
               "title": "Type"
             }
+          },
+          {
+            "in": "query",
+            "name": "include",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "aggregates",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Include"
+            }
           }
         ],
         "responses": {
@@ -10063,7 +10110,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MemberListResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/MemberListDetailResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MemberListResponse"
+                    }
+                  ],
+                  "title": "Response List Members Members Get"
                 }
               }
             },
