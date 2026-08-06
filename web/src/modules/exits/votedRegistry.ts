@@ -15,21 +15,19 @@
  * remains the enforcer (gate 1.6). Session-scoped per W58-2:
  * registered below, so both teardown paths clear it and the next
  * operator's tab never inherits a previous operator's spent votes.
+ *
+ * Storage (issue #30 finding S3): the shared createSessionScopedRegistry
+ * primitive — teardown on both session-death paths and the reactive
+ * read are wired by construction. This wrapper keeps the module's
+ * exported vocabulary byte-compatible.
  */
-import { useSyncExternalStore } from "react";
-import { registerSessionScopedStore } from "@/modules/auth/sessionScopedStores";
+import { createSessionScopedRegistry } from "@/modules/auth/createSessionScopedRegistry";
 
-const voted = new Set<string>();
-const listeners = new Set<() => void>();
-
-function emit(): void {
-  for (const listener of listeners) listener();
-}
+const voted = createSessionScopedRegistry<string, true>();
 
 /** Record that THIS TAB cast a vote on exit `exitId`. */
 export function recordVotedExit(exitId: string): void {
-  voted.add(exitId);
-  emit();
+  voted.set(exitId, true);
 }
 
 /** Whether THIS TAB already voted on exit `exitId`. */
@@ -37,29 +35,13 @@ export function hasVotedOnExit(exitId: string): boolean {
   return voted.has(exitId);
 }
 
-/** Session-teardown hygiene (W58-2): registered as a session-scoped
- * store below. Also test hygiene. */
+/** Session-teardown hygiene (W58-2): the registry is torn down by
+ * construction; this named clear stays for test hygiene and callers. */
 export function clearVotedExits(): void {
   voted.clear();
-  emit();
-}
-
-// Teardown wiring by construction (W58-2): registration at module scope
-// means the registry cannot exist without dying on session teardown.
-registerSessionScopedStore(clearVotedExits);
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
 }
 
 /** Reactive read for the detail drawer (re-renders on record/clear). */
 export function useHasVotedOnExit(exitId: string): boolean {
-  return useSyncExternalStore(
-    subscribe,
-    () => voted.has(exitId),
-    () => false,
-  );
+  return voted.useHas(exitId);
 }

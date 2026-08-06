@@ -12,9 +12,11 @@ import { toApiError } from "@genesis/api-client";
 import { keysetPageSchema, type KeysetPage } from "@/modules/table/schemas";
 import { api } from "@/lib/api";
 import {
+    memberDetailSchema,
     memberSchema,
     type Member,
     type MemberCreateInput,
+    type MemberDetail,
     type MemberStatus,
     type MemberType,
 } from "./schemas";
@@ -22,6 +24,7 @@ import {
 export const MEMBERS_PAGE_SIZE = 20;
 
 const memberPageSchema = keysetPageSchema(memberSchema);
+const memberDetailPageSchema = keysetPageSchema(memberDetailSchema);
 
 export interface MemberListFilters {
     status: MemberStatus | "";
@@ -46,6 +49,34 @@ export async function fetchMembersPage(
     return memberPageSchema.parse(data);
 }
 
+/** Register page WITH the four advisory aggregates (#31 batch 3
+ *  review — the authorized OPT-IN expand): include=aggregates makes
+ *  every row carry the same decimal-string figures as the detail
+ *  read, from ONE set-based server statement per page. Discriminated
+ *  fetch mirroring the fetchMember vs fetchMemberDetail split: every
+ *  row's aggregates object is REQUIRED and parses strictly at the
+ *  boundary, rendered VERBATIM (P15 blocker (a): no client-side money
+ *  math, ever); cross-module consumers that only resolve names keep
+ *  the flat fetchMembersPage and can never render money. */
+export async function fetchMembersPageWithAggregates(
+    filters: MemberListFilters,
+    cursor: string | null,
+): Promise<KeysetPage<MemberDetail>> {
+    const { data, error, response } = await api.GET("/members", {
+        params: {
+            query: {
+                cursor: cursor ?? undefined,
+                limit: MEMBERS_PAGE_SIZE,
+                status: filters.status === "" ? undefined : filters.status,
+                type: filters.type === "" ? undefined : filters.type,
+                include: "aggregates",
+            },
+        },
+    });
+    if (error !== undefined || data === undefined) throw toApiError(error, response);
+    return memberDetailPageSchema.parse(data);
+}
+
 /** Single member record (used by the applications detail drawer to
  *  resolve the applicant — the P9 list carries member_id only). */
 export async function fetchMember(memberId: string): Promise<Member> {
@@ -54,6 +85,19 @@ export async function fetchMember(memberId: string): Promise<Member> {
     });
     if (error !== undefined || data === undefined) throw toApiError(error, response);
     return memberSchema.parse(data);
+}
+
+/** Single-member DETAIL read (the register's KYC drawer): the same
+ *  GET also carries the four advisory aggregate figures — decimal
+ *  strings parsed strictly at the boundary and rendered VERBATIM
+ *  (P15 blocker (a): no client-side money math, ever). Cross-module
+ *  consumers that only resolve a name keep using fetchMember. */
+export async function fetchMemberDetail(memberId: string): Promise<MemberDetail> {
+    const { data, error, response } = await api.GET("/members/{member_id}", {
+        params: { path: { member_id: memberId } },
+    });
+    if (error !== undefined || data === undefined) throw toApiError(error, response);
+    return memberDetailSchema.parse(data);
 }
 
 export async function createMember(
