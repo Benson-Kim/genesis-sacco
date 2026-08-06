@@ -1199,6 +1199,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/member-exits/eligibility/{member_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Exit Eligibility
+         * @description Advisory eligibility facts BEFORE a request is submitted
+         *     (members:view; P15 batch 5, U6 — human-authorized expand-only,
+         *     read-only contract change).
+         *
+         *     NO row locks: the checklist mirrors the blocker set the settlement
+         *     service enforces (same live-guarantee status set, same open-stage
+         *     list, the SAME unresolved-write-off SQL — gate 1.1), but the
+         *     BINDING verdict remains the locked recompute at request and
+         *     settlement time. Facts only — no amount ever travels here.
+         */
+        get: operations["get_exit_eligibility_member_exits_eligibility__member_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/member-exits/{exit_id}": {
         parameters: {
             query?: never;
@@ -2481,6 +2509,13 @@ export interface components {
          * @enum {string}
          */
         Channel: "mpesa" | "bank" | "accrual" | "internal";
+        /** ClassificationShareOut */
+        ClassificationShareOut: {
+            /** Classification */
+            classification: string;
+            /** Pct */
+            pct: number;
+        };
         /** ClassificationSliceOut */
         ClassificationSliceOut: {
             /** Balance */
@@ -2544,12 +2579,22 @@ export interface components {
             version: number;
         };
         /**
+         * DashboardChartsOut
+         * @description Server-computed chart geometry (issue #32); each sub-slice
+         *     follows its parent slice's grant and is omitted when ungranted.
+         */
+        DashboardChartsOut: {
+            flows?: components["schemas"]["FlowsChartOut"] | null;
+            portfolio?: components["schemas"]["PortfolioChartOut"] | null;
+        };
+        /**
          * DashboardSummaryOut
          * @description Composite response; ungranted slices are omitted entirely.
          */
         DashboardSummaryOut: {
             /** As Of */
             as_of: string;
+            charts?: components["schemas"]["DashboardChartsOut"] | null;
             deposits?: components["schemas"]["DepositTotalsOut"] | null;
             guarantors?: components["schemas"]["GuarantorAggregatesOut"] | null;
             loan_book?: components["schemas"]["PortfolioSummaryOut"] | null;
@@ -2978,6 +3023,27 @@ export interface components {
          * @enum {string}
          */
         FeeType: "registration";
+        /**
+         * FlowBarScaleOut
+         * @description One month's grouped-bar heights (issue #32 route (a)): integer
+         *     percentages 0..100 of the window's axis_max, computed server-side
+         *     in Decimal arithmetic — the client renders scale, never math.
+         */
+        FlowBarScaleOut: {
+            /** Deposits Pct */
+            deposits_pct: number;
+            /** Disbursements Pct */
+            disbursements_pct: number;
+            /** Month */
+            month: string;
+        };
+        /** FlowsChartOut */
+        FlowsChartOut: {
+            /** Axis Max */
+            axis_max: string;
+            /** Months */
+            months: components["schemas"]["FlowBarScaleOut"][];
+        };
         /** GuaranteeOut */
         GuaranteeOut: {
             /** Amount */
@@ -6356,6 +6422,37 @@ export interface operations {
             };
         };
     };
+    get_exit_eligibility_member_exits_eligibility__member_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                member_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExitEligibilityOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_exit_request_member_exits__exit_id__get: {
         parameters: {
             query?: never;
@@ -8077,6 +8174,30 @@ export interface operations {
             content: {
                 "application/json": components["schemas"]["UserStatusBody"];
             };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+}
+        };
         };
         responses: {
             /** @description Successful Response */
