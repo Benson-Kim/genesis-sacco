@@ -55,11 +55,23 @@ const MEMBER_OUT = {
   version: 1,
 };
 
+// #31 batch 3 review: the register opts in to the LIST aggregates.
+// DELIBERATELY NON-ADDITIVE: no figure equals any combination of the
+// others, so a register that summed or derived a figure would surface
+// a string this spec asserts ABSENT.
+const AGGREGATES_OUT = {
+  deposits_total: "1000.11",
+  shares_total: "200.22",
+  loans_outstanding: "300.33",
+  guarantees_pledged: "40.04",
+};
+
 interface ApiState {
   permissions: unknown;
   postBodies: Record<string, unknown>[];
   postHeaders: Record<string, string>[];
   listCalls: number;
+  listIncludes: (string | null)[];
 }
 
 /** Browser-boundary API mock with CORS handling and write capture. */
@@ -149,6 +161,7 @@ test("happy path: OTP login → member register renders → the create flow comm
     postBodies: [],
     postHeaders: [],
     listCalls: 0,
+    listIncludes: [],
   };
   await mockApi(page, state);
   await login(page);
@@ -157,6 +170,21 @@ test("happy path: OTP login → member register renders → the create flow comm
   // The register lists the server's records verbatim.
   await expect(page.getByText("Jane Wanjiku")).toBeVisible();
   await expect(page.getByText("GP-0001")).toBeVisible();
+
+  // #31 batch 3 review: the register opted in (include=aggregates on
+  // the wire) and renders the four SERVER aggregate strings VERBATIM —
+  // and never a derived figure (non-additive fixture: deposits with
+  // shares would read 1200.33; all four together 1540.70; deposits net
+  // of loans 699.78).
+  expect(state.listIncludes.length).toBeGreaterThanOrEqual(1);
+  expect(state.listIncludes.every((value) => value === "aggregates")).toBe(true);
+  await expect(page.getByText("1000.11", { exact: true })).toBeVisible();
+  await expect(page.getByText("200.22", { exact: true })).toBeVisible();
+  await expect(page.getByText("300.33", { exact: true })).toBeVisible();
+  await expect(page.getByText("40.04", { exact: true })).toBeVisible();
+  await expect(page.getByText("1200.33")).toHaveCount(0);
+  await expect(page.getByText("1540.70")).toHaveCount(0);
+  await expect(page.getByText("699.78")).toHaveCount(0);
 
   // The create flow, through the real drawer UI.
   await page.getByRole("button", { name: "Register member" }).click();
@@ -197,6 +225,7 @@ test("adversarial forbidden-role: no members grant → no nav entry, deny-by-def
     postBodies: [],
     postHeaders: [],
     listCalls: 0,
+    listIncludes: [],
   };
   await mockApi(page, state);
   await login(page);

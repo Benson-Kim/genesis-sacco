@@ -209,7 +209,13 @@ async function mockApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
     if (path === "/members" && method === "GET") {
-      await respond(200, { items: [MEMBER_OUT], next_cursor: null });
+      // #31 batch 3 review: rows carry the aggregates object ONLY when
+      // the register opted in with include=aggregates.
+      const include = new URL(request.url()).searchParams.get("include");
+      await respond(200, {
+        items: [include === "aggregates" ? MEMBER_DETAIL_OUT : MEMBER_OUT],
+        next_cursor: null,
+      });
       return;
     }
     if (path === `/members/${MEMBER_ID}` && method === "GET") {
