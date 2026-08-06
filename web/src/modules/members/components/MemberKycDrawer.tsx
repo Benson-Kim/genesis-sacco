@@ -33,6 +33,7 @@ import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
 import { FormField } from "@/modules/forms/FormField";
 import { fromApiError, mergeFieldErrors, type FieldErrors } from "@/modules/forms/form-errors";
+import { fetchBranch } from "@/modules/branches/api";
 import { fetchMemberDetail } from "../api";
 import { fetchKycProfile, updateKycProfile } from "../kycApi";
 import { KYC_FORM_SECTIONS, type KycProfile } from "../kycSchemas";
@@ -108,6 +109,26 @@ export function MemberKycDrawer({
   const detailQuery = useQuery({
     queryKey: ["members", "detail", member.id],
     queryFn: () => fetchMemberDetail(member.id),
+    staleTime: STALE_TIME.record,
+    retry: false,
+  });
+
+  // Branch attribution (#31 ledger (j).2): the FRESH detail read's
+  // nullable branch_id — NULL is the honest "unassigned" state (the
+  // 0016 column is written only by the batch-4 assignment route;
+  // attribution is never invented). Resolving the branch NAME is a
+  // settings:view read (GET /branches/{id}): without that grant this
+  // drawer fetches NOTHING and renders the short id (the created_by
+  // least-disclosure precedent).
+  const maySettingsView = can(permissions.data, "settings", "view");
+  const branchId = detailQuery.data?.branch_id ?? null;
+  const branchQuery = useQuery({
+    queryKey: ["branches", "detail", branchId ?? "none"],
+    queryFn: () => {
+      if (branchId === null) return Promise.reject(new Error("no branch on this member"));
+      return fetchBranch(branchId);
+    },
+    enabled: branchId !== null && maySettingsView,
     staleTime: STALE_TIME.record,
     retry: false,
   });
@@ -192,6 +213,34 @@ export function MemberKycDrawer({
         <span className={styles.cellSub}>{member.member_no}</span>
         <Pill>{TYPE_LABELS[member.type]}</Pill>
       </div>
+
+      {/* Branch attribution (#31 ledger (j).2): the fresh detail
+          read's nullable branch_id, rendered honestly — NULL is the
+          real "unassigned" state, never an invented default. The name
+          resolves only under settings:view; otherwise the SHORT id
+          renders with the full UUID on title (the created_by
+          convention). */}
+      {detailQuery.data !== undefined && (
+        <div className={styles.summaryPanel}>
+          <div className={styles.panelSubTitle}>Branch</div>
+          <dl className={styles.summaryList}>
+            <div className={styles.summaryRow}>
+              <dt>Home branch</dt>
+              <dd>
+                {detailQuery.data.branch_id === null ? (
+                  "— (unassigned; branches console assigns)"
+                ) : branchQuery.data !== undefined ? (
+                  branchQuery.data.name
+                ) : (
+                  <span title={detailQuery.data.branch_id}>
+                    {detailQuery.data.branch_id.slice(0, 8)}
+                  </span>
+                )}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      )}
 
       <div className={styles.summaryPanel}>
         <div className={styles.panelSubTitle}>Financial summary</div>

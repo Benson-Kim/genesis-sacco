@@ -42,13 +42,17 @@ router = APIRouter(tags=["branches"])
 _view = RequirePermission(Module.SETTINGS, Action.VIEW)
 _create = RequirePermission(Module.SETTINGS, Action.CREATE)
 _edit = RequirePermission(Module.SETTINGS, Action.EDIT)
+_user_view = RequirePermission(Module.ACCESS_CONTROL, Action.VIEW)
 _user_edit = RequirePermission(Module.ACCESS_CONTROL, Action.EDIT)
+_member_view = RequirePermission(Module.MEMBERS, Action.VIEW)
 _member_edit = RequirePermission(Module.MEMBERS, Action.EDIT)
 
 ViewCtx = Annotated[AuthContext, Depends(_view)]
 CreateCtx = Annotated[AuthContext, Depends(_create)]
 EditCtx = Annotated[AuthContext, Depends(_edit)]
+UserViewCtx = Annotated[AuthContext, Depends(_user_view)]
 UserEditCtx = Annotated[AuthContext, Depends(_user_edit)]
+MemberViewCtx = Annotated[AuthContext, Depends(_member_view)]
 MemberEditCtx = Annotated[AuthContext, Depends(_member_edit)]
 
 
@@ -109,6 +113,44 @@ class BackfillRunOut(BaseModel):
     branches_created: int
     users_linked: int
     batches: int
+
+
+class BranchUserRosterOut(BaseModel):
+    """One user assigned to a branch (#31 (j).1) — identity facts only.
+
+    Least disclosure (gate 1.6): who is assigned, nothing more — no
+    role, no last-active, no phone; the full user record stays on the
+    P13.5 /users reads under the same access_control:view gate.
+    """
+
+    id: str
+    full_name: str
+    email: str
+    status: str
+
+
+class BranchUserRosterResponse(BaseModel):
+    items: list[BranchUserRosterOut]
+    next_cursor: str | None
+
+
+class BranchMemberRosterOut(BaseModel):
+    """One member assigned to a branch (#31 (j).1) — identity facts only.
+
+    Least disclosure (gate 1.6): no contact details, no figures; the
+    member record stays on the P8 /members reads under the same
+    members:view gate.
+    """
+
+    id: str
+    member_no: str
+    name: str
+    status: str
+
+
+class BranchMemberRosterResponse(BaseModel):
+    items: list[BranchMemberRosterOut]
+    next_cursor: str | None
 
 
 def _out(record: branches_service.BranchRecord) -> BranchOut:
@@ -174,6 +216,76 @@ async def update_branch(branch_id: uuid.UUID, body: BranchUpdateBody, ctx: EditC
             name=body.name,
         )
     return _out(record)
+
+
+@router.get("/branches/{branch_id}/users")
+async def list_branch_users(
+    branch_id: uuid.UUID,
+    ctx: UserViewCtx,
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> BranchUserRosterResponse:
+    """Keyset USER roster of a branch (#31 (j).1, access_control:view).
+
+    Expand-only read model over the 0016 assignment column, mirroring
+    the batch-4 assignment permission split: the entity being READ is
+    the user record, so the roster sits behind access_control x view
+    (the P13.5 users precedent) — settings rights alone must not
+    disclose people records. 404-BEFORE-FACTS: an unknown or
+    cross-tenant branch id surfaces 404 before any roster row is read.
+    """
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        page = await branches_service.list_branch_users(
+            session, ctx.tenant_id, branch_id, cursor=cursor, limit=limit
+        )
+    return BranchUserRosterResponse(
+        items=[
+            BranchUserRosterOut(
+                id=str(r.id),
+                full_name=r.full_name,
+                email=r.email,
+                status=r.status,
+            )
+            for r in page.items
+        ],
+        next_cursor=page.next_cursor,
+    )
+
+
+@router.get("/branches/{branch_id}/members")
+async def list_branch_members(
+    branch_id: uuid.UUID,
+    ctx: MemberViewCtx,
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> BranchMemberRosterResponse:
+    """Keyset MEMBER roster of a branch (#31 (j).1, members:view).
+
+    Expand-only read model over the 0016 assignment column, mirroring
+    the batch-4 assignment permission split: the entity being READ is
+    the member record, so the roster sits behind members x view (the
+    P8 precedent) — settings rights alone must not disclose people
+    records. 404-BEFORE-FACTS: an unknown or cross-tenant branch id
+    surfaces 404 before any roster row is read.
+    """
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        page = await branches_service.list_branch_members(
+            session, ctx.tenant_id, branch_id, cursor=cursor, limit=limit
+        )
+    return BranchMemberRosterResponse(
+        items=[
+            BranchMemberRosterOut(
+                id=str(r.id),
+                member_no=r.member_no,
+                name=r.name,
+                status=r.status,
+            )
+            for r in page.items
+        ],
+        next_cursor=page.next_cursor,
+    )
 
 
 @router.put("/branches/{branch_id}/users/{user_id}")

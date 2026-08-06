@@ -50,6 +50,7 @@ exact values live in the audit rows (v1.1 rule 7).
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -66,10 +67,21 @@ from genesis.application.pagination import (
     build_created_id_cursor,
     parse_created_id_cursor,
 )
-from genesis.errors import ConflictError, NotFoundError
+from genesis.domain.members import MEMBER_NO_PREFIX
+from genesis.errors import ConflictError, InvalidInputError, NotFoundError
 
 #: Users scanned per backfill transaction (P10/P11 batch precedent).
 DEFAULT_BATCH_SIZE = 200
+
+#: Semantic shape of a members-roster cursor (#31 batch 7 review F3).
+#: Cursors are only ever built from SERVED member_no values (domain
+#: format_member_no: 'GP-' + a zero-padded sequence of at least four
+#: digits), so anything else is a forged or corrupted cursor — a 400
+#: (InvalidInputError), never a silently empty page. The length bound
+#: caps the regex input; 32 comfortably outlives the sequence space
+#: while rejecting pathological payloads.
+_MEMBER_NO_CURSOR_MAX_LEN = 32
+_MEMBER_NO_CURSOR_RE = re.compile(re.escape(MEMBER_NO_PREFIX) + r"\d{4,}")
 
 
 @dataclass(frozen=True)
@@ -104,6 +116,44 @@ class BranchBackfillResult:
     batches: int
 
 
+@dataclass(frozen=True)
+class BranchUserRosterRecord:
+    """One user on a branch roster (#31 (j).1) — identity facts only.
+
+    created_at is the keyset position ONLY (review F4: the house
+    created_at+id cursor) — the API response model never serializes
+    it; the roster stays identity facts, least disclosure (gate 1.6).
+    """
+
+    id: uuid.UUID
+    full_name: str
+    email: str
+    status: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class BranchUserRosterPage:
+    items: list[BranchUserRosterRecord]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class BranchMemberRosterRecord:
+    """One member on a branch roster (#31 (j).1) — identity facts only."""
+
+    id: uuid.UUID
+    member_no: str
+    name: str
+    status: str
+
+
+@dataclass(frozen=True)
+class BranchMemberRosterPage:
+    items: list[BranchMemberRosterRecord]
+    next_cursor: str | None
+
+
 _BRANCH_COLUMNS = "b.id, b.name, b.version, b.created_at"
 
 
@@ -124,6 +174,57 @@ def branches_page_sql(*, with_cursor: bool) -> str:
         "FROM branches b "
         f"WHERE {where} "
         "ORDER BY b.created_at DESC, b.id DESC LIMIT :limit"
+    )
+
+
+def branch_users_roster_sql(*, with_cursor: bool) -> str:
+    """USER roster of one branch (#31 (j).1) — house created_at+id keyset.
+
+    Review F4: the roster paginates on (created_at DESC, id DESC) via
+    the shared P11 cursor helpers — the same convention as the
+    branches listing — because a bare random-UUID id order is
+    operationally meaningless; newest-created users lead. The
+    equality-probed single-branch roster is a bounded top-N sort under
+    either order, so the convention costs no new index and this read
+    still ships NO migration.
+
+    Expand-only read model over the 0016 assignment column: WHO is
+    assigned, nothing more (least disclosure, gate 1.6 — no role, no
+    last-active, no phone rides here; the full user record stays on
+    the P13.5 /users reads under the same access_control:view gate).
+    Served by idx_users_branch (0016: tenant_id, branch_id). Static
+    fragments chosen in code; every value is a bound parameter (v1.1
+    rule 6); explicit tenant predicate on top of forced RLS (v1.1
+    rule 4).
+    """
+    after = "AND (u.created_at, u.id) < (:c_ts, CAST(:c_id AS uuid)) " if with_cursor else ""
+    return (
+        "SELECT u.id, u.full_name, u.email, u.status, u.created_at FROM users u "  # noqa: S608
+        "WHERE u.tenant_id = CAST(:tid AS uuid) "
+        "AND u.branch_id = CAST(:bid AS uuid) "
+        f"{after}"
+        "ORDER BY u.created_at DESC, u.id DESC LIMIT :limit"
+    )
+
+
+def branch_members_roster_sql(*, with_cursor: bool) -> str:
+    """MEMBER roster of one branch (#31 ledger (j).1) — keyset on member_no.
+
+    member_no is monotonic per tenant (the P8 list_members precedent),
+    so it doubles as the stable cursor. Least disclosure (gate 1.6):
+    the roster names WHO belongs to the branch — no contact details,
+    no figures; the member record stays on the P8 /members reads under
+    the same members:view gate. Served by idx_members_branch (0016) —
+    NO migration. Static fragments chosen in code; every value is a
+    bound parameter (v1.1 rule 6).
+    """
+    after = "AND m.member_no > :cursor " if with_cursor else ""
+    return (
+        "SELECT m.id, m.member_no, m.name, m.status FROM members m "  # noqa: S608
+        "WHERE m.tenant_id = CAST(:tid AS uuid) "
+        "AND m.branch_id = CAST(:bid AS uuid) "
+        f"{after}"
+        "ORDER BY m.member_no LIMIT :limit"
     )
 
 
@@ -237,6 +338,109 @@ async def list_branches(
         last = items[-1]
         next_cursor = build_created_id_cursor(last.created_at, last.id)
     return BranchPage(items=items, next_cursor=next_cursor)
+
+
+async def list_branch_users(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    branch_id: uuid.UUID,
+    *,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> BranchUserRosterPage:
+    """Keyset USER roster of one branch (#31 (j).1) — read-only.
+
+    404-BEFORE-FACTS: the branch existence probe runs first, so an
+    unknown or cross-tenant branch id surfaces 404 before any roster
+    row is read (least disclosure, gate 1.6). The API layer gates this
+    on access_control:view — the entity being READ is the user record,
+    mirroring the batch-4 assignment permission split (assigning a
+    user is access_control:edit), never the settings registry gate.
+    """
+    await get_branch(session, tenant_id, branch_id)
+    limit = max(1, min(limit, 100))
+    params: dict[str, object] = {
+        "tid": str(tenant_id),
+        "bid": str(branch_id),
+        "limit": limit + 1,
+    }
+    if cursor:
+        # Review F4: the house cursor helper rejects malformed input
+        # with InvalidInputError — "invalid branch user roster cursor".
+        c_ts, c_id = parse_created_id_cursor(cursor, entity="branch user roster")
+        params["c_ts"] = c_ts
+        params["c_id"] = c_id
+    rows = (
+        await session.execute(text(branch_users_roster_sql(with_cursor=cursor is not None)), params)
+    ).all()
+    items = [
+        BranchUserRosterRecord(
+            id=uuid.UUID(str(r[0])),
+            full_name=str(r[1]),
+            email=str(r[2]),
+            status=str(r[3]),
+            created_at=r[4],
+        )
+        for r in rows[:limit]
+    ]
+    next_cursor = None
+    if len(rows) > limit and items:
+        last = items[-1]
+        next_cursor = build_created_id_cursor(last.created_at, last.id)
+    return BranchUserRosterPage(items=items, next_cursor=next_cursor)
+
+
+async def list_branch_members(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    branch_id: uuid.UUID,
+    *,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> BranchMemberRosterPage:
+    """Keyset MEMBER roster of one branch (#31 (j).1) — read-only.
+
+    404-BEFORE-FACTS: the branch existence probe runs first (least
+    disclosure, gate 1.6). The API layer gates this on members:view —
+    the entity being READ is the member record, mirroring the batch-4
+    assignment permission split (assigning a member is members:edit),
+    never the settings registry gate.
+
+    Cursor guard (review F3, mirroring the users leg): cursors are
+    only ever built from SERVED member_no values, so anything outside
+    the bounded as-built GP-#### shape is a forged or corrupted
+    cursor — a semantic 400, never a silently empty page.
+    """
+    await get_branch(session, tenant_id, branch_id)
+    limit = max(1, min(limit, 100))
+    params: dict[str, object] = {
+        "tid": str(tenant_id),
+        "bid": str(branch_id),
+        "limit": limit + 1,
+    }
+    if cursor:
+        if (
+            len(cursor) > _MEMBER_NO_CURSOR_MAX_LEN
+            or _MEMBER_NO_CURSOR_RE.fullmatch(cursor) is None
+        ):
+            raise InvalidInputError("invalid branch member roster cursor")
+        params["cursor"] = cursor
+    rows = (
+        await session.execute(
+            text(branch_members_roster_sql(with_cursor=cursor is not None)), params
+        )
+    ).all()
+    items = [
+        BranchMemberRosterRecord(
+            id=uuid.UUID(str(r[0])),
+            member_no=str(r[1]),
+            name=str(r[2]),
+            status=str(r[3]),
+        )
+        for r in rows[:limit]
+    ]
+    next_cursor = items[-1].member_no if len(rows) > limit and items else None
+    return BranchMemberRosterPage(items=items, next_cursor=next_cursor)
 
 
 async def update_branch(

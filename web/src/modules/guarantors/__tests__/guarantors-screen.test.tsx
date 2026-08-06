@@ -184,6 +184,7 @@ const BORROWER = {
   email: null,
   status: "active" as const,
   version: 1,
+  branch_id: null,
 };
 
 const GUARANTOR = {
@@ -195,6 +196,7 @@ const GUARANTOR = {
   email: null,
   status: "active" as const,
   version: 1,
+  branch_id: null,
 };
 
 const FULL_PERMS = {

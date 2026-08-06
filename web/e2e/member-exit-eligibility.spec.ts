@@ -49,6 +49,7 @@ const MEMBER_OUT = {
   email: null,
   status: "active",
   version: 3,
+  branch_id: null,
 };
 
 /** Distinct counts so each verbatim row is unambiguous on screen. */
