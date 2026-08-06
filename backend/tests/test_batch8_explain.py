@@ -84,8 +84,8 @@ def test_batch8_kpi_trend_statements_are_index_backed() -> None:
                     "INSERT INTO audit_log "
                     "(tenant_id, actor_id, action, entity, entity_id, before, after) "
                     "VALUES (CAST(:tid AS uuid), NULL, 'member.status', 'members', :eid, "
-                    "CAST('{\"status\": \"active\"}' AS jsonb), "
-                    "CAST('{\"status\": \"arrears\"}' AS jsonb))"
+                    'CAST(\'{"status": "active"}\' AS jsonb), '
+                    'CAST(\'{"status": "arrears"}\' AS jsonb))'
                 ),
                 {"tid": str(tid), "eid": str(mid)},
             )

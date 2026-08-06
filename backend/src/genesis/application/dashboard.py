@@ -317,9 +317,7 @@ async def _par30_trend(
             session, tenant_id, month_end, as_of=as_of, dpd_days=PAR_DPD_DAYS
         )
         gross = month.gross_outstanding
-        ratio = (
-            to_cents(month.npl_balance * _ONE_HUNDRED / gross) if gross > _ZERO else _ZERO_CENTS
-        )
+        ratio = to_cents(month.npl_balance * _ONE_HUNDRED / gross) if gross > _ZERO else _ZERO_CENTS
         raw.append((f"{month_end.year:04d}-{month_end.month:02d}", ratio))
     ceiling = max([_ZERO, *(ratio for _, ratio in raw)])
     return tuple(
