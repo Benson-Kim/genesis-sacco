@@ -233,8 +233,9 @@ test("happy path: OTP login → branches register + create (ONE wire POST, body 
   await page.getByLabel("Branch name").fill("Kisumu Central");
   await page.getByRole("button", { name: "Register branch", exact: true }).click();
 
-  // The SERVER's record renders verbatim in the result panel…
-  await expect(page.getByText("Branch registered")).toBeVisible();
+  // The SERVER's record renders verbatim in the result panel… (exact:
+  // the announcer's "Branch registered." live-region copy also mounts)
+  await expect(page.getByText("Branch registered", { exact: true })).toBeVisible();
   await expect(page.getByText("Kisumu Central")).toBeVisible();
   // …and exactly ONE write reached the wire: key-exact body, secrets
   // as HEADERS, the query string EMPTY (no money parameter exists on
@@ -269,8 +270,10 @@ test("happy path: OTP login → branches register + create (ONE wire POST, body 
   await confirmButton.click();
 
   // The SERVER's period row renders verbatim in the result panel…
-  await expect(page.getByText("Period closed · books frozen")).toBeVisible();
-  await expect(page.getByText("2026-07-01 → 2026-07-31")).toBeVisible();
+  // (scoped to the dialog: the invalidated register behind the modal
+  // refetches and now carries the July row too)
+  await expect(dialog.getByText("Period closed · books frozen")).toBeVisible();
+  await expect(dialog.getByText("2026-07-01 → 2026-07-31")).toBeVisible();
   // …and exactly ONE write reached the wire: the body carries the
   // calendar month ONLY (bounds/elapsed rules are the server's).
   expect(state.closeBodies).toHaveLength(1);
