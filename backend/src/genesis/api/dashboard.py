@@ -91,6 +91,42 @@ class GuarantorAggregatesOut(BaseModel):
     guarantors: list[GuarantorCapacityOut]
 
 
+class FlowBarScaleOut(BaseModel):
+    """One month's grouped-bar heights (issue #32 route (a)): integer
+    percentages 0..100 of the window's axis_max, computed server-side
+    in Decimal arithmetic — the client renders scale, never math."""
+
+    month: str
+    deposits_pct: int
+    disbursements_pct: int
+
+
+class FlowsChartOut(BaseModel):
+    months: list[FlowBarScaleOut]
+    #: The common scale ceiling, serialized verbatim (str(Decimal)) so
+    #: the chart captions its scale with the server's own figure.
+    axis_max: str
+
+
+class ClassificationShareOut(BaseModel):
+    classification: str
+    pct: int
+
+
+class PortfolioChartOut(BaseModel):
+    performing_pct: int
+    npl_pct: int
+    classification: list[ClassificationShareOut]
+
+
+class DashboardChartsOut(BaseModel):
+    """Server-computed chart geometry (issue #32); each sub-slice
+    follows its parent slice's grant and is omitted when ungranted."""
+
+    flows: FlowsChartOut | None = None
+    portfolio: PortfolioChartOut | None = None
+
+
 class DashboardSummaryOut(BaseModel):
     """Composite response; ungranted slices are omitted entirely."""
 
@@ -101,6 +137,7 @@ class DashboardSummaryOut(BaseModel):
     pipeline: list[PipelineStageOut] | None = None
     guarantors: GuarantorAggregatesOut | None = None
     loan_book: PortfolioSummaryOut | None = None
+    charts: DashboardChartsOut | None = None
 
 
 def _to_out(summary: dashboard_service.DashboardSummary) -> DashboardSummaryOut:
@@ -163,6 +200,39 @@ def _to_out(summary: dashboard_service.DashboardSummary) -> DashboardSummaryOut:
         ),
         loan_book=(
             portfolio_summary_out(summary.loan_book) if summary.loan_book is not None else None
+        ),
+        charts=_charts_out(summary.charts) if summary.charts is not None else None,
+    )
+
+
+def _charts_out(charts: dashboard_service.DashboardCharts) -> DashboardChartsOut:
+    return DashboardChartsOut(
+        flows=(
+            FlowsChartOut(
+                months=[
+                    FlowBarScaleOut(
+                        month=m.month,
+                        deposits_pct=m.deposits_pct,
+                        disbursements_pct=m.disbursements_pct,
+                    )
+                    for m in charts.flows.months
+                ],
+                axis_max=str(charts.flows.axis_max),
+            )
+            if charts.flows is not None
+            else None
+        ),
+        portfolio=(
+            PortfolioChartOut(
+                performing_pct=charts.portfolio.performing_pct,
+                npl_pct=charts.portfolio.npl_pct,
+                classification=[
+                    ClassificationShareOut(classification=s.classification, pct=s.pct)
+                    for s in charts.portfolio.classification
+                ],
+            )
+            if charts.portfolio is not None
+            else None
         ),
     )
 
