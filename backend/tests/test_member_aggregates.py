@@ -18,6 +18,11 @@ never captured from the implementation (the P13.9 precedent). The legs:
     404, cross-tenant 404) ever echoes an amount.
   * cross-tenant bleed probe (issue #17) — a session bound AS tenant B
     given tenant A's ids yields zeros, never a mixed aggregate.
+  * LIST expand (#31 batch 3 review — FM4 redefined): the register
+    page is byte-identical WITHOUT include=aggregates; WITH it every
+    row carries the same four figures from ONE set-based statement per
+    page (statement-count leg), per-row attribution proven over a
+    multi-member page, and no rejection path echoes an amount.
 """
 
 from __future__ import annotations
@@ -28,11 +33,12 @@ import uuid
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from db_helpers import api_client, factory
 from export_helpers import add_user, seed_actor
-from genesis.application.members import member_aggregates
+from genesis.application.members import list_members_with_aggregates, member_aggregates
+from genesis.infrastructure.db import get_engine
 from genesis.infrastructure.tenancy import tenant_session
 
 pytestmark = pytest.mark.skipif(
@@ -269,8 +275,11 @@ def test_zero_activity_member_serializes_canonical_zero() -> None:
 
 
 def test_member_list_stays_flat_without_aggregates() -> None:
-    """The register LIST is untouched (no per-row aggregate fan-out,
-    gate 1.3): list items carry NO aggregates key."""
+    """FM4 REDEFINED (#31 batch 3 review): aggregates on the LIST are
+    OPT-IN via include=aggregates. WITHOUT the parameter the register
+    page stays byte-identical to the established flat contract — items
+    carry exactly the eight flat keys and NO aggregates key, so
+    existing consumers are unaffected."""
 
     async def run() -> None:
         tid, _, token = await seed_actor()
@@ -281,6 +290,209 @@ def test_member_list_stays_flat_without_aggregates() -> None:
         items = res.json()["items"]
         assert len(items) >= 1
         assert all("aggregates" not in item for item in items)
+        # Key-exact flat shape (falsifiable: any expand leaking into the
+        # parameterless response fails here).
+        for item in items:
+            assert sorted(item) == [
+                "email",
+                "id",
+                "member_no",
+                "name",
+                "phone",
+                "status",
+                "type",
+                "version",
+            ]
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# LIST aggregates (#31 batch 3 review — the authorized opt-in expand)
+# ---------------------------------------------------------------------------
+
+
+def test_member_list_with_aggregates_matches_hand_computed_oracles() -> None:
+    """Oracle for GET /members?include=aggregates (hand-computed from
+    the seeds, never from the code) — three members on ONE page prove
+    per-row attribution is not cross-assigned:
+
+    rich member:
+      deposits_total      = 1500.50 (balance column)
+      shares_total        =  750.25 (balance column)
+      loans_outstanding   = 2000.00 with 500.10 active   = 2500.10
+                            (closed 999.99 NONZERO and written-off
+                             100.00 excluded — the status filter is
+                             load-bearing)
+      guarantees_pledged  =  600.00 with 400.40 live     = 1000.40
+                            (released 123.45 excluded; the 77.77 row
+                             where this member is the BORROWER excluded)
+    counterparty:
+      deposits 42.42; guarantees_pledged 77.77 (it IS the guarantor of
+      the borrower-side row above — proving the guarantor predicate);
+      loans and shares '0.00'.
+    zero-activity member: '0.00' for all four (the CAST normalises the
+      empty aggregate — never bare '0').
+    """
+
+    async def run() -> None:
+        tid, _, token = await seed_actor()
+        member = await _seed_member(tid, deposit="1500.50", shares="750.25")
+        other = await _seed_member(tid, name="Counterparty", deposit="42.42")
+        zero = await _seed_member(tid, name="Zero Activity")
+        pid = await _seed_product(tid)
+        await _seed_loan(tid, member, pid, balance="2000.00", status="active")
+        await _seed_loan(tid, member, pid, balance="500.10", status="active")
+        await _seed_loan(tid, member, pid, balance="999.99", status="closed")
+        await _seed_loan(tid, member, pid, balance="100.00", status="written_off")
+        await _seed_guarantee(
+            tid, guarantor=member, borrower=other, amount="600.00", status="pledged"
+        )
+        await _seed_guarantee(
+            tid, guarantor=member, borrower=other, amount="400.40", status="active"
+        )
+        await _seed_guarantee(
+            tid, guarantor=member, borrower=other, amount="123.45", status="released"
+        )
+        await _seed_guarantee(
+            tid, guarantor=other, borrower=member, amount="77.77", status="pledged"
+        )
+
+        async with api_client() as client:
+            res = await client.get("/members?include=aggregates", headers=_headers(token))
+        assert res.status_code == 200, res.text
+        body = res.json()
+        by_id = {item["id"]: item for item in body["items"]}
+        assert set(by_id) == {str(member), str(other), str(zero)}
+        assert by_id[str(member)]["aggregates"] == {
+            "deposits_total": "1500.50",
+            "shares_total": "750.25",
+            "loans_outstanding": "2500.10",
+            "guarantees_pledged": "1000.40",
+        }
+        assert by_id[str(other)]["aggregates"] == {
+            "deposits_total": "42.42",
+            "shares_total": "0.00",
+            "loans_outstanding": "0.00",
+            "guarantees_pledged": "77.77",
+        }
+        assert by_id[str(zero)]["aggregates"] == {
+            "deposits_total": "0.00",
+            "shares_total": "0.00",
+            "loans_outstanding": "0.00",
+            "guarantees_pledged": "0.00",
+        }
+        # Expand-only: the established flat fields ride along unchanged.
+        assert by_id[str(member)]["status"] == "active"
+        assert by_id[str(member)]["version"] == 1
+
+        # Keyset pagination is intact under the expand: a limit-2 page
+        # yields a cursor and the follow-up page still carries the
+        # aggregates object per row.
+        async with api_client() as client:
+            page1 = await client.get(
+                "/members?include=aggregates&limit=2", headers=_headers(token)
+            )
+            assert page1.status_code == 200, page1.text
+            cursor = page1.json()["next_cursor"]
+            assert cursor is not None
+            page2 = await client.get(
+                f"/members?include=aggregates&limit=2&cursor={cursor}",
+                headers=_headers(token),
+            )
+        assert page2.status_code == 200, page2.text
+        seen = page1.json()["items"] + page2.json()["items"]
+        assert {item["id"] for item in seen} == {str(member), str(other), str(zero)}
+        assert all("aggregates" in item for item in seen)
+
+    asyncio.run(run())
+
+
+def test_member_list_aggregates_is_one_statement_per_page() -> None:
+    """FM (register N+1): a page WITH aggregates executes exactly ONE
+    statement — the four probes ride the SAME set-based SELECT as the
+    page rows (single snapshot), never per-row round trips. Falsifiable:
+    fetch the aggregates in a second query (or per row) and the probe
+    count here exceeds one."""
+
+    async def run() -> None:
+        tid, _, _ = await seed_actor()
+        for index in range(5):
+            await _seed_member(tid, name=f"Page Member {index}", deposit=f"{index + 1}.00")
+
+        engine = get_engine(os.environ["DATABASE_URL"])
+        recorded: list[str] = []
+
+        def _record(
+            conn: object,
+            cursor: object,
+            statement: str,
+            parameters: object,
+            context: object,
+            executemany: bool,
+        ) -> None:
+            recorded.append(statement)
+
+        event.listen(engine.sync_engine, "before_cursor_execute", _record)
+        try:
+            async with tenant_session(factory(), tid) as session:
+                page = await list_members_with_aggregates(session, tid, limit=3)
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", _record)
+
+        assert len(page.items) == 3
+        assert page.next_cursor is not None
+        touching_probe_tables = [
+            statement
+            for statement in recorded
+            if "deposit_accounts" in statement
+            or "share_accounts" in statement
+            or "guarantees" in statement
+            or "FROM loans" in statement
+        ]
+        assert len(touching_probe_tables) == 1, touching_probe_tables
+        assert "FROM members" in touching_probe_tables[0]
+
+    asyncio.run(run())
+
+
+def test_member_list_aggregates_rbac_and_no_rejection_path_echoes_amounts() -> None:
+    """members:view gates the expanded list exactly like the flat one;
+    NO rejection path (403 forbidden role, 422 malformed include, 422
+    over-cap limit) computes or echoes an amount; a foreign tenant's
+    expanded listing is EMPTY (RLS and the explicit tenant predicate
+    agree — issue #17), never a mixed or leaked figure."""
+
+    async def run() -> None:
+        tid, _, admin_token = await seed_actor()
+        await _seed_member(tid, deposit="8642.31", shares="1357.90")
+        _, committee_token = await add_user(tid, "Credit Committee")
+        _, _, foreign_token = await seed_actor()
+
+        async with api_client() as client:
+            forbidden = await client.get(
+                "/members?include=aggregates", headers=_headers(committee_token)
+            )
+            malformed = await client.get(
+                "/members?include=everything", headers=_headers(admin_token)
+            )
+            over_cap = await client.get(
+                "/members?include=aggregates&limit=101", headers=_headers(admin_token)
+            )
+            cross = await client.get(
+                "/members?include=aggregates", headers=_headers(foreign_token)
+            )
+        assert forbidden.status_code == 403
+        assert malformed.status_code == 422
+        assert over_cap.status_code == 422
+        for res in (forbidden, malformed, over_cap):
+            assert "8642.31" not in res.text
+            assert "1357.90" not in res.text
+            assert "deposits_total" not in res.text
+        assert cross.status_code == 200, cross.text
+        assert cross.json()["items"] == []
+        assert "8642.31" not in cross.text
+        assert "1357.90" not in cross.text
 
     asyncio.run(run())
 
