@@ -273,11 +273,13 @@ test("legs drill-down (g): the drawer renders every DR/CR leg VERBATIM from ONE 
   await expect(drawer.getByText("loans.receivable")).toBeVisible();
   await expect(drawer.getByText("KES 40.00")).toBeVisible();
   await expect(drawer.getByText("KES 60.00")).toBeVisible();
-  // NON-ADDITIVE proof: neither the gross (200.00) nor the net (0.00)
-  // of the legs renders anywhere, and nothing claims to be a total.
-  await expect(page.getByText("KES 200.00")).toHaveCount(0);
-  await expect(page.getByText("KES 0.00")).toHaveCount(0);
-  await expect(page.getByText(/Total/)).toHaveCount(0);
+  // NON-ADDITIVE proof (review F8: scoped to the drawer under test —
+  // a page-wide probe could pass or fail on unrelated register
+  // content): neither the gross (200.00) nor the net (0.00) of the
+  // legs renders in the drawer, and nothing in it claims a total.
+  await expect(drawer.getByText("KES 200.00")).toHaveCount(0);
+  await expect(drawer.getByText("KES 0.00")).toHaveCount(0);
+  await expect(drawer.getByText(/Total/)).toHaveCount(0);
   // Exactly ONE wire read served the section.
   expect(state.legsGets).toBe(1);
 });
