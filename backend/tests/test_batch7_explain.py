@@ -53,9 +53,12 @@ HEADER = (
     "the migrated Postgres service under the RLS app role (#31 ledger (g) +\n"
     "(j).1). enable_seqscan=off because CI tables are tiny; the assertion is\n"
     "STRUCTURAL (index-served, zero seq scans — the P13.11 movements-plan\n"
-    "convention): the legs drill-down rides idx_ledger_txn (0001), the two\n"
-    "branch rosters ride idx_users_branch / idx_members_branch (0016). This\n"
-    "batch ships NO migration.\n"
+    "convention; index NAMES are not pinned): the legs drill-down rides\n"
+    "idx_ledger_txn (0001); the two branch rosters are SERVABLE by\n"
+    "idx_users_branch / idx_members_branch (0016) — on single-digit CI rows\n"
+    "the planner may serve the tenant predicate from any tenant-leading\n"
+    "index (e.g. the order-serving idx_users_created_keyset /\n"
+    "members_tenant_id_member_no_key). This batch ships NO migration.\n"
 )
 
 
