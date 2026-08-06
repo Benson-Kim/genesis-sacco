@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from datetime import date
 from functools import partial
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -105,11 +105,13 @@ class MemberAggregatesOut(BaseModel):
 
 
 class MemberDetailOut(MemberOut):
-    """MemberOut expanded with aggregates — the DETAIL read only.
+    """MemberOut expanded with aggregates — always on the DETAIL read.
 
-    Expand-only contract change: every MemberOut field is unchanged and
-    the register LIST keeps its flat rows (aggregating every row of a
-    page would fan four subqueries out per member, gate 1.3).
+    Expand-only contract: every MemberOut field is unchanged. The
+    register LIST serves the same object per row ONLY when the request
+    opts in with include=aggregates (one set-based statement per page,
+    never a per-row fan-out — gate 1.3); without the parameter list
+    rows stay flat.
     """
 
     aggregates: MemberAggregatesOut
@@ -117,6 +119,17 @@ class MemberDetailOut(MemberOut):
 
 class MemberListResponse(BaseModel):
     items: list[MemberOut]
+    next_cursor: str | None
+
+
+class MemberListDetailResponse(BaseModel):
+    """Register page whose rows carry the advisory aggregates (#31).
+
+    Served ONLY when the request opts in with include=aggregates; the
+    flat MemberListResponse stays byte-identical otherwise.
+    """
+
+    items: list[MemberDetailOut]
     next_cursor: str | None
 
 
@@ -146,6 +159,15 @@ def _out(record: members_service.MemberRecord) -> MemberOut:
     )
 
 
+def _aggregates_out(figures: members_service.MemberAggregates) -> MemberAggregatesOut:
+    return MemberAggregatesOut(
+        deposits_total=str(figures.deposits_total),
+        shares_total=str(figures.shares_total),
+        loans_outstanding=str(figures.loans_outstanding),
+        guarantees_pledged=str(figures.guarantees_pledged),
+    )
+
+
 @router.post("", status_code=201)
 async def create_member(body: MemberCreateBody, ctx: CreateCtx) -> MemberOut:
     factory = get_sessionmaker(get_settings().database_url)
@@ -169,8 +191,39 @@ async def list_members(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     status: MemberStatus | None = None,
     member_type: Annotated[MemberType | None, Query(alias="type")] = None,
-) -> MemberListResponse:
+    include: Annotated[Literal["aggregates"] | None, Query()] = None,
+) -> MemberListDetailResponse | MemberListResponse:
+    """Keyset member register page (members:view).
+
+    OPT-IN aggregates (#31 batch 3 review): with include=aggregates
+    every row carries the same four advisory decimal-string figures as
+    the detail read, computed by ONE set-based statement per page (the
+    keyset page drives, LEFT JOIN LATERAL supplies the probes — never
+    a per-row fan-out). Without the parameter the response is
+    byte-identical to the flat register. No rejection path (403, 422)
+    computes or echoes an amount.
+    """
     factory = get_sessionmaker(get_settings().database_url)
+    if include == "aggregates":
+        async with tenant_session(factory, ctx.tenant_id) as session:
+            detail_page = await members_service.list_members_with_aggregates(
+                session,
+                ctx.tenant_id,
+                cursor=cursor,
+                limit=limit,
+                status=status,
+                member_type=member_type,
+            )
+        return MemberListDetailResponse(
+            items=[
+                MemberDetailOut(
+                    **_out(entry.record).model_dump(),
+                    aggregates=_aggregates_out(entry.aggregates),
+                )
+                for entry in detail_page.items
+            ],
+            next_cursor=detail_page.next_cursor,
+        )
     async with tenant_session(factory, ctx.tenant_id) as session:
         page = await members_service.list_members(
             session,
@@ -229,12 +282,7 @@ async def get_member(member_id: uuid.UUID, ctx: ViewCtx) -> MemberDetailOut:
         aggregates = await members_service.member_aggregates(session, ctx.tenant_id, member_id)
     return MemberDetailOut(
         **_out(record).model_dump(),
-        aggregates=MemberAggregatesOut(
-            deposits_total=str(aggregates.deposits_total),
-            shares_total=str(aggregates.shares_total),
-            loans_outstanding=str(aggregates.loans_outstanding),
-            guarantees_pledged=str(aggregates.guarantees_pledged),
-        ),
+        aggregates=_aggregates_out(aggregates),
     )
 
 

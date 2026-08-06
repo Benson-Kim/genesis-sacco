@@ -56,6 +56,18 @@ class MemberPage:
 
 
 @dataclass(frozen=True)
+class MemberWithAggregates:
+    record: MemberRecord
+    aggregates: MemberAggregates
+
+
+@dataclass(frozen=True)
+class MemberAggregatesPage:
+    items: list[MemberWithAggregates]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True)
 class StatementLine:
     occurred_at: datetime
     txn_ref: str
@@ -117,6 +129,45 @@ MEMBER_AGGREGATES_SQL = (
     "WHERE guarantor_member_id = CAST(:mid AS uuid) "
     "AND tenant_id = CAST(:tid AS uuid) "
     "AND status IN (:live0, :live1)) AS numeric(18,2))"
+)
+
+
+#: SQL template behind list_members_with_aggregates (#31 batch 3
+#: review — the authorized LIST expansion), module-level so the EXPLAIN
+#: capture can assert its plan (the P13.9 convention). ONE set-based
+#: statement per page: the keyset members page is the driving relation
+#: and each row LEFT JOIN LATERALs onto the four aggregate probes, so
+#: page rows and their figures come from a single snapshot (no
+#: two-statement skew) and there is NO per-row round trip. Every
+#: relation carries an explicit tenant predicate doubling the RLS
+#: fence (gate 1.6); every value is a bound parameter (v1.1 rule 6);
+#: the {where} slot only ever receives the static clause literals
+#: assembled in _member_list_clauses below. Each probe is servable by
+#: an index that shipped with its table in 0001: the deposit/share
+#: (tenant_id, member_id) UNIQUE-key probes, idx_loans_member,
+#: idx_guarantees_guarantor, and the driving keyset rides the members
+#: (tenant_id, member_no) UNIQUE key — this feature ships NO
+#: migration. The CAST normalises the empty aggregate to column scale
+#: so zero-activity rows serialize '0.00', never bare '0'.
+MEMBER_LIST_AGGREGATES_SQL = (
+    "SELECT m.id, m.member_no, m.type, m.name, m.phone, m.email, m.status, m.version, "
+    "CAST(COALESCE(d.balance, 0) AS numeric(18,2)), "
+    "CAST(COALESCE(s.balance, 0) AS numeric(18,2)), "
+    "CAST(COALESCE(l.total, 0) AS numeric(18,2)), "
+    "CAST(COALESCE(g.total, 0) AS numeric(18,2)) "
+    "FROM members m "
+    "LEFT JOIN LATERAL (SELECT balance FROM deposit_accounts "
+    "WHERE tenant_id = CAST(:tid AS uuid) AND member_id = m.id) d ON true "
+    "LEFT JOIN LATERAL (SELECT balance FROM share_accounts "
+    "WHERE tenant_id = CAST(:tid AS uuid) AND member_id = m.id) s ON true "
+    "LEFT JOIN LATERAL (SELECT COALESCE(SUM(balance), 0) AS total FROM loans "
+    "WHERE tenant_id = CAST(:tid AS uuid) AND member_id = m.id "
+    "AND status = :loan_active) l ON true "
+    "LEFT JOIN LATERAL (SELECT COALESCE(SUM(amount), 0) AS total FROM guarantees "
+    "WHERE tenant_id = CAST(:tid AS uuid) AND guarantor_member_id = m.id "
+    "AND status IN (:live0, :live1)) g ON true "
+    "WHERE {where} "
+    "ORDER BY m.member_no LIMIT :limit"
 )
 
 
@@ -321,6 +372,36 @@ async def get_member(
     return _row_to_record(row)
 
 
+def _member_list_clauses(
+    tenant_id: uuid.UUID,
+    *,
+    cursor: str | None,
+    limit: int,
+    status: MemberStatus | None,
+    member_type: MemberType | None,
+    col: str = "",
+) -> tuple[list[str], dict[str, object]]:
+    """Shared keyset WHERE builder for the members register page.
+
+    Every fragment is a static literal chosen in code; every value is a
+    bound parameter, so string assembly is injection-safe. `col`
+    prefixes the column references (the aggregates variant qualifies
+    them with the driving-relation alias).
+    """
+    clauses: list[str] = [f"{col}tenant_id = CAST(:tid AS uuid)"]
+    params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
+    if cursor:
+        clauses.append(f"{col}member_no > :cursor")
+        params["cursor"] = cursor
+    if status is not None:
+        clauses.append(f"{col}status = :status")
+        params["status"] = status.value
+    if member_type is not None:
+        clauses.append(f"{col}type = :mtype")
+        params["mtype"] = member_type.value
+    return clauses, params
+
+
 async def list_members(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -336,17 +417,9 @@ async def list_members(
     Exactly one indexed query per page regardless of table size.
     """
     limit = max(1, min(limit, 100))
-    clauses: list[str] = ["tenant_id = CAST(:tid AS uuid)"]
-    params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
-    if cursor:
-        clauses.append("member_no > :cursor")
-        params["cursor"] = cursor
-    if status is not None:
-        clauses.append("status = :status")
-        params["status"] = status.value
-    if member_type is not None:
-        clauses.append("type = :mtype")
-        params["mtype"] = member_type.value
+    clauses, params = _member_list_clauses(
+        tenant_id, cursor=cursor, limit=limit, status=status, member_type=member_type
+    )
     where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
     # The WHERE fragments above are static literals chosen in code; every
     # value is a bound parameter, so string assembly is injection-safe.
@@ -363,6 +436,58 @@ async def list_members(
     items = [_row_to_record(r) for r in rows[:limit]]
     next_cursor = items[-1].member_no if len(rows) > limit and items else None
     return MemberPage(items=items, next_cursor=next_cursor)
+
+
+async def list_members_with_aggregates(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    cursor: str | None = None,
+    limit: int = 20,
+    status: MemberStatus | None = None,
+    member_type: MemberType | None = None,
+) -> MemberAggregatesPage:
+    """Register page WITH the four advisory aggregates (#31 batch 3 review).
+
+    ONE set-based statement per page (MEMBER_LIST_AGGREGATES_SQL): the
+    keyset members page drives, LEFT JOIN LATERAL supplies the four
+    probes, so page rows and their figures come from a single snapshot
+    and there is never a per-row round trip (gate 1.3). Read-only
+    advisory figures, NO row locks — every BINDING money decision
+    (pledge capacity, exit settlement) recomputes its deposits, shares,
+    loans, guarantees figures under the established row locks. Least
+    disclosure (gate 1.6): served only by the members:view route and no
+    rejection path echoes an amount.
+    """
+    limit = max(1, min(limit, 100))
+    clauses, params = _member_list_clauses(
+        tenant_id, cursor=cursor, limit=limit, status=status, member_type=member_type, col="m."
+    )
+    params["loan_active"] = LoanStatus.ACTIVE.value
+    params.update(live_guarantee_params())
+    # The {where} slot only ever receives the static clause literals
+    # from _member_list_clauses; every value is a bound parameter.
+    rows = (
+        await session.execute(
+            text(MEMBER_LIST_AGGREGATES_SQL.format(where=" AND ".join(clauses))),  # noqa: S608
+            params,
+        )
+    ).all()
+    page_rows = rows[:limit]
+    items = [
+        MemberWithAggregates(
+            record=_row_to_record(row),
+            aggregates=MemberAggregates(
+                deposits_total=Decimal(str(row[8])),
+                shares_total=Decimal(str(row[9])),
+                loans_outstanding=Decimal(str(row[10])),
+                guarantees_pledged=Decimal(str(row[11])),
+            ),
+        )
+        for row in page_rows
+    ]
+    next_cursor = items[-1].record.member_no if len(rows) > limit and items else None
+    return MemberAggregatesPage(items=items, next_cursor=next_cursor)
 
 
 async def update_member(
