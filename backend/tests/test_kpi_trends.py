@@ -292,6 +292,63 @@ def test_members_trend_derives_from_status_transition_facts() -> None:
     asyncio.run(run())
 
 
+def test_members_trend_audit_coverage_boundary_is_honest() -> None:
+    """Audit-coverage boundary (review R5), hand-computed: ONE member
+    created (m1 - 3d) with ZERO 'member.status' facts ever recorded —
+    the member predates status-audit coverage entirely.
+
+      * m0 (cutoff BEFORE created_at): the member is ABSENT from the
+        count — active(m0) = 0 is the tenant's true empty state at
+        that cutoff, never an invented/backfilled point for a member
+        who did not yet exist.
+      * m1 and now (created before the cutoff, NO facts): the honest
+        COALESCE fallback counts them active — members are created
+        ACTIVE (the P8 invariant create_member hardcodes) and every
+        status writer records a 'member.status' fact, so fact-absence
+        means never-transitioned; the fallback agrees with the
+        member's current status column ('active') by construction.
+        active(m1) = 1, active(now) = 1.
+
+    Falsifiable BOTH ways: dropping the COALESCE fallback (counting
+    only members WITH transition facts) reads 0 at m1/now and fails;
+    dropping the created_at predicate (backfilling the member into
+    months before they existed) reads 1 at m0 and fails."""
+
+    async def run() -> None:
+        tid, _, token = await seed_actor()
+        m0, m1 = _month_ends_back(2)
+        mid = uuid.uuid4()
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO members "
+                    "(id, tenant_id, member_no, type, name, status, created_at) VALUES "
+                    "(CAST(:id AS uuid), CAST(:tid AS uuid), :no, 'person', "
+                    "'Coverage Boundary', 'active', :created)"
+                ),
+                {
+                    "id": str(mid),
+                    "tid": str(tid),
+                    "no": f"GP-{mid.hex[:6].upper()}",
+                    "created": datetime.combine(m1 - timedelta(days=3), time(12, 0), tzinfo=UTC),
+                },
+            )
+        body = await _get_summary(token)
+
+        points = {p["month"]: p for p in body["kpi_trends"]["members"]}
+        assert points[_month_key(m0)]["active"] == 0
+        assert points[_month_key(m1)]["active"] == 1
+        today = datetime.now(UTC).date()
+        assert points[_month_key(today)]["active"] == 1
+        # Geometry documents the same boundary: window peak 1 ->
+        # 0 at m0, 100 at m1 and the current month.
+        assert points[_month_key(m0)]["pct"] == 0
+        assert points[_month_key(m1)]["pct"] == 100
+        assert points[_month_key(today)]["pct"] == 100
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # Deny by default — each series follows its KPI card's parent grant
 # ---------------------------------------------------------------------------
