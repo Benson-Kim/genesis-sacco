@@ -1,0 +1,19 @@
+import { RequireModule } from "@/modules/authz/components/RequireModule";
+import { ShareTransfersScreen } from "@/modules/shares/components/ShareTransfersScreen";
+
+/**
+ * Share-transfers route (issue #31 batch 6, ledger (e) — audit #30 R2
+ * remainder). Lives under the members RBAC module: the
+ * /members/{id}/share-transfers route is gated members:approve
+ * server-side (moving member equity — the P12 settlement
+ * precedent; there is no dedicated shares module in the P4 matrix).
+ * Deny-by-default guard from /me/permissions; the API enforces every
+ * call regardless (gate 1.6).
+ */
+export default function ShareTransfersPage() {
+    return (
+        <RequireModule module="members">
+            <ShareTransfersScreen />
+        </RequireModule>
+    );
+}
