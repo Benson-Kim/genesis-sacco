@@ -40,7 +40,7 @@ from sqlalchemy import text
 from db_helpers import api_client, factory
 from export_helpers import add_user, seed_actor
 from genesis.application import member_exits as exits_service
-from genesis.errors import ConflictError
+from genesis.errors import ConflictError, NotFoundError
 from genesis.infrastructure.tenancy import tenant_session
 from test_member_exits import _seed_active_loan, _seed_guarantee, _seed_member
 

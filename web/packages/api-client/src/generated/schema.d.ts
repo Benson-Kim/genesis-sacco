@@ -2822,6 +2822,39 @@ export interface components {
             /** Transitioned */
             transitioned: number;
         };
+        /**
+         * ExitEligibilityOut
+         * @description Advisory blocker FACTS for the up-front eligibility checklist
+         *     (P15 batch 5, U6 — the prototype's vExit() criteria rows).
+         *
+         *     Least disclosure (gate 1.6): counts and booleans only — NEVER an
+         *     amount; served under members:view like every other exit read.
+         *     ADVISORY only: computed WITHOUT locks; the binding verdict stays
+         *     with the request/settlement locked recomputes (which also enforce
+         *     the negative-settlement rule this read cannot see).
+         */
+        ExitEligibilityOut: {
+            /** Active Loans Count */
+            active_loans_count: number;
+            /** Advisory Eligible */
+            advisory_eligible: boolean;
+            /** As Of */
+            as_of: string;
+            /** Live Guarantees Count */
+            live_guarantees_count: number;
+            /** Member Id */
+            member_id: string;
+            /** Member Status */
+            member_status: string;
+            /** Open Applications Count */
+            open_applications_count: number;
+            /** Open Exit Exists */
+            open_exit_exists: boolean;
+            /** Status Allows Exit */
+            status_allows_exit: boolean;
+            /** Unresolved Writeoff Claim */
+            unresolved_writeoff_claim: boolean;
+        };
         /** ExitListResponse */
         ExitListResponse: {
             /** Items */
@@ -3540,6 +3573,15 @@ export interface components {
             count: number;
             /** Stage */
             stage: string;
+        };
+        /** PortfolioChartOut */
+        PortfolioChartOut: {
+            /** Classification */
+            classification: components["schemas"]["ClassificationShareOut"][];
+            /** Npl Pct */
+            npl_pct: number;
+            /** Performing Pct */
+            performing_pct: number;
         };
         /** PortfolioSummaryOut */
         PortfolioSummaryOut: {
@@ -8174,30 +8216,6 @@ export interface operations {
             content: {
                 "application/json": components["schemas"]["UserStatusBody"];
             };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-}
-        };
         };
         responses: {
             /** @description Successful Response */
