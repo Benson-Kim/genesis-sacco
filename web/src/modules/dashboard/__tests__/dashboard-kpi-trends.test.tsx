@@ -177,6 +177,11 @@ describe("KPI sparklines — verbatim server series, never derived", () => {
     // Exactly ONE absence-copy candidate may exist and it belongs to
     // no card here: the withheld series renders nothing at all.
     expect(screen.queryByText("Not enough monthly history to chart.")).not.toBeInTheDocument();
+    // ZERO extra wire probes (review R6): the withheld series never
+    // triggers a follow-up fetch — the single summary GET is the ONLY
+    // wire call the screen makes.
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockGet).toHaveBeenCalledWith("/dashboard/summary");
   });
 
   it("a wholly omitted kpi_trends slice (pre-expand payload) mounts neither sparkline", async () => {
@@ -187,6 +192,10 @@ describe("KPI sparklines — verbatim server series, never derived", () => {
     expect(await screen.findByText("PAR-30")).toBeInTheDocument();
     expect(screen.queryByTestId("sparkline-par30")).not.toBeInTheDocument();
     expect(screen.queryByTestId("sparkline-members")).not.toBeInTheDocument();
+    // ZERO extra wire probes here too: the pre-expand payload never
+    // provokes a retry or a per-series fetch.
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockGet).toHaveBeenCalledWith("/dashboard/summary");
   });
 
   it("honest absence: a granted but SHORT series renders the copy, never a degenerate line", async () => {
