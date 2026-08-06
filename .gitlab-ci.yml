@@ -217,6 +217,8 @@ backend:test:
     - cat backend/perf/explain_p1311.txt || true
     - cat backend/perf/explain_p1312.txt || true
     - cat backend/perf/explain_p1316.txt || true
+    - cat backend/perf/explain_p1316_filters.txt || true
+    - cat backend/perf/explain_p1315_registers.txt || true
     - cat backend/perf/explain_codex_review.txt || true
     - cat backend/perf/explain_member_aggregates.txt || true
     - cat backend/perf/explain_member_list_aggregates.txt || true
