@@ -66,7 +66,7 @@ const userRosterAdapter: RosterAdapter<BranchUserRosterRow> = {
   kind: "users",
   title: "Users assigned to this branch",
   note:
-    "Reading the USER roster is user administration (access_control:view — the read leg of the batch-4 assignment split), never a settings right. Identity facts only; the full user record stays on the users console.",
+    "Reading the USER roster is user administration (access_control:view — the read leg of the batch-4 assignment split), never a settings right. Identity facts only; the full user record stays on the users screen.",
   columns: [
     {
       key: "user",
