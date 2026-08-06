@@ -125,6 +125,18 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
   if (path === "/jobs/exports" && request.method === "POST") {
     return json(200, { completed: 2, failed: 0 });
   }
+  if (path === `/exports/downloads/${CSV_TOKEN}` && request.method === "GET") {
+    // The server's own rendered artifact (U2 on-screen view): CRLF
+    // records, minimal quoting, truncation facts as HEADERS.
+    return new Response('Member No,Amount\r\nGP-001,"1,234.56"\r\n', {
+      status: 200,
+      headers: {
+        "content-type": "text/csv; charset=utf-8",
+        "X-Export-Truncated": "true",
+        "X-Export-Limit": "10000",
+      },
+    });
+  }
   if (path === "/member-exits" && request.method === "GET") {
     return json(200, {
       items: [
@@ -371,6 +383,38 @@ test("picker reads are keyset ONLY (cursor verbatim, no offset/page) and STRIP t
 test("a requester-only 404 on another operator's export id surfaces as ONE least-disclosure ApiError — no retry", async () => {
   const otherId = "99999999-8888-7777-6666-555555555555";
   const thrown = await reportsApi.fetchExport(otherId).catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(ApiError);
+  expect((thrown as InstanceType<typeof ApiError>).status).toBe(404);
+  expect(calls).toHaveLength(1);
+});
+
+test("U2 on-screen view — GET /exports/downloads/{token} as TEXT: token rides the contract PATH via the generated client; auth/tenant are HEADERS; body and truncation headers return VERBATIM", async () => {
+  const result = await reportsApi.fetchArtifactText(`/exports/downloads/${CSV_TOKEN}`);
+  expect(calls).toHaveLength(1);
+  const call = calls[0]!;
+  expect(call.method).toBe("GET");
+  expect(new URL(call.url).pathname).toBe(`/exports/downloads/${CSV_TOKEN}`);
+  expect(new URL(call.url).search).toBe("");
+  expect(call.headers.get("authorization")).toMatch(/^Bearer /);
+  expect(call.headers.get("x-tenant-id")).toBe(TENANT);
+  expect(call.url).not.toContain(REFRESH_VALUE);
+  // The artifact body byte-identical — including the quoted grouped
+  // figure the strict parser must keep as ONE cell.
+  expect(result.text).toBe('Member No,Amount\r\nGP-001,"1,234.56"\r\n');
+  // Truncation facts VERBATIM from the response headers.
+  expect(result.truncatedHeader).toBe("true");
+  expect(result.limitHeader).toBe("10000");
+});
+
+test("U2: a path outside the export-download namespace is REFUSED before any request is issued", async () => {
+  await expect(reportsApi.fetchArtifactText("https://evil.example/exfil")).rejects.toThrow();
+  expect(calls).toHaveLength(0);
+});
+
+test("U2: an expired/unknown token surfaces ONE least-disclosure ApiError — the view never retries and never renders a partial artifact", async () => {
+  const thrown = await reportsApi
+    .fetchArtifactText("/exports/downloads/expired-token")
+    .catch((error: unknown) => error);
   expect(thrown).toBeInstanceOf(ApiError);
   expect((thrown as InstanceType<typeof ApiError>).status).toBe(404);
   expect(calls).toHaveLength(1);

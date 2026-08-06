@@ -1117,6 +1117,24 @@
         "title": "Channel",
         "type": "string"
       },
+      "ClassificationShareOut": {
+        "properties": {
+          "classification": {
+            "title": "Classification",
+            "type": "string"
+          },
+          "pct": {
+            "title": "Pct",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "classification",
+          "pct"
+        ],
+        "title": "ClassificationShareOut",
+        "type": "object"
+      },
       "ClassificationSliceOut": {
         "properties": {
           "balance": {
@@ -1257,12 +1275,49 @@
         "title": "CredentialRevokeBody",
         "type": "object"
       },
+      "DashboardChartsOut": {
+        "description": "Server-computed chart geometry (issue #32); each sub-slice\nfollows its parent slice's grant and is omitted when ungranted.",
+        "properties": {
+          "flows": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FlowsChartOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "portfolio": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioChartOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "DashboardChartsOut",
+        "type": "object"
+      },
       "DashboardSummaryOut": {
         "description": "Composite response; ungranted slices are omitted entirely.",
         "properties": {
           "as_of": {
             "title": "As Of",
             "type": "string"
+          },
+          "charts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DashboardChartsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "deposits": {
             "anyOf": [
@@ -1919,6 +1974,65 @@
         "title": "DormancyRunOut",
         "type": "object"
       },
+      "ExitEligibilityOut": {
+        "description": "Advisory blocker FACTS for the up-front eligibility checklist\n(P15 batch 5, U6 \u2014 the prototype's vExit() criteria rows).\n\nLeast disclosure (gate 1.6): counts and booleans only \u2014 NEVER an\namount; served under members:view like every other exit read.\nADVISORY only: computed WITHOUT locks; the binding verdict stays\nwith the request/settlement locked recomputes (which also enforce\nthe negative-settlement rule this read cannot see).",
+        "properties": {
+          "active_loans_count": {
+            "title": "Active Loans Count",
+            "type": "integer"
+          },
+          "advisory_eligible": {
+            "title": "Advisory Eligible",
+            "type": "boolean"
+          },
+          "as_of": {
+            "title": "As Of",
+            "type": "string"
+          },
+          "live_guarantees_count": {
+            "title": "Live Guarantees Count",
+            "type": "integer"
+          },
+          "member_id": {
+            "title": "Member Id",
+            "type": "string"
+          },
+          "member_status": {
+            "title": "Member Status",
+            "type": "string"
+          },
+          "open_applications_count": {
+            "title": "Open Applications Count",
+            "type": "integer"
+          },
+          "open_exit_exists": {
+            "title": "Open Exit Exists",
+            "type": "boolean"
+          },
+          "status_allows_exit": {
+            "title": "Status Allows Exit",
+            "type": "boolean"
+          },
+          "unresolved_writeoff_claim": {
+            "title": "Unresolved Writeoff Claim",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "member_id",
+          "member_status",
+          "status_allows_exit",
+          "open_exit_exists",
+          "live_guarantees_count",
+          "open_applications_count",
+          "active_loans_count",
+          "unresolved_writeoff_claim",
+          "advisory_eligible",
+          "as_of"
+        ],
+        "title": "ExitEligibilityOut",
+        "type": "object"
+      },
       "ExitListResponse": {
         "properties": {
           "items": {
@@ -2539,6 +2653,51 @@
         ],
         "title": "FeeType",
         "type": "string"
+      },
+      "FlowBarScaleOut": {
+        "description": "One month's grouped-bar heights (issue #32 route (a)): integer\npercentages 0..100 of the window's axis_max, computed server-side\nin Decimal arithmetic \u2014 the client renders scale, never math.",
+        "properties": {
+          "deposits_pct": {
+            "title": "Deposits Pct",
+            "type": "integer"
+          },
+          "disbursements_pct": {
+            "title": "Disbursements Pct",
+            "type": "integer"
+          },
+          "month": {
+            "title": "Month",
+            "type": "string"
+          }
+        },
+        "required": [
+          "month",
+          "deposits_pct",
+          "disbursements_pct"
+        ],
+        "title": "FlowBarScaleOut",
+        "type": "object"
+      },
+      "FlowsChartOut": {
+        "properties": {
+          "axis_max": {
+            "title": "Axis Max",
+            "type": "string"
+          },
+          "months": {
+            "items": {
+              "$ref": "#/components/schemas/FlowBarScaleOut"
+            },
+            "title": "Months",
+            "type": "array"
+          }
+        },
+        "required": [
+          "months",
+          "axis_max"
+        ],
+        "title": "FlowsChartOut",
+        "type": "object"
       },
       "GuaranteeOut": {
         "properties": {
@@ -3823,6 +3982,32 @@
           "count"
         ],
         "title": "PipelineStageOut",
+        "type": "object"
+      },
+      "PortfolioChartOut": {
+        "properties": {
+          "classification": {
+            "items": {
+              "$ref": "#/components/schemas/ClassificationShareOut"
+            },
+            "title": "Classification",
+            "type": "array"
+          },
+          "npl_pct": {
+            "title": "Npl Pct",
+            "type": "integer"
+          },
+          "performing_pct": {
+            "title": "Performing Pct",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "performing_pct",
+          "npl_pct",
+          "classification"
+        ],
+        "title": "PortfolioChartOut",
         "type": "object"
       },
       "PortfolioSummaryOut": {
@@ -9720,6 +9905,50 @@
           }
         },
         "summary": "Create Exit Request",
+        "tags": [
+          "member-exits"
+        ]
+      }
+    },
+    "/member-exits/eligibility/{member_id}": {
+      "get": {
+        "description": "Advisory eligibility facts BEFORE a request is submitted\n(members:view; P15 batch 5, U6 \u2014 human-authorized expand-only,\nread-only contract change).\n\nNO row locks: the checklist mirrors the blocker set the settlement\nservice enforces (same live-guarantee status set, same open-stage\nlist, the SAME unresolved-write-off SQL \u2014 gate 1.1), but the\nBINDING verdict remains the locked recompute at request and\nsettlement time. Facts only \u2014 no amount ever travels here.",
+        "operationId": "get_exit_eligibility_member_exits_eligibility__member_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "member_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Member Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExitEligibilityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Exit Eligibility",
         "tags": [
           "member-exits"
         ]

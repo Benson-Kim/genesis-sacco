@@ -48,6 +48,7 @@ jest.mock("../api", () => {
     ...actual,
     fetchExitsPage: jest.fn(),
     fetchExit: jest.fn(),
+    fetchExitEligibility: jest.fn(),
     createExitRequest: jest.fn(),
     voteOnExit: jest.fn(),
     voidExit: jest.fn(),
@@ -255,6 +256,21 @@ beforeEach(() => {
   mocked.fetchExitStatement.mockResolvedValue(STATEMENT);
   mockedMembers.fetchMembersPage.mockResolvedValue(page([MEMBER]));
   mockedMembers.fetchMember.mockResolvedValue(MEMBER);
+  // U6 advisory checklist default: ELIGIBLE — the dedicated legs
+  // (exit-eligibility-screen.test.tsx) cover render/gating/XSS; here it
+  // only needs to never block the request flows under test.
+  mocked.fetchExitEligibility.mockResolvedValue({
+    member_id: MEMBER_ID,
+    member_status: "active",
+    status_allows_exit: true,
+    open_exit_exists: false,
+    live_guarantees_count: 0,
+    open_applications_count: 0,
+    active_loans_count: 0,
+    unresolved_writeoff_claim: false,
+    advisory_eligible: true,
+    as_of: "2026-08-06T12:00:00+00:00",
+  });
 });
 
 afterEach(() => {
