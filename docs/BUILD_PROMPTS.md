@@ -69,6 +69,17 @@ or test/artifact present on main).
 | P23 | ❌ TODO | — |
 | P24 | ❌ TODO | — |
 
+**Provenance note (rule 16, 2026-08-06):** this repository has been
+re-imported/moved multiple times — most recently to
+`sircle6711932/sacco` (verified 2026-08-06: a transfer, project id
+unchanged, so the 2026-08-06 provenance-pass pipeline ids still
+resolve). Pipeline ids recorded in this register BEFORE a move may no
+longer resolve at the current project id (e.g. the P14.5 row's
+2732748398 now 404s); the git-log evidence (migration numbers, merge/
+squash shas) remains authoritative, and fresh pipeline re-citations
+live in the issue **#31** re-citation tables rather than being
+rewritten here.
+
 **P-DIAG drift flip (rule 11, 2026-08-02 — MR !55, docs-only):** the
 P-DIAG.1–.5 rows above remain ✅ with their diagrams reconciled to
 main @ `8f46aa5` (alembic head 0032): dfd.md/stride.md P13.15/P13.16
@@ -161,6 +172,17 @@ declared in that MR's description at branch time per rule 14; head
 (batch 4) and !76 (batch 5) branches both top out at 0037 and claim no
 migration, and !11 is mobile-only, so no other in-flight claim
 exists). The next free number is **0039**.
+
+Registry delta update (2026-08-06, the register-refresh sync): **0037
+and 0038 are on main** — 0037 via the issue-#30 close-out MR !71
+(merged 2026-08-05, merge `508bc96`, squash `578d75d`) and 0038 via
+the #31 batch-6 MR !77 (merged 2026-08-06, merge `eeb8113`, squash
+`b28e3c0`); alembic head on main is **0038**, re-verified against
+main's `migrations/versions/` at `34f4ace`. **0039 stays the #31
+batch-8 MR's (!79) in-flight claim**
+(`0039_member_dividend_payout.py`, `down_revision = '0038'`, declared
+in that MR's description at branch time per rule 14) — `INCOMING`,
+never as-built until !79 merges. The next free number is **0040**.
 
 ### Post-P13 hardening follow-up batch (issues #21/#24/#23) — status
 
