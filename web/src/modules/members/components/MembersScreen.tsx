@@ -9,8 +9,14 @@
  *   NOT rendered without can(create) — the UI never offers what the API
  *   forbids.
  * - Keyset pagination only (opaque cursors — gate 1.3).
- * - Every rendered string (names, emails, phones) is attacker-influenced
- *   data and renders exclusively through React text interpolation.
+ * - The register opts in to the LIST aggregates (#31 batch 3 review:
+ *   include=aggregates, one set-based server statement per page) and
+ *   renders the four advisory figures VERBATIM — the server strings
+ *   for deposits, shares, loans, guarantees are never summed, derived
+ *   or re-formatted here (P15 blocker (a): no client-side money math).
+ * - Every rendered string (names, emails, phones, figures) is
+ *   attacker-influenced data and renders exclusively through React
+ *   text interpolation.
  */
 import { useState } from "react";
 import dynamic from "next/dynamic";
@@ -20,13 +26,14 @@ import { useKeysetList } from "@/modules/table/useKeysetList";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
 import { initials } from "@/lib/format";
-import { fetchMembersPage, type MemberListFilters } from "../api";
+import { fetchMembersPageWithAggregates, type MemberListFilters } from "../api";
 import {
     MEMBER_STATUSES,
     MEMBER_TYPES,
     STATUS_LABELS,
     TYPE_LABELS,
     type Member,
+    type MemberDetail,
     type MemberStatus,
     type MemberType,
 } from "../schemas";
@@ -38,6 +45,15 @@ const MemberCreateDrawer = dynamic(
     () => import("./MemberCreateDrawer").then((m) => m.MemberCreateDrawer),
     { ssr: false },
 );
+// KYC surfaces (issue #31 batch 3): row drill-down drawer + the
+// registration wizard continuation after a quick-create.
+const MemberKycDrawer = dynamic(
+    () => import("./MemberKycDrawer").then((m) => m.MemberKycDrawer),
+    { ssr: false },
+);
+const KycWizard = dynamic(() => import("./KycWizard").then((m) => m.KycWizard), {
+    ssr: false,
+});
 
 function statusPill(status: MemberStatus) {
     switch (status) {
@@ -68,7 +84,7 @@ function statusPill(status: MemberStatus) {
     }
 }
 
-const COLUMNS: Column<Member>[] = [
+const COLUMNS: Column<MemberDetail>[] = [
     {
         key: "member",
         header: "Member",
@@ -98,6 +114,34 @@ const COLUMNS: Column<Member>[] = [
                 <div className={styles.cellSub}>{member.email ?? "—"}</div>
             </div>
         ),
+    },
+    // Advisory aggregates (#31 batch 3 review): SERVER decimal strings
+    // rendered VERBATIM — never summed, never derived, never
+    // re-formatted (P15 blocker (a); the same figures the KYC drawer
+    // shows on the detail read).
+    {
+        key: "deposits",
+        header: "Deposits",
+        align: "right",
+        render: (member) => member.aggregates.deposits_total,
+    },
+    {
+        key: "shares",
+        header: "Share capital",
+        align: "right",
+        render: (member) => member.aggregates.shares_total,
+    },
+    {
+        key: "loans",
+        header: "Loans outstanding",
+        align: "right",
+        render: (member) => member.aggregates.loans_outstanding,
+    },
+    {
+        key: "guarantees",
+        header: "Guarantees pledged",
+        align: "right",
+        render: (member) => member.aggregates.guarantees_pledged,
     },
     {
         key: "status",
@@ -154,11 +198,14 @@ export function MembersScreen() {
     const [type, setType] = useState<MemberType | "">("");
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [createdNo, setCreatedNo] = useState<string | null>(null);
+    // Row drill-down (KYC drawer) and the wizard continuation.
+    const [kycMember, setKycMember] = useState<Member | null>(null);
+    const [wizardMember, setWizardMember] = useState<Member | null>(null);
 
     const filters: MemberListFilters = { status, type };
-    const list = useKeysetList<Member>({
+    const list = useKeysetList<MemberDetail>({
         queryKey: ["members", "list", filters],
-        fetchPage: (cursor) => fetchMembersPage(filters, cursor),
+        fetchPage: (cursor) => fetchMembersPageWithAggregates(filters, cursor),
     });
 
     const mayCreate = can(permissions.data, "members", "create");
@@ -197,6 +244,7 @@ export function MembersScreen() {
                     query={list}
                     rowKey={(member) => member.id}
                     emptyMessage="No members match these filters."
+                    onRowClick={(member) => setKycMember(member)}
                 />
             </Card>
             {drawerOpen && (
@@ -205,8 +253,25 @@ export function MembersScreen() {
                     onCreated={(member) => {
                         setDrawerOpen(false);
                         setCreatedNo(member.member_no);
+                        // Prototype wizard continuation (issue #31
+                        // batch 3): identity captured — proceed to the
+                        // KYC profile + documents steps.
+                        setWizardMember(member);
                     }}
                 />
+            )}
+            {kycMember !== null && (
+                <MemberKycDrawer
+                    member={kycMember}
+                    onStartWizard={() => {
+                        setWizardMember(kycMember);
+                        setKycMember(null);
+                    }}
+                    onClose={() => setKycMember(null)}
+                />
+            )}
+            {wizardMember !== null && (
+                <KycWizard member={wizardMember} onClose={() => setWizardMember(null)} />
             )}
         </div>
     );

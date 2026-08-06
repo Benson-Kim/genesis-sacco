@@ -1411,7 +1411,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Members */
+        /**
+         * List Members
+         * @description Keyset member register page (members:view).
+         *
+         *     OPT-IN aggregates (#31 batch 3 review): with include=aggregates
+         *     every row carries the same four advisory decimal-string figures as
+         *     the detail read, computed by ONE set-based statement per page (the
+         *     keyset page drives, LEFT JOIN LATERAL supplies the probes — never
+         *     a per-row fan-out). Without the parameter the response is
+         *     byte-identical to the flat register. No rejection path (403, 422)
+         *     computes or echoes an amount.
+         */
         get: operations["list_members_members_get"];
         put?: never;
         /** Create Member */
@@ -1466,7 +1477,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Member */
+        /**
+         * Get Member
+         * @description Single-member read with advisory aggregates (#31, members:view).
+         *
+         *     The existence check runs FIRST: unknown ids (including cross-tenant
+         *     ids hidden by RLS) surface 404 before any aggregate is computed, so
+         *     no rejection path ever echoes an amount (least disclosure, gate
+         *     1.6).
+         */
         get: operations["get_member_members__member_id__get"];
         /** Update Member */
         put: operations["update_member_members__member_id__put"];
@@ -3165,6 +3184,25 @@ export interface components {
             /** Version */
             version: number;
         };
+        /**
+         * MemberAggregatesOut
+         * @description Advisory financial aggregates on the single-member read (#31).
+         *
+         *     All four figures are canonical decimal strings scaled by the
+         *     database (numeric(18,2)); clients render them verbatim and never
+         *     compute money (P15 blocker (a)). Advisory only: every BINDING money
+         *     decision recomputes under the established row locks.
+         */
+        MemberAggregatesOut: {
+            /** Deposits Total */
+            deposits_total: string;
+            /** Guarantees Pledged */
+            guarantees_pledged: string;
+            /** Loans Outstanding */
+            loans_outstanding: string;
+            /** Shares Total */
+            shares_total: string;
+        };
         /** MemberCreateBody */
         MemberCreateBody: {
             /** Email */
@@ -3174,6 +3212,48 @@ export interface components {
             /** Phone */
             phone?: string | null;
             type: components["schemas"]["MemberType"];
+        };
+        /**
+         * MemberDetailOut
+         * @description MemberOut expanded with aggregates — always on the DETAIL read.
+         *
+         *     Expand-only contract: every MemberOut field is unchanged. The
+         *     register LIST serves the same object per row ONLY when the request
+         *     opts in with include=aggregates (one set-based statement per page,
+         *     never a per-row fan-out — gate 1.3); without the parameter list
+         *     rows stay flat.
+         */
+        MemberDetailOut: {
+            aggregates: components["schemas"]["MemberAggregatesOut"];
+            /** Email */
+            email: string | null;
+            /** Id */
+            id: string;
+            /** Member No */
+            member_no: string;
+            /** Name */
+            name: string;
+            /** Phone */
+            phone: string | null;
+            /** Status */
+            status: string;
+            /** Type */
+            type: string;
+            /** Version */
+            version: number;
+        };
+        /**
+         * MemberListDetailResponse
+         * @description Register page whose rows carry the advisory aggregates (#31).
+         *
+         *     Served ONLY when the request opts in with include=aggregates; the
+         *     flat MemberListResponse stays byte-identical otherwise.
+         */
+        MemberListDetailResponse: {
+            /** Items */
+            items: components["schemas"]["MemberDetailOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /** MemberListResponse */
         MemberListResponse: {
@@ -6621,6 +6701,7 @@ export interface operations {
                 limit?: number;
                 status?: components["schemas"]["MemberStatus"] | null;
                 type?: components["schemas"]["MemberType"] | null;
+                include?: "aggregates" | null;
             };
             header?: never;
             path?: never;
@@ -6634,7 +6715,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MemberListResponse"];
+                    "application/json": components["schemas"]["MemberListDetailResponse"] | components["schemas"]["MemberListResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6731,7 +6812,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MemberOut"];
+                    "application/json": components["schemas"]["MemberDetailOut"];
                 };
             };
             /** @description Validation Error */
