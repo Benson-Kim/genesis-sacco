@@ -102,6 +102,30 @@ class TransactionListResponse(BaseModel):
     next_cursor: str | None
 
 
+class LedgerLegOut(BaseModel):
+    """One DR or CR leg of a posting (#31 ledger (g), audit #30 A3).
+
+    Verbatim ledger_entries facts: the chart-of-accounts key, the side
+    and the leg amount as a canonical decimal string — one row per leg,
+    NOTHING derived (no netting, no totals; the 0004/0014 constraint
+    trigger proved balance at commit time). Least disclosure (gate
+    1.6): no member, actor or channel rides on a leg row — those live
+    on the transaction the caller already holds.
+    """
+
+    account: str
+    side: str
+    amount: str
+
+
+class TransactionLegsResponse(BaseModel):
+    """All legs of one posting. Unpaginated BY CONSTRUCTION: the widest
+    posting builder (the P12 exit settlement) writes 7 legs, so the
+    response is bounded without a cursor."""
+
+    items: list[LedgerLegOut]
+
+
 class InterestRunOut(BaseModel):
     period_start: str
     period_end: str
@@ -216,6 +240,33 @@ async def list_ledger(
             limit=limit,
         )
     return TransactionListResponse(items=[_txn_out(t) for t in items], next_cursor=next_cursor)
+
+
+@router.get("/transactions/{transaction_id}/legs")
+async def list_transaction_legs(
+    transaction_id: uuid.UUID,
+    ctx: TxnViewCtx,
+) -> TransactionLegsResponse:
+    """The double-entry DR/CR legs of one posting (transactions:view).
+
+    Expand-only read model (#31 ledger (g), audit #30 A3): the
+    append-only ledger_entries truth behind a TransactionOut row, one
+    item per leg, each amount a canonical decimal string rendered
+    verbatim by clients — never summed or netted (P15 blocker (a)).
+    404-BEFORE-FACTS: the existence probe runs before any leg is read,
+    so unknown and cross-tenant ids (hidden by RLS) surface 404 with no
+    account or amount echoed; 403 rejections carry no figures either
+    (least disclosure, gate 1.6).
+    """
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        legs = await txn_service.transaction_legs(session, ctx.tenant_id, transaction_id)
+    return TransactionLegsResponse(
+        items=[
+            LedgerLegOut(account=leg.account.value, side=leg.side.value, amount=str(leg.amount))
+            for leg in legs
+        ]
+    )
 
 
 @router.post("/jobs/deposit-interest")

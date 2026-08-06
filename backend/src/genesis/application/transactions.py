@@ -26,7 +26,14 @@ from genesis.application.guarantees import live_pledged_total
 from genesis.application.ledger import post_deposit, post_share_topup, post_withdrawal
 from genesis.application.members import reactivate_dormant_member
 from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
-from genesis.domain.ledger import MEMBER_DIRECTION, Channel, Side, TxnType, member_direction
+from genesis.domain.ledger import (
+    MEMBER_DIRECTION,
+    Account,
+    Channel,
+    Side,
+    TxnType,
+    member_direction,
+)
 from genesis.domain.members import MemberStatus, MoneyOperation, member_may
 from genesis.domain.money import ZERO, to_cents
 from genesis.errors import ConflictError, InvalidInputError, NotFoundError
@@ -418,3 +425,78 @@ async def list_transactions(
         last = page_rows[-1]
         next_cursor = build_created_id_cursor(last[6], last[0])
     return items, next_cursor
+
+
+#: Legs drill-down read (#31 ledger (g), audit #30 A3): the per-posting
+#: DR/CR legs from the append-only ledger_entries truth. Module-level
+#: so the EXPLAIN capture (tests/test_batch7_explain.py) asserts
+#: against the production SQL (the P13.9 convention). Explicit tenant
+#: predicate on top of forced RLS (gate 1.6 v1.1); every value is a
+#: bound parameter (v1.1 rule 6). Served by idx_ledger_txn (0001:
+#: tenant_id, transaction_id) — this read ships NO migration. The leg
+#: set is bounded by construction (the widest posting builder, the P12
+#: exit settlement, writes 7 legs), so no pagination exists here;
+#: ORDER BY side DESC (debits first — the accountant's DR-before-CR
+#: convention), account, id is a total order making the response
+#: deterministic even though all legs of one posting share the same
+#: transaction-stable created_at.
+TRANSACTION_LEGS_SQL = (
+    "SELECT account, side, amount FROM ledger_entries "
+    "WHERE tenant_id = CAST(:tid AS uuid) "
+    "AND transaction_id = CAST(:txn AS uuid) "
+    "ORDER BY side DESC, account, id"
+)
+
+
+@dataclass(frozen=True)
+class LedgerLegRecord:
+    """One DR or CR leg of a posting, verbatim from ledger_entries."""
+
+    account: Account
+    side: Side
+    amount: Decimal
+
+
+async def transaction_legs(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    transaction_id: uuid.UUID,
+) -> list[LedgerLegRecord]:
+    """The DR/CR legs of one posting (#31 ledger (g)) — read-only.
+
+    404-BEFORE-FACTS: the transaction existence probe runs FIRST, so an
+    unknown id — including a cross-tenant id hidden by RLS — surfaces
+    404 before any leg is read; no rejection path ever echoes an
+    account or an amount (least disclosure, gate 1.6). The legs come
+    VERBATIM from the append-only ledger_entries rows (the 0004 fence):
+    nothing is summed, netted or derived here — the 0004/0014 DB
+    constraint trigger already proved balance at commit time, and the
+    web client renders each row verbatim without a computed total
+    (P15 blocker (a)).
+    """
+    exists = (
+        await session.execute(
+            text(
+                # Explicit tenant predicate on top of RLS (gate 1.6 v1.1).
+                "SELECT 1 FROM transactions WHERE id = CAST(:txn AS uuid) "
+                "AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"txn": str(transaction_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if exists is None:
+        raise NotFoundError(f"transaction {transaction_id} not found")
+    rows = (
+        await session.execute(
+            text(TRANSACTION_LEGS_SQL),
+            {"tid": str(tenant_id), "txn": str(transaction_id)},
+        )
+    ).all()
+    return [
+        LedgerLegRecord(
+            account=Account(str(r[0])),
+            side=Side(str(r[1])),
+            amount=Decimal(str(r[2])),
+        )
+        for r in rows
+    ]
