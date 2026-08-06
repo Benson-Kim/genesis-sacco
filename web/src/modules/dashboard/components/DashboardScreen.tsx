@@ -15,8 +15,15 @@ import { fmtAmount, fmtDateTime, fmtKes } from "@/lib/format";
 import { STALE_TIME } from "@/lib/query";
 import { fetchDashboardSummary } from "../api";
 import type { DashboardSummary } from "../schemas";
+import {
+    ClassificationBars,
+    FlowsBarChart,
+    PerformingDonut,
+    Sparkline,
+} from "./DashboardCharts";
 import grid from "@/modules/layout/grid.module.css";
 import styles from "./DashboardScreen.module.css";
+import charts from "./DashboardCharts.module.css";
 
 export const DASHBOARD_QUERY_KEY = ["dashboard", "summary"] as const;
 
@@ -36,6 +43,16 @@ function kes(value: string | undefined): string {
 }
 
 function StatCards({ summary }: Readonly<{ summary: DashboardSummary }>) {
+    // KPI sparklines (issue #32): SERVER-normalized series from the
+    // charts slice — mapped to plain integer arrays here, no money
+    // value is ever read. HONEST labelling: only the two series the
+    // contract actually carries (monthly deposit / disbursement flows)
+    // get a sparkline, on the cards they truly describe; the PAR-30
+    // and member cards carry none (no honest per-KPI series exists on
+    // the contract — recorded on #31's ledger, never faked).
+    const flowSeries = summary.charts?.flows ?? null;
+    const depositTrend = flowSeries?.months.map((m) => m.deposits_pct) ?? null;
+    const disbursementTrend = flowSeries?.months.map((m) => m.disbursements_pct) ?? null;
     return (
         <>
             <Card>
@@ -46,9 +63,21 @@ function StatCards({ summary }: Readonly<{ summary: DashboardSummary }>) {
             </Card>
             <Card>
                 <Stat label="Deposits" value={kes(summary.deposits?.total_deposits)} />
+                {depositTrend !== null && depositTrend.length > 1 && (
+                    <>
+                        <Sparkline values={depositTrend} stroke="gold" />
+                        <div className={charts.sparkCaption}>monthly deposit flows</div>
+                    </>
+                )}
             </Card>
             <Card>
                 <Stat label="Loan book" value={kes(summary.loan_book?.outstanding_balance)} />
+                {disbursementTrend !== null && disbursementTrend.length > 1 && (
+                    <>
+                        <Sparkline values={disbursementTrend} stroke="navy" />
+                        <div className={charts.sparkCaption}>monthly disbursements</div>
+                    </>
+                )}
             </Card>
             <Card>
                 <Stat
@@ -78,11 +107,21 @@ function PipelineCard({ pipeline }: Readonly<{ pipeline: DashboardSummary["pipel
     );
 }
 
-function FlowsCard({ flows }: Readonly<{ flows: DashboardSummary["monthly_flows"] }>) {
+function FlowsCard({
+    flows,
+    chart,
+}: Readonly<{
+    flows: DashboardSummary["monthly_flows"];
+    chart: DashboardSummary["charts"];
+}>) {
     if (flows === null || flows === undefined) return null;
+    const flowsChart = chart?.flows ?? null;
     return (
         <Card className={grid.half}>
             <h2 className={styles.title}>Monthly flows</h2>
+            {/* Chart supplement (issue #32): server-computed geometry;
+                the table below stays the accessible, signed truth. */}
+            {flowsChart !== null && <FlowsBarChart flows={flowsChart} />}
             <table className={styles.flows}>
                 <thead>
                     <tr>
@@ -118,13 +157,34 @@ function FlowsCard({ flows }: Readonly<{ flows: DashboardSummary["monthly_flows"
     );
 }
 
+function PortfolioQualityCard({
+    chart,
+}: Readonly<{ chart: DashboardSummary["charts"] }>) {
+    const portfolio = chart?.portfolio ?? null;
+    if (portfolio === null) return null;
+    return (
+        <Card className={grid.half}>
+            <h2 className={styles.title}>Portfolio quality</h2>
+            <PerformingDonut portfolio={portfolio} />
+        </Card>
+    );
+}
+
 function ClassificationCard({
     loanBook,
-}: Readonly<{ loanBook: DashboardSummary["loan_book"] }>) {
+    chart,
+}: Readonly<{
+    loanBook: DashboardSummary["loan_book"];
+    chart: DashboardSummary["charts"];
+}>) {
     if (loanBook === null || loanBook === undefined) return null;
+    const portfolio = chart?.portfolio ?? null;
     return (
         <Card className={grid.wide}>
             <h2 className={styles.title}>Portfolio classification</h2>
+            {/* Progress-bar supplement (issue #32): server-computed
+                shares; the table below is the figures of record. */}
+            {portfolio !== null && <ClassificationBars portfolio={portfolio} />}
             <table className={styles.flows}>
                 <thead>
                     <tr>
@@ -173,8 +233,12 @@ export function DashboardScreen() {
         <div className={grid.cards4}>
             <StatCards summary={summary.data} />
             <PipelineCard pipeline={summary.data.pipeline} />
-            <FlowsCard flows={summary.data.monthly_flows} />
-            <ClassificationCard loanBook={summary.data.loan_book} />
+            <FlowsCard flows={summary.data.monthly_flows} chart={summary.data.charts} />
+            <PortfolioQualityCard chart={summary.data.charts} />
+            <ClassificationCard
+                loanBook={summary.data.loan_book}
+                chart={summary.data.charts}
+            />
             <div className={styles.asOf}>As of {fmtDateTime(summary.data.as_of)}</div>
         </div>
     );
