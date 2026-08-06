@@ -262,11 +262,7 @@ describe("chart rendering — verbatim server geometry, never derived", () => {
     // hostile value was never interpolated into CSS.
     const fill = screen.getByTestId(`cls-fill-${hostile}`);
     expect(fill).toHaveStyle({ background: "var(--navyMid)" });
-  });
-});
-pect(fill.getAttribute("style")).not.toContain("--evil");
-  });
-});
-yMid)" });
+    // The hostile value never reached the style attribute either.
+    expect(fill.getAttribute("style")).not.toContain("--evil");
   });
 });

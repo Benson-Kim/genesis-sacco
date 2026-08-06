@@ -133,8 +133,7 @@ UNRESOLVED_WRITEOFF_CLAIM_SQL = (
 #: Member status without the row lock (the advisory mirror of
 #: _lock_member); explicit tenant predicate doubles RLS.
 ELIGIBILITY_MEMBER_SQL = (
-    "SELECT status FROM members "
-    "WHERE id = CAST(:m AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+    "SELECT status FROM members WHERE id = CAST(:m AS uuid) AND tenant_id = CAST(:tid AS uuid)"
 )
 
 #: Live guarantees GIVEN by the member — the SAME status set the P9

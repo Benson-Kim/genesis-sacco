@@ -270,9 +270,7 @@ def test_charts_flows_end_to_end_oracle_and_month_alignment() -> None:
         flows = charts["flows"]
         assert flows["axis_max"] == "400.00"
         # FM-C4: 1:1 alignment with the sibling series.
-        assert [m["month"] for m in flows["months"]] == [
-            f["month"] for f in body["monthly_flows"]
-        ]
+        assert [m["month"] for m in flows["months"]] == [f["month"] for f in body["monthly_flows"]]
         by_month = {m["month"]: m for m in flows["months"]}
         prev_key = f"{prev_month_end.year:04d}-{prev_month_end.month:02d}"
         cur_key = f"{now.year:04d}-{now.month:02d}"
@@ -362,8 +360,7 @@ def test_charts_cross_tenant_probe_yields_zero_geometry() -> None:
         assert summary.charts.flows is not None
         assert summary.charts.flows.axis_max == Decimal("0")
         assert all(
-            m.deposits_pct == 0 and m.disbursements_pct == 0
-            for m in summary.charts.flows.months
+            m.deposits_pct == 0 and m.disbursements_pct == 0 for m in summary.charts.flows.months
         )
 
     asyncio.run(run())

@@ -427,9 +427,7 @@ def test_no_amount_ever_travels_on_any_path() -> None:
         # the sanitized envelope only.
         _, cc_token = await add_user(tid, "Credit Committee")
         async with api_client() as client:
-            res = await client.get(
-                f"/member-exits/eligibility/{mid}", headers=_headers(cc_token)
-            )
+            res = await client.get(f"/member-exits/eligibility/{mid}", headers=_headers(cc_token))
         assert res.status_code == 403
         assert set(res.json().keys()) == {"category", "correlation_id"}
         for amount in amounts:
