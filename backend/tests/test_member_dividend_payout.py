@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from db_helpers import api_client, factory, seed_user, unique_email
 from genesis.application.auth import AuthContext, issue_access_token
 from genesis.application.rbac import seed_permissions
+from genesis.domain.members import DividendPayout
 from genesis.infrastructure.tenancy import tenant_session
 
 pytestmark = pytest.mark.skipif(
@@ -329,6 +331,38 @@ def test_db_check_rejects_vocabulary_bypass() -> None:
                     ),
                     {"tid": str(tid)},
                 )
+
+    asyncio.run(run())
+
+
+def test_db_check_value_set_equals_the_code_owned_enum_exactly() -> None:
+    """Single source of truth (review R3(b)): the 0039 CHECK's literal
+    value set must equal the DividendPayout StrEnum member set by SET
+    EQUALITY. The deployed expression is read from the live catalog
+    (pg_get_constraintdef) — never from this test's own copy of the
+    vocabulary. Falsifiable in BOTH directions: adding an enum member
+    without widening the CHECK fails, dropping one while the CHECK
+    still carries it fails, and dropping or renaming the constraint
+    itself fails (scalar_one raises on zero rows)."""
+
+    async def run() -> None:
+        tid, _ = await _seed_actor()
+        async with tenant_session(factory(), tid) as session:
+            definition = (
+                await session.execute(
+                    text(
+                        "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                        "WHERE conrelid = 'members'::regclass "
+                        "AND conname = 'ck_members_dividend_payout'"
+                    )
+                )
+            ).scalar_one()
+        # In the deparsed form only the vocabulary literals are
+        # single-quoted (identifiers stay bare; the casts render as
+        # ::text): CHECK ((dividend_payout IS NULL) OR
+        # (dividend_payout = ANY (ARRAY['deposit_account'::text, ...]))).
+        db_values = set(re.findall(r"'([^']*)'", str(definition)))
+        assert db_values == {member.value for member in DividendPayout}
 
     asyncio.run(run())
 
