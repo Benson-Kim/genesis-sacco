@@ -198,9 +198,13 @@ test("a failed legs read renders the least-disclosure error banner — no invent
   mountDrawer();
 
   expect(await screen.findByText("Double-entry legs")).toBeInTheDocument();
-  // The shared banner's sanitized copy renders…
+  // The shared banner's sanitized copy renders… (the Providers default
+  // retries queries ONCE with ~1s backoff before surfacing the error
+  // state — allow for it, the house pattern).
   expect(
-    await screen.findByText("Network error — check connectivity and retry."),
+    await screen.findByText("Network error — check connectivity and retry.", undefined, {
+      timeout: 5000,
+    }),
   ).toBeInTheDocument();
   // …never rows and never a leg figure (the drawer's own witnessed
   // Amount Kv is the ONLY money on screen).

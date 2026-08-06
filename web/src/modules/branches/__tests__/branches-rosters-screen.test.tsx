@@ -285,6 +285,10 @@ test("a failed roster read renders the shared honest error state — no invented
   mountDrawer();
 
   const users = await findPanel("Users assigned to this branch");
-  expect(await within(users).findByText(/Could not load this list/)).toBeInTheDocument();
+  // The Providers default retries queries ONCE (~1s backoff) before
+  // surfacing the error state — allow for it (the house pattern).
+  expect(
+    await within(users).findByText(/Could not load this list/, undefined, { timeout: 5000 }),
+  ).toBeInTheDocument();
   expect(within(users).queryByText("Ann Achieng")).toBeNull();
 });
