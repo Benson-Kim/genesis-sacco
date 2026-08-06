@@ -111,6 +111,54 @@ export const pipelineStageSchema = z.object({
     count: z.number().int(),
 });
 
+/**
+ * CHART GEOMETRY (issue #32, the RECORDED design decision route (a)):
+ * every percentage below is SERVER-computed (Decimal, ROUND_HALF_UP,
+ * application/dashboard.py scale_pct) from figures inside the same
+ * REPEATABLE READ snapshot as the sibling slices. The client renders
+ * these integers as visual scale ONLY — no client-side money math
+ * exists anywhere (P15 blocker (a) stays absolute); the sibling
+ * monthly_flows / loan_book slices remain the figures of record and
+ * the accessible truth (a11y: colour-never-alone).
+ *
+ * Integers 0..100 are ASSERTED at this boundary: a float, a negative
+ * or an out-of-range value is a contract violation and is REJECTED —
+ * it would silently distort the geometry.
+ */
+const pctIntSchema = z.number().int().min(0).max(100);
+
+export const flowBarScaleSchema = z.object({
+    /** Same "YYYY-MM" key as the sibling monthly_flows row. */
+    month: z.string(),
+    deposits_pct: pctIntSchema,
+    disbursements_pct: pctIntSchema,
+});
+
+export const flowsChartSchema = z.object({
+    months: z.array(flowBarScaleSchema),
+    /** The common scale ceiling — a SERVER aggregate string rendered
+     * verbatim as the chart's scale caption (never re-derived). */
+    axis_max: aggregateMoneySchema,
+});
+
+export const classificationShareSchema = z.object({
+    classification: z.string(),
+    pct: pctIntSchema,
+});
+
+export const portfolioChartSchema = z.object({
+    performing_pct: pctIntSchema,
+    npl_pct: pctIntSchema,
+    classification: z.array(classificationShareSchema),
+});
+
+export const dashboardChartsSchema = z.object({
+    /** Follows transactions:view (the monthly_flows parent grant). */
+    flows: flowsChartSchema.nullish(),
+    /** Follows loan_book:view (the portfolio-summary parent grant). */
+    portfolio: portfolioChartSchema.nullish(),
+});
+
 export const dashboardSummarySchema = z.object({
     /** datetime.isoformat() (api/dashboard.py summary.as_of) — feeds
      * fmtDateTime in the header: garbage is REJECTED, never
@@ -122,10 +170,14 @@ export const dashboardSummarySchema = z.object({
     guarantors: guarantorAggregatesSchema.nullish(),
     monthly_flows: z.array(monthlyFlowSchema).nullish(),
     pipeline: z.array(pipelineStageSchema).nullish(),
+    charts: dashboardChartsSchema.nullish(),
 });
 
 export type DashboardSummary = z.infer<typeof dashboardSummarySchema>;
 export type MonthlyFlow = z.infer<typeof monthlyFlowSchema>;
 export type PipelineStage = z.infer<typeof pipelineStageSchema>;
 export type ClassificationSlice = z.infer<typeof classificationSliceSchema>;
+export type DashboardCharts = z.infer<typeof dashboardChartsSchema>;
+export type FlowsChart = z.infer<typeof flowsChartSchema>;
+export type PortfolioChart = z.infer<typeof portfolioChartSchema>;
 
