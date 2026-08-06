@@ -59,6 +59,35 @@
         "title": "AdjustmentBody",
         "type": "object"
       },
+      "AdjustmentListOut": {
+        "description": "Keyset page of the pending-adjustments checker register (issue\n#31 ledger (a).1 \u2014 the human-authorized read-contract expansion):\nthe same rows the by-id read serialises, pending-first.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdjustmentRecordOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "AdjustmentListOut",
+        "type": "object"
+      },
       "AdjustmentOut": {
         "properties": {
           "adjustment_id": {
@@ -1559,6 +1588,17 @@
             "title": "Rebate Rate Pct",
             "type": "string"
           },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -1601,6 +1641,7 @@
           "total_rebate",
           "total_payout",
           "status",
+          "requested_by",
           "decided_at",
           "distributed_at",
           "version",
@@ -6437,6 +6478,35 @@
         "title": "WorklistRowOut",
         "type": "object"
       },
+      "WriteOffListOut": {
+        "description": "Keyset page of the write-off committee register (issue #31\nledger (a).2 \u2014 the human-authorized read-contract expansion):\nthe same rows the by-id read serialises, live-first.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WriteOffOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "WriteOffListOut",
+        "type": "object"
+      },
       "WriteOffOut": {
         "properties": {
           "balance": {
@@ -8119,6 +8189,66 @@
       }
     },
     "/corrections/repayment-adjustments": {
+      "get": {
+        "description": "The pending-adjustments checker register (issue #31 ledger\n(a).1): keyset, PENDING FIRST then newest first \u2014 the checker's\njob order. Served under the existing corrections view gate;\nexplicit tenant predicate doubling RLS; bound parameters only.",
+        "operationId": "list_repayment_adjustments_corrections_repayment_adjustments_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdjustmentListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Repayment Adjustments",
+        "tags": [
+          "corrections"
+        ]
+      },
       "post": {
         "description": "MAKER phase (issue #24): create a PENDING adjustment bound to\nthe persisted approval snapshot \u2014 nothing posts until a distinct\nchecker approves.",
         "operationId": "request_repayment_adjustment_corrections_repayment_adjustments_post",
@@ -8312,6 +8442,66 @@
       }
     },
     "/corrections/write-offs": {
+      "get": {
+        "description": "The write-off committee register (issue #31 ledger (a).2):\nkeyset, LIVE (requested/approved) FIRST then newest first \u2014 the\ncommittee's job order. Served under the existing corrections view\ngate; explicit tenant predicate doubling RLS; bound parameters\nonly. Vote/void/posting semantics are untouched.",
+        "operationId": "list_write_offs_corrections_write_offs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteOffListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Write Offs",
+        "tags": [
+          "corrections"
+        ]
+      },
       "post": {
         "description": "Persist the write-once write-off snapshot for committee approval.",
         "operationId": "request_write_off_corrections_write_offs_post",
@@ -11805,7 +11995,7 @@
     },
     "/recovery-cases": {
       "get": {
-        "description": "Keyset worklist, most delinquent first (addendum A5).",
+        "description": "Keyset worklist, most delinquent first (addendum A5).\n\nDECLARED filters only (issue #31 ledger (a).3 \u2014 the human-\nauthorized read-contract expansion): `status` narrows to one LIVE\nposture (default stays OPEN exactly as built), `classification` to\none stored prudential label (domain LoanClass). Every value is\nbound; keyset and server ordering are preserved; an out-of-\nvocabulary value is a 422 at this boundary.",
         "operationId": "worklist_recovery_cases_get",
         "parameters": [
           {
@@ -11834,6 +12024,43 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "open",
+                    "irrecoverable_pending_write_off",
+                    "disputed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "classification",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/LoanClass"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Classification"
             }
           }
         ],

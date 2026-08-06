@@ -150,6 +150,17 @@ open-MR list re-verified at branch time: the only open MR, !11, claims
 no migration, so no other in-flight claim exists). The next free
 number is **0038**.
 
+Registry delta update (2026-08-06, the issue-#31 batch-6 claim):
+**0038 is the #31 batch-6 ledger-contract-round MR's**
+(`0038_corrections_register_indexes.py`, `down_revision = '0037'` —
+two expand-only register keyset indexes on `repayment_adjustments` /
+`loan_write_offs` shipped with the ledger (a).1/(a).2 LIST queries,
+declared in that MR's description at branch time per rule 14; head
+0037 + the open-MR list re-verified at branch time: the in-flight !75
+(batch 4) and !76 (batch 5) branches both top out at 0037 and claim no
+migration, and !11 is mobile-only, so no other in-flight claim
+exists). The next free number is **0039**.
+
 ### Post-P13 hardening follow-up batch (issues #21/#24/#23) — status
 
 | Issue | Scope | Status |

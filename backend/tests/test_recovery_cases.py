@@ -665,6 +665,144 @@ def test_worklist_keyset_order_and_least_disclosure() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue #31 batch 6 — ledger (a).3: DECLARED worklist filters only
+# (human-authorized read-contract expansion; expand-only)
+# ---------------------------------------------------------------------------
+
+
+def test_a3_worklist_declared_filters_only_with_seeded_mix() -> None:
+    """Ledger (a).3 filter oracles, HAND-COMPUTED from the dpd ladder
+    (module docstring: due 2026-01-01 -> 151 substandard; 2025-12-01
+    -> 182 doubtful; 2025-01-01 -> 516 loss; 2026-02-01 -> 28+31+30+31
+    = 120 substandard). Seeded mix: four NPL loans with cases; the
+    182/doubtful case is then DISPUTED via the real disposition
+    service.
+
+      * default (no params): OPEN cases only, most delinquent first —
+        [516, 151, 120]; the disputed case hidden EXACTLY as built.
+      * status=disputed: [182] — the paused posture becomes visible
+        through the declared filter only.
+      * classification=substandard: open substandard cases in dpd
+        order [151, 120]; the same filter walks the keyset (limit=1 +
+        cursor) reproducing exactly that sequence.
+      * combined status=open&classification=loss: [516].
+      * out-of-vocabulary values are 422s at the boundary: a TERMINAL
+        status (closed_cured) is NOT declared (the keyset tiebreak is
+        only valid inside the one-live-case invariant), and unknown
+        vocabulary refuses — the envelope echoes no worklist row.
+      * fail-closed service guard: a terminal status reaching the
+        service directly raises InvalidInputError.
+
+    Falsifiable: bind the status filter without the static live-set
+    guard's vocabulary check and the closed_cured probe returns 200;
+    drop the classification predicate and the substandard filter
+    returns all four rows."""
+
+    async def run() -> None:
+        from genesis.domain.lending import LoanClass
+        from genesis.domain.recovery import LIVE_STATUSES, RecoveryCaseStatus
+
+        tid, admin, token = await seed_actor()
+        l151 = await _npl_loan(tid, due=date(2026, 1, 1))
+        l182 = await _npl_loan(tid, due=date(2025, 12, 1))
+        l516 = await _npl_loan(tid, due=date(2025, 1, 1))
+        l120 = await _npl_loan(tid, due=date(2026, 2, 1))
+        cases = {lid: await _open_case_api(token, lid) for lid in (l151, l182, l516, l120)}
+        async with tenant_session(factory(), tid) as session:
+            await recovery_service.set_case_disposition(
+                session,
+                tid,
+                admin,
+                case_id=uuid.UUID(cases[l182]["id"]),
+                version=1,
+                target=RecoveryCaseStatus.DISPUTED,
+                reason="member contests the arrears",
+                outcome_note=None,
+            )
+        headers = {"authorization": f"Bearer {token}"}
+
+        async with api_client() as client:
+            # Default: byte-identical behaviour to the as-built read.
+            res = await client.get("/recovery-cases", headers=headers)
+            assert res.status_code == 200
+            assert [r["days_past_due"] for r in res.json()["items"]] == [516, 151, 120]
+
+            res = await client.get("/recovery-cases?status=disputed", headers=headers)
+            assert res.status_code == 200
+            disputed = res.json()["items"]
+            assert [r["loan_id"] for r in disputed] == [str(l182)]
+            assert [r["days_past_due"] for r in disputed] == [182]
+
+            res = await client.get("/recovery-cases?classification=substandard", headers=headers)
+            assert res.status_code == 200
+            assert [r["days_past_due"] for r in res.json()["items"]] == [151, 120]
+
+            res = await client.get(
+                "/recovery-cases?status=open&classification=loss", headers=headers
+            )
+            assert res.status_code == 200
+            assert [r["loan_id"] for r in res.json()["items"]] == [str(l516)]
+
+            # Keyset preserved UNDER the filter: limit=1 walk.
+            res = await client.get(
+                "/recovery-cases?classification=substandard&limit=1", headers=headers
+            )
+            page1 = res.json()
+            assert [r["days_past_due"] for r in page1["items"]] == [151]
+            assert page1["next_cursor"] is not None
+            res = await client.get(
+                f"/recovery-cases?classification=substandard&limit=1&cursor={page1['next_cursor']}",
+                headers=headers,
+            )
+            page2 = res.json()
+            assert [r["days_past_due"] for r in page2["items"]] == [120]
+            assert page2["next_cursor"] is None
+
+            # Out-of-vocabulary values refuse with 422 (no row echoed).
+            for bad in (
+                "status=closed_cured",
+                "status=escalated",
+                "classification=zombie",
+            ):
+                res = await client.get(f"/recovery-cases?{bad}", headers=headers)
+                assert res.status_code == 422, (bad, res.status_code)
+                assert str(l516) not in res.text
+                assert "516" not in res.text
+
+        # The API Literal is PINNED to domain LIVE_STATUSES (the 0033
+        # named-contract discipline): the two vocabularies never drift.
+        from typing import get_args
+
+        from genesis.api.recovery import WorklistStatusParam
+
+        assert set(get_args(WorklistStatusParam)) == {s.value for s in LIVE_STATUSES}
+
+        # Fail-closed service guard: a terminal status reaching the
+        # service directly (bypassing the API vocabulary) refuses.
+        from genesis.errors import InvalidInputError
+
+        async with tenant_session(factory(), tid) as session:
+            with pytest.raises(InvalidInputError, match="live case status"):
+                await recovery_service.list_worklist(
+                    session,
+                    tid,
+                    cursor=None,
+                    limit=50,
+                    status=RecoveryCaseStatus.CLOSED_CURED,
+                )
+            # And the classification filter is honest vocabulary: the
+            # bound value is the stored LoanClass label.
+            page = await recovery_service.list_worklist(
+                session, tid, cursor=None, limit=50, classification=LoanClass.DOUBTFUL
+            )
+            # The doubtful loan's case is DISPUTED -> hidden by the
+            # default OPEN posture even under the classification filter.
+            assert page.items == []
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
 # FM5 — cross-tenant probes (issue #17) on every new route + the
 #        explicit-predicate falsifiability probe
 # ---------------------------------------------------------------------------

@@ -35,6 +35,8 @@ type FetchCall = { url: string; method: string; headers: Headers; body: string |
 const TENANT = "22222222-2222-2222-2222-222222222222";
 const USER_ID = "55555555-5555-5555-5555-555555555555";
 const DECL_ID = "dddddddd-aaaa-bbbb-cccc-111111111111";
+/** The declarer the server attributes (0020 requested_by). */
+const DECLARER_ID = "99999999-9999-9999-9999-999999999999";
 
 const calls: FetchCall[] = [];
 let declareStatus = 201;
@@ -67,6 +69,9 @@ const declarationOut = {
   total_rebate: "108000.00",
   total_payout: "178000.10",
   status: "declared",
+  // Declarer attribution (issue #31 ledger (a).4): the bare staff
+  // UUID from the 0020 column — nullable, never optional.
+  requested_by: DECLARER_ID,
   decided_at: null,
   distributed_at: null,
   version: 1,
@@ -480,4 +485,33 @@ test("timestamp nullability is exact: decided_at/distributed_at accept the hones
     delete missing[key];
     expect(parse(missing)).toBe(false);
   }
+});
+
+test("declarer attribution matrix (issue #31 ledger (a).4 — hand-computed oracles): requested_by is the bare staff UUID string, NULLABLE-not-optional; a smuggled identity object or number never parses; server truth round-trips VERBATIM", async () => {
+  const parse = (record: Record<string, unknown>) =>
+    dividendSchemas.declarationSchema.safeParse(record).success;
+
+  // The two honest server values: an attributed UUID and NULL (a
+  // system-actor declaration) — never invented client-side.
+  expect(parse({ ...declarationOut, requested_by: DECLARER_ID })).toBe(true);
+  expect(parse({ ...declarationOut, requested_by: null })).toBe(true);
+  // Nullable, NOT optional: a missing key is contract drift (also
+  // covered by the exactness loop above — pinned here by name so the
+  // (a).4 leg is falsifiable in isolation).
+  const missing: Record<string, unknown> = { ...declarationOut };
+  delete missing["requested_by"];
+  expect(parse(missing)).toBe(false);
+  // Least disclosure: the contract carries the BARE UUID — an
+  // identity object or numeric id is a violation, never rendered.
+  expect(parse({ ...declarationOut, requested_by: { id: DECLARER_ID, name: "Jane" } })).toBe(
+    false,
+  );
+  expect(parse({ ...declarationOut, requested_by: 42 })).toBe(false);
+
+  // Server truth round-trips verbatim through the real client + Zod
+  // boundary on both the register and the record read.
+  const page = await dividendsApi.fetchDeclarationsPage(null);
+  expect(page.items[0]?.requested_by).toBe(DECLARER_ID);
+  const record = await dividendsApi.fetchDeclaration(DECL_ID);
+  expect(record.requested_by).toBe(DECLARER_ID);
 });

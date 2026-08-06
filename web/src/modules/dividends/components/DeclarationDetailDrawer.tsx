@@ -15,11 +15,12 @@
  * - MAKER-CHECKER (blocker (f)): vote affordances mount ONLY inside
  *   MakerCheckerPanel — checker controls exist only for a different,
  *   known principal (getOwnUserId; no override prop). The maker
- *   identity is the PER-TAB WITNESS ONLY: DeclarationOut exposes no
- *   attribution field (recorded on #31 as a contract follow-up — see
- *   makerRegistry.ts), so unlike exits/applications there is no server
- *   truth to prefer yet. The server bans the declarer's self-vote and
- *   enforces one vote per voter regardless (gate 1.6).
+ *   identity is the CONTRACT's `requested_by` FIRST (issue #31 ledger
+ *   (a).4 — server truth, the exits !66/0036 precedent); the per-tab
+ *   witness (makerRegistry.ts) is consulted ONLY for unattributed
+ *   rows (requested_by === null) — attribution is never invented. The
+ *   server bans the declarer's self-vote and enforces one vote per
+ *   voter regardless (gate 1.6).
  *   VOID deliberately sits OUTSIDE the panel (the exits precedent):
  *   the contract gates POST .../void on transactions:approve (verified
  *   against backend api/dividends.py — TxnApproveCtx) and permits an
@@ -200,21 +201,29 @@ export function DeclarationDetailDrawer({
   const voteConflict = vote.isError && isConflict(vote.error);
   const voidConflict = voidMutation.isError && isConflict(voidMutation.error);
 
-  // PER-TAB WITNESS ONLY (contract honesty): DeclarationOut exposes no
-  // attribution field, so the registry (the declaration THIS TAB
-  // witnessed) is the only maker identity available — for declarations
-  // made elsewhere the maker is UNKNOWN and the panel's self-check
-  // simply cannot match. The server 403s the declarer's self-vote and
-  // self-distribution on the PERSISTED requested_by regardless (gate
-  // 1.6). The read-contract gap is recorded on #31; nothing is invented.
+  // SERVER TRUTH FIRST (issue #31 ledger (a).4, the exits !66/0036
+  // precedent): requested_by is the contract's declarer attribution —
+  // the maker-checker record itself, not a per-tab witness. The
+  // registry (the declaration THIS TAB witnessed) is consulted only
+  // when the server record is unattributed (requested_by === null);
+  // nothing is ever invented. The server 403s the declarer's
+  // self-vote and self-distribution on the PERSISTED column
+  // regardless (gate 1.6).
   const witnessedMakerId = dividendMakerOf(record.id);
+  const makerId = record.requested_by ?? witnessedMakerId;
   const ownId = getOwnUserId();
   const makerLabel =
-    witnessedMakerId === DIVIDEND_MAKER_UNKNOWN
-      ? "Declaring officer — not exposed by the read contract (recorded on #31 as a contract follow-up; attribution is never invented) and not witnessed by this tab. The server still refuses the declarer's own vote."
-      : witnessedMakerId === ownId
-        ? "You declared this dividend (witnessed by this tab)."
-        : "Declaring officer (witnessed by this tab).";
+    record.requested_by !== null
+      ? record.requested_by === ownId
+        ? "You declared this dividend (server attribution)."
+        : // Least disclosure: the bare staff UUID via the short-id
+          // convention — never a name or email.
+          `Declaring officer ${record.requested_by.slice(0, 8)} (server attribution).`
+      : witnessedMakerId === DIVIDEND_MAKER_UNKNOWN
+        ? "Declaring officer — unattributed on the server record (attribution is never invented); no declaration witnessed by this tab. The server still refuses the declarer's own vote."
+        : witnessedMakerId === ownId
+          ? "You declared this dividend (witnessed by this tab)."
+          : "Declaring officer (witnessed by this tab).";
 
   function reloadRecord() {
     // Explicit reload flow (!60 F5): refetch the record (its status,
@@ -252,6 +261,20 @@ export function DeclarationDetailDrawer({
         <Kv label="Status">{declarationStatusPill(record.status)}</Kv>
         <Kv label="Financial year">
           {record.fy_start} → {record.fy_end}
+        </Kv>
+        <Kv label="Declared by">
+          {/* Declarer attribution (issue #31 ledger (a).4): the
+              SERVER's bare staff UUID, short-id convention — least
+              disclosure: no name/email is ever fetched for it. NULL
+              renders the honest unattributed affordance: an actor is
+              never invented. */}
+          {record.requested_by !== null ? (
+            <span className={styles.mono} title={record.requested_by}>
+              {record.requested_by.slice(0, 8)}
+            </span>
+          ) : (
+            "— (unattributed)"
+          )}
         </Kv>
         <Kv label="Declared">{fmtDateTime(record.created_at)}</Kv>
         <Kv label="Decided">{fmtDateTime(record.decided_at)}</Kv>
@@ -322,7 +345,7 @@ export function DeclarationDetailDrawer({
         <>
           <div className={styles.subhead}>Committee decision</div>
           <MakerCheckerPanel
-            makerId={witnessedMakerId}
+            makerId={makerId}
             makerLabel={makerLabel}
             makerAt={fmtDateTime(record.created_at)}
             checkerActions={

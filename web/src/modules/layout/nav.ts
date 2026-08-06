@@ -79,6 +79,18 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: "members",
       },
       {
+        // Share-transfers console (issue #31 batch 6, ledger (e) —
+        // audit #30 R2 remainder): the P13.11 share lifecycle's exit
+        // path. Lives under the members RBAC module (the route is
+        // gated members:approve server-side — there is no dedicated
+        // shares module in the P4 matrix; the member-exit-under-
+        // members precedent).
+        label: "Share transfers",
+        href: "/modules/members/share-transfers",
+        module: "members",
+        icon: "members",
+      },
+      {
         // The P13.11 dividends lifecycle console (issue #31 batch 2);
         // lives under the transactions RBAC module (every /dividends
         // route is gated on transactions view/edit/approve server-side
