@@ -64,8 +64,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application import loans as loans_service
 from genesis.application.guarantees import live_guarantee_params, live_pledged_total
+from genesis.application.portfolio_reconstruction import (
+    npl_trend_month_ends,
+    reconstruct_month,
+)
 from genesis.domain.ledger import TxnType
-from genesis.domain.lending import ApplicationStage
+from genesis.domain.lending import PAR_DPD_DAYS, ApplicationStage
+from genesis.domain.money import to_cents
 from genesis.domain.rbac import Module
 from genesis.settings import get_settings
 
@@ -73,6 +78,11 @@ from genesis.settings import get_settings
 #: misconfigured environment can never widen a scan past these.
 MAX_SERIES_MONTHS = 24
 MAX_GUARANTOR_ROWS = 100
+#: Per-KPI trend window (#31 batch 8, ledger (k)): the same
+#: server-resolved dashboard_series_months drives it, additionally
+#: hard-capped here — the route accepts NO parameters, so nothing is
+#: caller-tunable beyond this documented bound.
+KPI_TREND_MAX_MONTHS = 12
 
 # --- SQL (module-level so the P13.9 EXPLAIN capture asserts each plan) ---
 
@@ -148,6 +158,38 @@ TOP_GUARANTORS_SQL = (
     "ORDER BY pledged DESC, g.guarantor_member_id LIMIT :cap"
 )
 
+#: Active-member count AS OF a past cutoff, reconstructed from
+#: STATUS-TRANSITION FACTS (#31 batch 8, ledger (k)) — never from the
+#: mutable members.status column alone, which only knows the present:
+#: a member counts as active at :d_next when they existed
+#: (created_at < :d_next — members are created ACTIVE, the P8
+#: invariant application/members.create_member hardcodes) and their
+#: LATEST immutable 'member.status' audit fact before the cutoff (the
+#: single action every status writer records: manual transitions,
+#: the P12 exit settlement, the P13.13 dormancy job and the deposit
+#: reactivation) lands them on 'active' — or no transition fact
+#: exists yet. audit_log is append-only (0001 trigger), so these
+#: facts cannot be rewritten (§1.5 — the snapshot-basis exploit class
+#: does not apply to a fact log). The correlated probe is served by
+#: idx_audit_entity (tenant_id, entity, entity_id — 0001); the
+#: driving member scan by the tenant-leading members indexes (0001).
+#: Every value is a bound parameter; explicit tenant predicates on
+#: BOTH relations double the RLS fence (gate 1.6).
+MEMBERS_ACTIVE_AT_SQL = (
+    "SELECT COUNT(*) FROM members m "
+    "WHERE m.tenant_id = CAST(:tid AS uuid) "
+    "AND m.created_at < :d_next "
+    "AND COALESCE(("
+    "SELECT a.after->>'status' FROM audit_log a "
+    "WHERE a.tenant_id = CAST(:tid AS uuid) "
+    "AND a.entity = 'members' "
+    "AND a.entity_id = CAST(m.id AS text) "
+    "AND a.action = 'member.status' "
+    "AND a.at < :d_next "
+    "ORDER BY a.at DESC, a.id DESC LIMIT 1"
+    "), 'active') = 'active'"
+)
+
 
 # --- Result types ---
 
@@ -204,6 +246,112 @@ class GuarantorAggregates:
     guarantors: tuple[GuarantorCapacity, ...]
 
 
+# --- Per-KPI trend series (#31 batch 8, ledger (k)) -----------------------
+#
+# The contract follow-up recorded by the human review of !76 / #32: the
+# PAR-30 and members KPI cards shipped WITHOUT sparklines because the
+# contract carried trend series only for the monthly deposit /
+# disbursement flows. This slice serves bounded per-KPI monthly series,
+# SERVER-computed end-to-end (the #32 route-(a) precedent):
+#
+#   * PAR-30 points are RECOMPUTED from posting-history truth per
+#     month-end cutoff — reconstruct_month (the single reconstruction
+#     statement, gate 1.1) at the code-owned PAR_DPD_DAYS threshold
+#     from domain/lending classify(). NEVER from the mutable
+#     loans.days_past_due/classification snapshot columns at past
+#     cutoffs, and NEVER from portfolio_month_snapshots (§1.5
+#     snapshot-basis exploit class; the stored snapshots also carry no
+#     PAR-30 figure). The ratio is computed HERE in Decimal
+#     (to_cents(par_balance * 100 / gross) — the same formula the P10
+#     portfolio_summary and the NPL-trend export apply); the client
+#     renders it verbatim.
+#   * Members points derive from STATUS-TRANSITION FACTS
+#     (MEMBERS_ACTIVE_AT_SQL above) — integers, no money.
+#   * pct is share-of-window-peak geometry via scale_pct (integers
+#     0..100, deliberately too coarse to reconstruct figures).
+#
+# Cost posture (documented honestly): one bounded statement per point
+# (<= KPI_TREND_MAX_MONTHS per KPI, code-owned month walk — never a
+# loop over result rows), the same per-cutoff pattern the NPL-trend
+# export has always run, inside the same REPEATABLE READ snapshot as
+# every sibling slice. Advisory read path; no locks (the documented
+# P13.9 posture).
+
+
+@dataclass(frozen=True)
+class Par30TrendPoint:
+    month: str  # "YYYY-MM" — same UTC month key as the flow series
+    #: PAR-30 share of the gross outstanding book at the cutoff,
+    #: Decimal cents (serialized verbatim as a string by the API).
+    ratio_pct: Decimal
+    #: Share-of-window-peak geometry, 0..100 (scale_pct).
+    pct: int
+
+
+@dataclass(frozen=True)
+class MembersTrendPoint:
+    month: str
+    active: int
+    pct: int
+
+
+@dataclass(frozen=True)
+class KpiTrends:
+    """Per-KPI series; each follows its KPI card's parent grant
+    (par30 <- loan_book:view, members <- members:view) and is None
+    (omitted) when ungranted — deny by default, gate 1.6."""
+
+    par30: tuple[Par30TrendPoint, ...] | None
+    members: tuple[MembersTrendPoint, ...] | None
+
+
+async def _par30_trend(
+    session: AsyncSession, tenant_id: uuid.UUID, as_of: datetime, months: int
+) -> tuple[Par30TrendPoint, ...]:
+    raw: list[tuple[str, Decimal]] = []
+    # Code-owned month walk (bounded by config <= KPI_TREND_MAX_MONTHS,
+    # never by data); the current month cuts at the as-of instant
+    # exactly like the NPL-trend export.
+    for month_end in npl_trend_month_ends(as_of, months):
+        month = await reconstruct_month(
+            session, tenant_id, month_end, as_of=as_of, dpd_days=PAR_DPD_DAYS
+        )
+        gross = month.gross_outstanding
+        ratio = (
+            to_cents(month.npl_balance * _ONE_HUNDRED / gross) if gross > _ZERO else _ZERO_CENTS
+        )
+        raw.append((f"{month_end.year:04d}-{month_end.month:02d}", ratio))
+    ceiling = max([_ZERO, *(ratio for _, ratio in raw)])
+    return tuple(
+        Par30TrendPoint(month=key, ratio_pct=ratio, pct=scale_pct(ratio, ceiling))
+        for key, ratio in raw
+    )
+
+
+async def _members_trend(
+    session: AsyncSession, tenant_id: uuid.UUID, as_of: datetime, months: int
+) -> tuple[MembersTrendPoint, ...]:
+    raw: list[tuple[str, int]] = []
+    for month_end in npl_trend_month_ends(as_of, months):
+        cutoff = datetime(month_end.year, month_end.month, month_end.day, tzinfo=UTC)
+        # The cutoff instant is the UTC end of the month-end day,
+        # additionally capped at the as-of instant for the current,
+        # incomplete month — the reconstruct_month convention.
+        d_next = min(cutoff + timedelta(days=1), as_of + timedelta(microseconds=1))
+        count = (
+            await session.execute(
+                text(MEMBERS_ACTIVE_AT_SQL),
+                {"tid": str(tenant_id), "d_next": d_next},
+            )
+        ).scalar_one()
+        raw.append((f"{month_end.year:04d}-{month_end.month:02d}", int(count)))
+    ceiling = Decimal(max([0, *(active for _, active in raw)]))
+    return tuple(
+        MembersTrendPoint(month=key, active=active, pct=scale_pct(Decimal(active), ceiling))
+        for key, active in raw
+    )
+
+
 # --- Chart-series read model (issue #32 / #31 batch 5, U3+X4) -------------
 #
 # The RECORDED #32 design decision, route (a): chart geometry is a
@@ -227,6 +375,7 @@ class GuarantorAggregates:
 #     money figure.
 
 _ZERO = Decimal("0")
+_ZERO_CENTS = Decimal("0.00")
 _ONE_HUNDRED = Decimal("100")
 
 
@@ -361,6 +510,9 @@ class DashboardSummary:
     #: Chart geometry derived from monthly_flows / loan_book (issue
     #: #32); None when neither parent slice is granted.
     charts: DashboardCharts | None
+    #: Per-KPI trend series (#31 batch 8, ledger (k)); None when
+    #: neither parent grant is present.
+    kpi_trends: KpiTrends | None
 
 
 def dashboard_month_starts(as_of: datetime, months: int) -> list[date]:
@@ -507,13 +659,22 @@ async def dashboard_summary(
     if Module.TRANSACTIONS in granted:
         deposits = await _deposit_totals(session, tenant_id)
         monthly = await _monthly_flows(session, tenant_id, now, months)
+    # Per-KPI trend window (#31 batch 8, ledger (k)): the same
+    # server-resolved series setting, additionally hard-capped at
+    # KPI_TREND_MAX_MONTHS — nothing caller-tunable (the route passes
+    # no widths).
+    kpi_months = min(months, KPI_TREND_MAX_MONTHS)
+    par30_trend: tuple[Par30TrendPoint, ...] | None = None
+    members_trend: tuple[MembersTrendPoint, ...] | None = None
     if Module.MEMBERS in granted:
         members = await _members_overview(session, tenant_id)
+        members_trend = await _members_trend(session, tenant_id, now, kpi_months)
     if Module.APPLICATIONS in granted:
         pipeline = await _pipeline(session, tenant_id)
         guarantors = await _guarantor_aggregates(session, tenant_id, cap)
     if Module.LOAN_BOOK in granted:
         loan_book = await loans_service.portfolio_summary(session, tenant_id)
+        par30_trend = await _par30_trend(session, tenant_id, now, kpi_months)
     return DashboardSummary(
         as_of=now,
         deposits=deposits,
@@ -525,4 +686,9 @@ async def dashboard_summary(
         # Pure derivation from the two granted parents above — same
         # snapshot, no extra SQL (issue #32 route (a)).
         charts=dashboard_charts(monthly, loan_book),
+        kpi_trends=(
+            KpiTrends(par30=par30_trend, members=members_trend)
+            if par30_trend is not None or members_trend is not None
+            else None
+        ),
     )
