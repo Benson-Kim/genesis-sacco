@@ -687,9 +687,15 @@ test("dividend payout: a SET preference renders the server's vocabulary token VE
   const dialog = await openKycDrawer(user);
 
   await within(dialog).findByText("Dividend payout");
-  // Byte-identical token — "share_capital", not "Share capital".
-  expect(within(dialog).getByText("share_capital")).toBeInTheDocument();
-  expect(within(dialog).queryByText("Share capital")).toBeNull();
+  // Byte-identical token in the PREFERENCE row — "share_capital",
+  // never re-labelled "Share capital". (The drawer's Financial
+  // summary legitimately carries a "Share capital" FIGURE label — a
+  // different fact — so the negative assertion is scoped to the
+  // preference row, not the whole dialog.)
+  const preferenceRow = within(dialog).getByText("Preference")
+    .parentElement as HTMLElement;
+  expect(within(preferenceRow).getByText("share_capital")).toBeInTheDocument();
+  expect(within(preferenceRow).queryByText("Share capital")).toBeNull();
 });
 
 test("dividend payout: the wizard's membership step renders the member record's stored preference VERBATIM with the honest not-set fallback", async () => {
