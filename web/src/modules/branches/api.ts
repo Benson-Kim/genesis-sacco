@@ -35,13 +35,18 @@ import { api } from "@/lib/api";
 import {
   backfillRunSchema,
   branchAssignmentSchema,
+  branchMemberRosterSchema,
   branchSchema,
+  branchUserRosterSchema,
   type BackfillRun,
   type BranchAssignment,
+  type BranchMemberRosterRow,
   type BranchRecord,
+  type BranchUserRosterRow,
 } from "./schemas";
 
 export const BRANCHES_PAGE_SIZE = 20;
+export const ROSTER_PAGE_SIZE = 20;
 
 /** The SERVER's documented batch-size default (BackfillRunBody
  * `@default 200` — backend application/branches.py:DEFAULT_BATCH_SIZE).
@@ -51,6 +56,8 @@ export const BRANCHES_PAGE_SIZE = 20;
 export const SERVER_DEFAULT_BATCH_SIZE = 200;
 
 const branchPageSchema = keysetPageSchema(branchSchema);
+const userRosterPageSchema = keysetPageSchema(branchUserRosterSchema);
+const memberRosterPageSchema = keysetPageSchema(branchMemberRosterSchema);
 
 /** Keyset register read, newest first (server ordering). */
 export async function fetchBranchesPage(cursor: string | null): Promise<KeysetPage<BranchRecord>> {
@@ -74,6 +81,46 @@ export async function fetchBranch(branchId: string): Promise<BranchRecord> {
   });
   if (error !== undefined || data === undefined) throw toApiError(error, response);
   return branchSchema.parse(data);
+}
+
+/**
+ * Keyset USER roster of one branch (#31 (j).1 — access_control:view,
+ * the batch-4 assignment permission split mirrored on reads: the
+ * entity being READ is the user record, never a settings right).
+ * Identity facts only; 404-before-facts server-side (an unknown or
+ * cross-tenant branch id is a 404, never an empty page).
+ */
+export async function fetchBranchUsersRosterPage(
+  branchId: string,
+  cursor: string | null,
+): Promise<KeysetPage<BranchUserRosterRow>> {
+  const { data, error, response } = await api.GET("/branches/{branch_id}/users", {
+    params: {
+      path: { branch_id: branchId },
+      query: { cursor: cursor ?? undefined, limit: ROSTER_PAGE_SIZE },
+    },
+  });
+  if (error !== undefined || data === undefined) throw toApiError(error, response);
+  return userRosterPageSchema.parse(data);
+}
+
+/**
+ * Keyset MEMBER roster of one branch (#31 (j).1 — members:view, the
+ * batch-4 split's member leg). Identity facts only; 404-before-facts
+ * server-side.
+ */
+export async function fetchBranchMembersRosterPage(
+  branchId: string,
+  cursor: string | null,
+): Promise<KeysetPage<BranchMemberRosterRow>> {
+  const { data, error, response } = await api.GET("/branches/{branch_id}/members", {
+    params: {
+      path: { branch_id: branchId },
+      query: { cursor: cursor ?? undefined, limit: ROSTER_PAGE_SIZE },
+    },
+  });
+  if (error !== undefined || data === undefined) throw toApiError(error, response);
+  return memberRosterPageSchema.parse(data);
 }
 
 /** Register a branch (settings:create). A duplicate name (after the

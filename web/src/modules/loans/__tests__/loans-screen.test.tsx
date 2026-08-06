@@ -186,6 +186,7 @@ const MEMBER = {
   email: null,
   status: "active" as const,
   version: 1,
+  branch_id: null,
 };
 
 const FULL_PERMS = {

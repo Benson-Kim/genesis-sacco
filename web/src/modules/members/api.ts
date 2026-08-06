@@ -12,8 +12,10 @@ import { toApiError } from "@genesis/api-client";
 import { keysetPageSchema, type KeysetPage } from "@/modules/table/schemas";
 import { api } from "@/lib/api";
 import {
+    dormancyRunSchema,
     memberDetailSchema,
     memberSchema,
+    type DormancyRun,
     type Member,
     type MemberCreateInput,
     type MemberDetail,
@@ -110,4 +112,28 @@ export async function createMember(
     });
     if (error !== undefined || data === undefined) throw toApiError(error, response);
     return memberSchema.parse(data);
+}
+
+/** The DormancyRunBody contract's own documented batch-size default
+ * (@default 200) — a batch-SIZING tunable (the generated type requires
+ * the key on the wire), never an operator or business value. */
+export const SERVER_DORMANCY_BATCH_SIZE = 200;
+
+/**
+ * Run the dormancy job for the caller's tenant (#31 ledger (f) —
+ * members:edit, the POST /jobs/arrears operations convention). The
+ * body carries the server's documented batch-size default ONLY: the
+ * dormancy period resolves exclusively from tenant settings
+ * server-side (extra="forbid" — a period in the body is a 422) and
+ * as_of is deliberately NOT sent, so the server resolves today. An
+ * unconfigured or corrupt period REFUSES the run with 409 and zero
+ * transitions (fail closed) — rendered, never retried.
+ */
+export async function runDormancyJob(idempotencyKey: string): Promise<DormancyRun> {
+    const { data, error, response } = await api.POST("/members/jobs/dormancy", {
+        body: { batch_size: SERVER_DORMANCY_BATCH_SIZE },
+        headers: { "Idempotency-Key": idempotencyKey },
+    });
+    if (error !== undefined || data === undefined) throw toApiError(error, response);
+    return dormancyRunSchema.parse(data);
 }

@@ -131,6 +131,7 @@ const MEMBER = {
   email: null,
   status: "active" as const,
   version: 3,
+  branch_id: null,
 };
 
 /** The canonical statement document. equity is DELIBERATELY not the
