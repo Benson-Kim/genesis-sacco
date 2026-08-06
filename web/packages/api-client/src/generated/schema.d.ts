@@ -389,7 +389,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Repayment Adjustments
+         * @description The pending-adjustments checker register (issue #31 ledger
+         *     (a).1): keyset, PENDING FIRST then newest first — the checker's
+         *     job order. Served under the existing corrections view gate;
+         *     explicit tenant predicate doubling RLS; bound parameters only.
+         */
+        get: operations["list_repayment_adjustments_corrections_repayment_adjustments_get"];
         put?: never;
         /**
          * Request Repayment Adjustment
@@ -473,7 +480,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Write Offs
+         * @description The write-off committee register (issue #31 ledger (a).2):
+         *     keyset, LIVE (requested/approved) FIRST then newest first — the
+         *     committee's job order. Served under the existing corrections view
+         *     gate; explicit tenant predicate doubling RLS; bound parameters
+         *     only. Vote/void/posting semantics are untouched.
+         */
+        get: operations["list_write_offs_corrections_write_offs_get"];
         put?: never;
         /**
          * Request Write Off
@@ -1781,6 +1796,13 @@ export interface paths {
         /**
          * Worklist
          * @description Keyset worklist, most delinquent first (addendum A5).
+         *
+         *     DECLARED filters only (issue #31 ledger (a).3 — the human-
+         *     authorized read-contract expansion): `status` narrows to one LIVE
+         *     posture (default stays OPEN exactly as built), `classification` to
+         *     one stored prudential label (domain LoanClass). Every value is
+         *     bound; keyset and server ordering are preserved; an out-of-
+         *     vocabulary value is a 422 at this boundary.
          */
         get: operations["worklist_recovery_cases_get"];
         put?: never;
@@ -2088,6 +2110,18 @@ export interface components {
              * Format: uuid
              */
             repayment_id: string;
+        };
+        /**
+         * AdjustmentListOut
+         * @description Keyset page of the pending-adjustments checker register (issue
+         *     #31 ledger (a).1 — the human-authorized read-contract expansion):
+         *     the same rows the by-id read serialises, pending-first.
+         */
+        AdjustmentListOut: {
+            /** Items */
+            items: components["schemas"]["AdjustmentRecordOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /** AdjustmentOut */
         AdjustmentOut: {
@@ -2586,6 +2620,8 @@ export interface components {
             id: string;
             /** Rebate Rate Pct */
             rebate_rate_pct: string;
+            /** Requested By */
+            requested_by: string | null;
             /** Status */
             status: string;
             /** Total Deposit Basis */
@@ -4179,6 +4215,18 @@ export interface components {
             /** Version */
             version: number;
         };
+        /**
+         * WriteOffListOut
+         * @description Keyset page of the write-off committee register (issue #31
+         *     ledger (a).2 — the human-authorized read-contract expansion):
+         *     the same rows the by-id read serialises, live-first.
+         */
+        WriteOffListOut: {
+            /** Items */
+            items: components["schemas"]["WriteOffOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** WriteOffOut */
         WriteOffOut: {
             /** Balance */
@@ -5071,6 +5119,38 @@ export interface operations {
             };
         };
     };
+    list_repayment_adjustments_corrections_repayment_adjustments_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdjustmentListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     request_repayment_adjustment_corrections_repayment_adjustments_post: {
         parameters: {
             query?: never;
@@ -5192,6 +5272,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdjustmentRecordOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_write_offs_corrections_write_offs_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteOffListOut"];
                 };
             };
             /** @description Validation Error */
@@ -7477,6 +7589,8 @@ export interface operations {
             query?: {
                 cursor?: string | null;
                 limit?: number;
+                status?: "open" | "irrecoverable_pending_write_off" | "disputed" | null;
+                classification?: components["schemas"]["LoanClass"] | null;
             };
             header?: never;
             path?: never;
