@@ -146,3 +146,83 @@ def test_p1316_worklist_and_close_scan_are_index_backed() -> None:
         assert "Seq Scan" not in notes_plan
 
     asyncio.run(run())
+
+
+FILTERS_OUT_PATH = Path(__file__).resolve().parents[1] / "perf" / "explain_p1316_filters.txt"
+
+
+def test_a3_filtered_worklist_variants_stay_index_backed() -> None:
+    """Issue #31 batch 6, ledger (a).3: the DECLARED status /
+    classification filters ride the SAME index walk — no new index is
+    genuinely required, so this batch's filters ship NO migration.
+
+      * classification filter: a bound equality filtered on the
+        idx_loans_dpd_worklist walk (ordering untouched).
+      * status filter: the bound equality rides ALONGSIDE the static
+        live-set fragment mirroring 0033 — the static clause is what
+        keeps uq_recovery_cases_one_open provably usable for the
+        per-loan probe (a bound parameter alone cannot imply a partial
+        index predicate). Falsifiable: drop the static
+        `_LIVE_STATUS_SQL` guard from worklist_sql's status branch and
+        the uq_recovery_cases_one_open assertion below fails.
+    """
+
+    async def run() -> None:
+        tid, admin_id, _ = await seed_actor()
+        loan_id = await _disburse(tid, Decimal("24000.00"))
+        await _pin_first_instalment(tid, loan_id, due=date(2026, 1, 1))
+        await run_arrears_for_tenant(_scope(tid), tid, as_of=date(2026, 6, 1))
+        async with tenant_session(factory(), tid) as session:
+            await open_recovery_case(session, tid, admin_id, loan_id=loan_id)
+
+        base_params: dict[str, object] = {
+            "tid": str(tid),
+            "c_dpd": 10_000_000,
+            "c_id": str(uuid.UUID(int=(1 << 128) - 1)),
+            "limit": 50,
+        }
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(text("SET LOCAL enable_seqscan = off"))
+            await session.execute(text("SET LOCAL enable_sort = off"))
+            status_plan = await _explain(
+                session,
+                worklist_sql(with_cursor=True, with_status=True),
+                {**base_params, "f_status": "open"},
+            )
+            class_plan = await _explain(
+                session,
+                worklist_sql(with_cursor=True, with_classification=True),
+                {**base_params, "f_class": "substandard"},
+            )
+            both_plan = await _explain(
+                session,
+                worklist_sql(with_cursor=True, with_status=True, with_classification=True),
+                {**base_params, "f_status": "disputed", "f_class": "doubtful"},
+            )
+
+        FILTERS_OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        header = (
+            "Issue #31 batch 6 (ledger (a).3) filtered recovery worklist\n"
+            "EXPLAIN (ANALYZE, BUFFERS) — captured in CI against the migrated\n"
+            "Postgres service under the RLS app role. enable_seqscan/\n"
+            "enable_sort=off (tiny-table discipline); the assertion is plan\n"
+            "shape at scale: every filtered variant still walks\n"
+            "idx_loans_dpd_worklist in order and probes\n"
+            "uq_recovery_cases_one_open per loan (the static live-set\n"
+            "fragment keeps the partial index predicate provable) — the\n"
+            "declared filters ship NO migration.\n"
+        )
+        sections = [
+            ("worklist + status filter (bound, static live-set guard)", status_plan),
+            ("worklist + classification filter (bound equality)", class_plan),
+            ("worklist + both filters", both_plan),
+        ]
+        body = "\n\n".join(f"=== {name} ===\n{plan}" for name, plan in sections)
+        FILTERS_OUT_PATH.write_text(f"{header}\n{body}\n")
+
+        for name, plan in sections:
+            assert "idx_loans_dpd_worklist" in plan, name
+            assert "uq_recovery_cases_one_open" in plan, name
+            assert "Seq Scan" not in plan, name
+
+    asyncio.run(run())

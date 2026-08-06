@@ -6,14 +6,14 @@
  * surfaces — repayment adjustments (issue #24 maker-checker), misc
  * fees, committee loan write-offs and the issue-#21 recovery receipts.
  *
- * HONEST SCOPING (deliberate, not an omission): the P13.15 contract
- * exposes NO list/register endpoint for adjustments or write-offs —
- * records are fetched BY ID only. This console therefore works BY
- * REFERENCE: creation flows hand the record id to the checker/committee,
- * and the lookup fields open any record by its id (from the audit
- * trail, which corrections write under their own entity strings). The
- * missing checker worklist is recorded as a CONTRACT FOLLOW-UP on
- * issue #31 — never faked with client-side state.
+ * REGISTERS (issue #31 batch 6, ledger (a).1/(a).2 — the batch-1
+ * contract follow-up DELIVERED as a human-authorized read expansion):
+ * the P13.15 contract now exposes keyset LIST reads, so the checker
+ * works the pending-adjustments register (pending-first — the
+ * server's order, never re-sorted locally) and the committee works
+ * the write-off register (live-first) — no hand-carried id needed.
+ * The by-id lookup fields remain as a fallback (e.g. an id from the
+ * audit trail); by-id reads and all mutations are UNTOUCHED.",
  *
  * Security posture (transactions/exits precedent):
  * - Route guard is corrections:view (RequireModule); the create
@@ -31,12 +31,18 @@
 import { useState } from "react";
 import dynamic from "next/dynamic";
 import { Button, Card } from "@genesis/design-system";
+import { KeysetTable, type Column } from "@/modules/table/KeysetTable";
+import { useKeysetList } from "@/modules/table/useKeysetList";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
 import { FormField } from "@/modules/forms/FormField";
-import { isUuid } from "@/lib/format";
+import { fmtDateTime, fmtKes, isUuid } from "@/lib/format";
 import grid from "@/modules/layout/grid.module.css";
+import { fetchAdjustmentsPage, fetchWriteOffsPage } from "../api";
+import type { AdjustmentRecord, WriteOffRecord } from "../schemas";
+import { adjustmentStatusPill, writeOffStatusPill } from "./pills";
 import styles from "./Corrections.module.css";
+
 
 // Drawer-level code splitting (P15 Phase B speed): drawer chunks load
 // on first open, not with the console route.
@@ -79,7 +85,122 @@ export function CorrectionsScreen() {
   const [writeOffLookup, setWriteOffLookup] = useState("");
   const [writeOffLookupError, setWriteOffLookupError] = useState("");
 
+
   const mayCreate = can(permissions.data, "corrections", "create");
+
+  // The two batch-6 registers (ledger (a).1/(a).2): server-ordered
+  // keyset pages (pending-first / live-first) — never re-sorted or
+  // filtered locally.
+  const adjustments = useKeysetList<AdjustmentRecord>({
+    queryKey: ["corrections", "adjustments-register"],
+    fetchPage: (cursor) => fetchAdjustmentsPage(cursor),
+
+  });
+  const writeOffs = useKeysetList<WriteOffRecord>({
+    queryKey: ["corrections", "write-offs-register"],
+    fetchPage: (cursor) => fetchWriteOffsPage(cursor),
+
+  });
+
+  const adjustmentColumns: Column<AdjustmentRecord>[] = [
+    {
+      key: "status",
+      header: "Status",
+      render: (row) => adjustmentStatusPill(row.status),
+
+    },
+    {
+      key: "adjustment",
+      header: "Adjustment",
+      render: (row) => (
+        <span className={styles.mono} title={row.id}>
+          {row.id.slice(0, 8)}
+        </span>
+      ),
+    },
+    {
+      key: "loan",
+      header: "Loan",
+      render: (row) => (
+        <span className={styles.mono} title={row.loan_id}>
+          {row.loan_id.slice(0, 8)}
+        </span>
+      ),
+    },
+    {
+      key: "amount",
+      header: "Amount",
+      align: "right",
+      // The SERVER's figure, verbatim (blocker (a)).
+      render: (row) => <span className={styles.amountCell}>{fmtKes(row.amount)}</span>,
+    },
+    {
+      key: "maker",
+      header: "Maker",
+      // Bare staff UUID under least disclosure (!70 short-id render).
+      render: (row) => (
+        <span className={styles.mono} title={row.maker_id}>
+          {row.maker_id.slice(0, 8)}
+        </span>
+      ),
+    },
+    {
+      key: "requested",
+      header: "Requested",
+      render: (row) => <span className={styles.muted}>{fmtDateTime(row.created_at)}</span>,
+    },
+
+  ];
+
+  const writeOffColumns: Column<WriteOffRecord>[] = [
+    {
+      key: "status",
+      header: "Status",
+      render: (row) => writeOffStatusPill(row.status),
+
+    },
+    {
+      key: "write_off",
+      header: "Write-off",
+      render: (row) => (
+        <span className={styles.mono} title={row.id}>
+          {row.id.slice(0, 8)}
+        </span>
+      ),
+    },
+    {
+      key: "loan",
+      header: "Loan",
+      render: (row) => (
+        <span className={styles.mono} title={row.loan_id}>
+          {row.loan_id.slice(0, 8)}
+        </span>
+      ),
+    },
+    {
+      key: "member",
+      header: "Member",
+      render: (row) => (
+        <span className={styles.mono} title={row.member_id}>
+          {row.member_id.slice(0, 8)}
+        </span>
+      ),
+    },
+    {
+      key: "total",
+      header: "Total written off",
+      align: "right",
+      // The write-once snapshot figure, verbatim — never summed.
+      render: (row) => <span className={styles.amountCell}>{fmtKes(row.total_written_off)}</span>,
+    },
+    {
+      key: "requested",
+      header: "Requested",
+      render: (row) => <span className={styles.muted}>{fmtDateTime(row.created_at)}</span>,
+    },
+
+  ];
+
 
   function openAdjustment() {
     const id = adjustmentLookup.trim();
@@ -130,7 +251,7 @@ export function CorrectionsScreen() {
                 id="adjustment-lookup"
                 label="Review adjustment by id"
                 error={adjustmentLookupError === "" ? undefined : adjustmentLookupError}
-                hint="No pending-adjustments register exists on the contract (follow-up on issue #31) — the maker hands the id to the checker."
+                hint="Fallback lookup (e.g. an id from the audit trail) — the checker register below lists pending requests first."
               >
                 {(control) => (
                   <input
@@ -197,7 +318,7 @@ export function CorrectionsScreen() {
                 id="write-off-lookup"
                 label="Open write-off by id"
                 error={writeOffLookupError === "" ? undefined : writeOffLookupError}
-                hint="No write-off register exists on the contract (follow-up on issue #31) — the requester hands the id to the committee."
+                hint="Fallback lookup (e.g. an id from the audit trail) — the committee register below lists live write-offs first."
               >
                 {(control) => (
                   <input
@@ -216,6 +337,42 @@ export function CorrectionsScreen() {
           </div>
         </Card>
       </div>
+
+      <Card padded={false}>
+        <div className={styles.registerHead}>
+          <span>Pending-adjustments checker register</span>
+          <span className={styles.registerNote}>
+            Pending requests first, newest first — the server&apos;s order
+            (issue #31 ledger (a).1); figures are the persisted snapshot,
+            verbatim
+          </span>
+        </div>
+        <KeysetTable
+          columns={adjustmentColumns}
+          query={adjustments}
+          rowKey={(row) => row.id}
+          emptyMessage="No repayment adjustments yet — nothing awaits a checker."
+          onRowClick={(row) => setDrawer({ mode: "adjustment-detail", adjustmentId: row.id })}
+        />
+      </Card>
+
+      <Card padded={false}>
+        <div className={styles.registerHead}>
+          <span>Write-off committee register</span>
+          <span className={styles.registerNote}>
+            Live write-offs (awaiting votes or posting) first, newest first —
+            the server&apos;s order (issue #31 ledger (a).2); snapshot figures
+            verbatim
+          </span>
+        </div>
+        <KeysetTable
+          columns={writeOffColumns}
+          query={writeOffs}
+          rowKey={(row) => row.id}
+          emptyMessage="No write-offs yet — nothing awaits the committee."
+          onRowClick={(row) => setDrawer({ mode: "write-off-detail", writeOffId: row.id })}
+        />
+      </Card>
 
       {drawer !== null && drawer.mode === "adjustment-request" && (
         <AdjustmentRequestDrawer

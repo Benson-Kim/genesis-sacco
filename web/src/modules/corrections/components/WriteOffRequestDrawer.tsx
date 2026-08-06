@@ -25,7 +25,7 @@
  *   (a)); the affordance is then SPENT.
  */
 import { useRef, useState, type FormEvent, type ReactNode } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
 import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
@@ -78,9 +78,10 @@ export function WriteOffRequestDrawer({
   // Freshness component for the idempotency key (!60 F3).
   const [reloadEpoch, setReloadEpoch] = useState(0);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
+  const queryClient = useQueryClient();
 
   const request = useMutation({
-    mutationFn: (entry: WriteOffRequestEntry) =>
+      mutationFn: (entry: WriteOffRequestEntry) =>
       requestWriteOff(
         entry.loan_id,
         entry.reason,
@@ -108,6 +109,7 @@ export function WriteOffRequestDrawer({
       // only witness; nothing is invented for other tabs).
       const ownId = getOwnUserId();
       if (ownId !== null) recordWriteOffMaker(record.id, ownId);
+      void queryClient.invalidateQueries({ queryKey: ["corrections", "write-offs-register"] });
     },
     onError: () => {
       setConfirmEntry(null);
@@ -192,8 +194,8 @@ export function WriteOffRequestDrawer({
           <div className={styles.formNote}>
             The snapshot above is the SERVER&apos;s, read under the loan row
             lock and write-once at the database — nothing was computed in
-            this screen. Nothing has posted: the committee quorum decides.
-            Share the write-off id with the committee (no pending-write-offs
+            this screen. Nothing has posted: the committee quorum decides —
+            the request now leads the write-off committee register (no pending-write-offs
             register exists on the contract).
           </div>
           <div className={styles.actions}>

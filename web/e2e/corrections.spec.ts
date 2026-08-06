@@ -143,6 +143,17 @@ async function mockApi(page: Page, state: ApiState): Promise<void> {
       await respond(200, state.permissions ?? FULL_PERMISSIONS);
       return;
     }
+    // The two batch-6 registers (issue #31 ledger (a).1/(a).2): keyset
+    // LIST reads the console mounts on load — served here so the
+    // register legs measure real network + DOM effects.
+    if (path === "/corrections/repayment-adjustments" && method === "GET") {
+      await respond(200, { items: [PENDING_ADJUSTMENT], next_cursor: null });
+      return;
+    }
+    if (path === "/corrections/write-offs" && method === "GET") {
+      await respond(200, { items: [], next_cursor: null });
+      return;
+    }
     if (path === `/corrections/repayment-adjustments/${ADJ_ID}` && method === "GET") {
       state.adjustmentReads += 1;
       await respond(200, PENDING_ADJUSTMENT);
@@ -204,18 +215,29 @@ test("happy path: OTP login → Corrections workbench → by-id checker review r
   await expect(page.getByText("Repayment adjustments")).toBeVisible();
   await expect(page.getByText("Loan write-offs & recoveries")).toBeVisible();
 
+  // The batch-6 registers render on load (issue #31 ledger (a).1/(a).2):
+  // the pending adjustment sits in the checker register (server order,
+  // pending-first) and the empty write-off register states itself
+  // honestly — no hand-carried id is needed.
+  await expect(page.getByText("Pending-adjustments checker register")).toBeVisible();
+  await expect(page.getByText("Write-off committee register")).toBeVisible();
+  await expect(page.getByText("No write-offs yet — nothing awaits the committee.")).toBeVisible();
+
   await openAdjustment(page);
   expect(state.adjustmentReads).toBeGreaterThan(0);
   // Server decimal strings keep their trailing cents (blocker (a));
   // the deliberately-broken component identity is NEVER re-derived —
   // no 450.10 anywhere on the page. ("KES 500.00" legitimately renders
-  // in the detail grid AND the checker panel copy — first() suffices.)
+  // in the register row, the detail grid AND the checker panel copy —
+  // first() suffices.)
   await expect(page.getByText("KES 500.00").first()).toBeVisible();
   await expect(page.getByText("KES 100.10")).toBeVisible();
   await expect(page.getByText("KES 450.10")).toHaveCount(0);
-  // Attribution under least disclosure: the maker's SHORT id renders;
-  // no name or email exists for the staff UUID anywhere.
-  await expect(page.getByTitle(MAKER_ID)).toHaveText(MAKER_ID.slice(0, 8));
+  // Attribution under least disclosure: the maker's SHORT id renders
+  // in BOTH the register row and the drawer (strict-mode: two exact
+  // sites); no name or email exists for the staff UUID anywhere.
+  await expect(page.getByTitle(MAKER_ID)).toHaveCount(2);
+  await expect(page.getByTitle(MAKER_ID).first()).toHaveText(MAKER_ID.slice(0, 8));
 
   // Typed confirmation: the danger button starts DISABLED; nothing has
   // reached the wire yet.

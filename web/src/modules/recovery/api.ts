@@ -4,9 +4,12 @@
  *
  * - Keyset pagination ONLY on the worklist and notes reads (gate 1.3):
  *   opaque `cursor` echoed back verbatim; no offset/page parameters
- *   exist, and the worklist declares NO filter parameters at all (the
- *   server orders most-delinquent-first; nothing is filtered or
- *   re-sorted locally).
+ *   exist. The worklist sends ONLY the two DECLARED filter params
+ *   (issue #31 ledger (a).3 — the human-authorized read-contract
+ *   expansion): `status` (one LIVE posture) and `classification` (one
+ *   stored LoanClass label), each a code-owned vocabulary member or
+ *   ABSENT — never free text; the server keeps most-delinquent-first
+ *   default ordering and nothing is filtered or re-sorted locally.
  * - Every mutation takes a caller-supplied Idempotency-Key following
  *   the stability/rotation contract (gate 1.4). Assign and disposition
  *   PIN the record version in the wire body: any drift since the
@@ -32,7 +35,9 @@ import {
   type CaseNote,
   type CaseRecord,
   type DispositionEntry,
+  type WorklistClass,
   type WorklistRow,
+  type WorklistStatusFilter,
 } from "./schemas";
 
 export const WORKLIST_PAGE_SIZE = 20;
@@ -41,11 +46,32 @@ export const NOTES_PAGE_SIZE = 20;
 const worklistPageSchema = keysetPageSchema(worklistRowSchema);
 const notesPageSchema = keysetPageSchema(noteSchema);
 
+/** The two DECLARED worklist filters (issue #31 ledger (a).3; the
+ * members-register precedent): each is a code-owned vocabulary member
+ * or "" — "" sends NOTHING (the parameter is ABSENT from the URL, so
+ * the no-filter request stays byte-identical to the as-built read). */
+export interface WorklistFilters {
+  status: WorklistStatusFilter | "";
+  classification: WorklistClass | "";
+}
+
 /** The recovery-officer worklist (loan_book:view): keyset, most
- * delinquent first — the server's order; never re-sorted locally. */
-export async function fetchWorklistPage(cursor: string | null): Promise<KeysetPage<WorklistRow>> {
+ * delinquent first — the server's order; never re-sorted locally.
+ * Filters are the two DECLARED params only, every value bound
+ * server-side (issue #31 ledger (a).3). */
+export async function fetchWorklistPage(
+  filters: WorklistFilters,
+  cursor: string | null,
+): Promise<KeysetPage<WorklistRow>> {
   const { data, error, response } = await api.GET("/recovery-cases", {
-    params: { query: { cursor: cursor ?? undefined, limit: WORKLIST_PAGE_SIZE } },
+    params: {
+      query: {
+        cursor: cursor ?? undefined,
+        limit: WORKLIST_PAGE_SIZE,
+        status: filters.status === "" ? undefined : filters.status,
+        classification: filters.classification === "" ? undefined : filters.classification,
+      },
+    },
   });
   if (error !== undefined || data === undefined) throw toApiError(error, response);
   return worklistPageSchema.parse(data);

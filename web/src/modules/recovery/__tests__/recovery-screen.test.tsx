@@ -28,7 +28,15 @@ import { Providers } from "@/app/providers";
 import { clearSession, hasSession, setSession } from "@/modules/auth/session";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { RecoveryScreen } from "../components/RecoveryScreen";
-import { caseSchema, worklistRowSchema, type CaseNote, type CaseRecord, type WorklistRow } from "../schemas";
+import {
+  caseSchema,
+  LIVE_CASE_STATUSES,
+  WORKLIST_STATUS_FILTERS,
+  worklistRowSchema,
+  type CaseNote,
+  type CaseRecord,
+  type WorklistRow,
+} from "../schemas";
 import * as recoveryApi from "../api";
 
 jest.mock("../api", () => {
@@ -188,7 +196,12 @@ test("LEAST DISCLOSURE (addendum A5): the worklist renders workflow facts ONLY �
   const { container } = mountScreen();
 
   expect(await screen.findByText("120")).toBeInTheDocument();
-  expect(screen.getByText("Doubtful")).toBeInTheDocument();
+  // Scoped to the register table: the (a).3 classification filter now
+  // ALSO carries the vocabulary label as an <option> — the assertion
+  // stays on the rendered ROW pill.
+  expect(
+    within(screen.getByRole("region", { name: "Table" })).getByText("Doubtful"),
+  ).toBeInTheDocument();
   // Falsifiable: render any balance, penalty or provision figure and
   // this fails — the P13.16 contract carries none; neither may the DOM.
   expect(container.textContent).not.toContain("KES");
@@ -216,7 +229,7 @@ test("attribution honesty on the worklist: NULL assignee renders '— (unassigne
   expect(screen.getByText("No longer assignable")).toBeInTheDocument();
 });
 
-test("keyset paging: Load more follows the server cursor VERBATIM (gate 1.3); no filter UI exists (the contract declares no filter parameters)", async () => {
+test("keyset paging: Load more follows the server cursor VERBATIM (gate 1.3) with the default NO-FILTER view untouched (both filter values empty)", async () => {
   const user = userEvent.setup();
   mocked.fetchWorklistPage
     .mockResolvedValueOnce({ items: [worklistRow()], nextCursor: "opaque-cursor-§1" })
@@ -225,12 +238,62 @@ test("keyset paging: Load more follows the server cursor VERBATIM (gate 1.3); no
 
   await user.click(await screen.findByRole("button", { name: "Load more" }));
   await waitFor(() => expect(mocked.fetchWorklistPage).toHaveBeenCalledTimes(2));
-  expect(mocked.fetchWorklistPage.mock.calls[0]?.[0]).toBeNull();
-  expect(mocked.fetchWorklistPage.mock.calls[1]?.[0]).toBe("opaque-cursor-§1");
-  // No filter affordance exists — nothing is filtered or re-sorted
-  // locally on a least-disclosure worklist.
-  expect(screen.queryByLabelText("Status")).toBeNull();
-  expect(screen.queryByLabelText(/filter/i)).toBeNull();
+  // (filters, cursor): the DEFAULT view sends EMPTY filter values (the
+  // api layer turns "" into an ABSENT parameter — byte-identical to
+  // the as-built no-filter read) and the cursor verbatim.
+  expect(mocked.fetchWorklistPage.mock.calls[0]?.[0]).toEqual({ status: "", classification: "" });
+  expect(mocked.fetchWorklistPage.mock.calls[0]?.[1]).toBeNull();
+  expect(mocked.fetchWorklistPage.mock.calls[1]?.[0]).toEqual({ status: "", classification: "" });
+  expect(mocked.fetchWorklistPage.mock.calls[1]?.[1]).toBe("opaque-cursor-§1");
+});
+
+test("DECLARED filters only (issue #31 ledger (a).3): the status segment and classification select pass code-owned vocabulary values into the fetch — never free text, never a local re-sort", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+  await screen.findByText("120");
+
+  // The status segment offers exactly the two pause postures beyond
+  // the default; a job-only or invented posture is structurally absent.
+  const group = screen.getByRole("group", { name: "Status" });
+  expect(within(group).getByRole("button", { name: "Open (default)" })).toBeInTheDocument();
+  expect(within(group).queryByRole("button", { name: /cured/i })).toBeNull();
+
+  await user.click(within(group).getByRole("button", { name: "Paused — disputed" }));
+  await waitFor(() =>
+    expect(mocked.fetchWorklistPage).toHaveBeenCalledWith(
+      { status: "disputed", classification: "" },
+      null,
+    ),
+  );
+
+  // The classification select carries the STORED LoanClass vocabulary
+  // verbatim as option values (bound server-side, never interpolated).
+  const select = screen.getByLabelText("Classification");
+  await user.selectOptions(select, "doubtful");
+  await waitFor(() =>
+    expect(mocked.fetchWorklistPage).toHaveBeenCalledWith(
+      { status: "disputed", classification: "doubtful" },
+      null,
+    ),
+  );
+
+  // Back to the default view: EMPTY values — the params drop off the
+  // wire entirely (asserted at the network layer), nothing is cached
+  // across filter combinations (each is its own keyset walk).
+  await user.click(within(group).getByRole("button", { name: "Open (default)" }));
+  await user.selectOptions(select, "");
+  await waitFor(() =>
+    expect(mocked.fetchWorklistPage).toHaveBeenCalledWith(
+      { status: "", classification: "" },
+      null,
+    ),
+  );
+});
+
+test("the status filter vocabulary is PINNED to the LIVE statuses (the backend WorklistStatusParam Literal ↔ domain LIVE_STATUSES contract): the two can never drift", () => {
+  // Falsifiable both ways: adding a closed status to the filter vocab
+  // or removing a live one fails here.
+  expect([...WORKLIST_STATUS_FILTERS]).toEqual([...LIVE_CASE_STATUSES]);
 });
 
 test("deny-by-default: loan_book:view ONLY gets no Initiate affordance and NO case-write affordances in the drawer — zero write calls possible", async () => {

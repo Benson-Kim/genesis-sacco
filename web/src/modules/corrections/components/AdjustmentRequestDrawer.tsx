@@ -26,7 +26,7 @@
  *   approval snapshot. The affordance is then SPENT.
  */
 import { useRef, useState, type FormEvent, type ReactNode } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
 import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
@@ -78,9 +78,10 @@ export function AdjustmentRequestDrawer({
   // after an acknowledged 409 is a NEW intent with a NEW key.
   const [reloadEpoch, setReloadEpoch] = useState(0);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
+  const queryClient = useQueryClient();
 
   const request = useMutation({
-    mutationFn: (entry: AdjustmentRequestEntry) =>
+     mutationFn: (entry: AdjustmentRequestEntry) =>
       requestAdjustment(
         entry.repayment_id,
         entry.reason,
@@ -106,6 +107,7 @@ export function AdjustmentRequestDrawer({
       setResult(record);
       setNotice("");
       announce("Adjustment requested — awaiting a distinct checker.");
+      void queryClient.invalidateQueries({ queryKey: ["corrections", "adjustments-register"] });
     },
     onError: () => {
       setConfirmEntry(null);
@@ -190,8 +192,8 @@ export function AdjustmentRequestDrawer({
             Every figure above derives from the original transaction&apos;s
             append-only legs, server-side — nothing was computed in this
             screen. Nothing has posted: a DIFFERENT checker must approve the
-            persisted snapshot. Share the adjustment id with the checker (no
-            pending-adjustments register exists on the contract).
+            persisted snapshot — the request now leads the pending-adjustments
+            checker register.
           </div>
           <div className={styles.actions}>
             <Button type="button" onClick={onClose}>

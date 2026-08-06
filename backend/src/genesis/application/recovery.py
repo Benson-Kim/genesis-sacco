@@ -119,7 +119,7 @@ from genesis.application.audit import record_audit
 from genesis.application.batch_runner import SessionScope, run_in_batches
 from genesis.application.outbox import enqueue_event
 from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
-from genesis.domain.lending import NPL_CLASSES, LoanStatus
+from genesis.domain.lending import NPL_CLASSES, LoanClass, LoanStatus
 from genesis.domain.rbac import ASSURANCE_ROLES, Action, Module
 from genesis.domain.recovery import (
     LIVE_STATUSES,
@@ -859,29 +859,56 @@ async def list_case_notes(
     return CaseNotePage(items=items, next_cursor=next_cursor)
 
 
-def worklist_sql(*, with_cursor: bool) -> str:
+def worklist_sql(
+    *, with_cursor: bool, with_status: bool = False, with_classification: bool = False
+) -> str:
     """The keyset recovery worklist (addendum A5, gate 1.3).
 
     ORDER BY l.days_past_due DESC, l.id DESC — the loan id is the
-    stable tiebreak (valid: open cases are 1:1 with loans under the
-    one-open-case invariant). Served by idx_loans_dpd_worklist walking
-    loans in order and probing uq_recovery_cases_one_open per loan
-    (both 0026; EXPLAIN-asserted, falsifiable by dropping either).
-    Least disclosure: NO balance/penalty/provision columns. The users
-    join surfaces the addendum-A4 unassignable flag. Static fragments
+    stable tiebreak (valid: live cases are 1:1 with loans under the
+    one-live-case invariant, 0033). Served by idx_loans_dpd_worklist
+    walking loans in order and probing the per-loan case join (both
+    0026; EXPLAIN-asserted, falsifiable by dropping either). Least
+    disclosure: NO balance/penalty/provision columns. The users join
+    surfaces the addendum-A4 unassignable flag. Static fragments
     chosen in code; every value is a bound parameter (v1.1 rule 6);
     explicit tenant predicate on top of forced RLS (rule 4).
+
+    DECLARED filters (issue #31 ledger (a).3 — the human-authorized
+    read-contract expansion; expand-only: with neither filter the
+    statement is byte-identical to the as-built default):
+
+      * status — a LIVE case posture (code-owned vocabulary; the API
+        boundary rejects anything else with a 422). The bound equality
+        rides ALONGSIDE the static live-set guard mirroring 0033
+        (`_LIVE_STATUS_SQL`): the static fragment keeps the partial
+        uq_recovery_cases_one_open index provably usable (a bound
+        parameter alone could not imply its predicate), the bound
+        value does the filtering, and the keyset's 1:1 loan↔case
+        tiebreak stays valid (the partial UNIQUE covers exactly the
+        live set).
+      * classification — the loan's STORED prudential label (the
+        arrears job's persisted output on loans.classification, 0001
+        vocabulary via domain LoanClass); bound equality filtered on
+        the idx_loans_dpd_worklist walk, ordering untouched.
     """
     cursor = "AND (l.days_past_due, l.id) < (:c_dpd, CAST(:c_id AS uuid)) "
+    case_status = (
+        f"AND c.status IN {_LIVE_STATUS_SQL} AND c.status = :f_status "
+        if with_status
+        else "AND c.status = 'open' "
+    )
+    classification = "AND l.classification = :f_class " if with_classification else ""
     return (
         "SELECT c.id, c.loan_id, l.member_id, l.days_past_due, l.classification, "  # noqa: S608
         "c.assignee_id, u.status AS assignee_status, c.opened_at, c.first_assigned_at, "
         "c.version "
         "FROM loans l "
         "JOIN recovery_cases c ON c.tenant_id = l.tenant_id AND c.loan_id = l.id "
-        "AND c.status = 'open' "
+        f"{case_status}"
         "LEFT JOIN users u ON u.tenant_id = c.tenant_id AND u.id = c.assignee_id "
         "WHERE l.tenant_id = CAST(:tid AS uuid) "
+        f"{classification}"
         f"{cursor if with_cursor else ''}"
         "ORDER BY l.days_past_due DESC, l.id DESC LIMIT :limit"
     )
@@ -906,14 +933,37 @@ async def list_worklist(
     *,
     cursor: str | None,
     limit: int,
+    status: RecoveryCaseStatus | None = None,
+    classification: LoanClass | None = None,
 ) -> WorklistPage:
-    """Open cases ordered by days-past-due, most delinquent first."""
+    """Live cases ordered by days-past-due, most delinquent first.
+
+    Default (no filters): OPEN cases exactly as built. The declared
+    filters (issue #31 ledger (a).3) narrow the same keyset walk —
+    ordering, cursor shape and least-disclosure row are untouched. A
+    non-live status filter fails closed here (the API's code-owned
+    vocabulary already refuses it with a 422): the keyset tiebreak is
+    only valid inside the one-live-case invariant.
+    """
+    if status is not None and status not in LIVE_STATUSES:
+        raise InvalidInputError("worklist status filter must be a live case status")
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
+    if status is not None:
+        params["f_status"] = status.value
+    if classification is not None:
+        params["f_class"] = classification.value
     if cursor is not None:
         c_dpd, c_id = _parse_worklist_cursor(cursor)
         params["c_dpd"] = c_dpd
         params["c_id"] = c_id
-    rows = (await session.execute(text(worklist_sql(with_cursor=cursor is not None)), params)).all()
+    stmt = text(
+        worklist_sql(
+            with_cursor=cursor is not None,
+            with_status=status is not None,
+            with_classification=classification is not None,
+        )
+    )
+    rows = (await session.execute(stmt, params)).all()
     items: list[WorklistRow] = []
     for r in rows[:limit]:
         assignee_id = uuid.UUID(str(r[5])) if r[5] is not None else None

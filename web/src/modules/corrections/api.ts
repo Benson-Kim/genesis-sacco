@@ -2,13 +2,15 @@
  * Corrections API layer (P15 follow-on batch 1, issue #31 — the
  * P13.15 corrections & write-off API plus the issue-#21 recovery
  * receipts) over the GENERATED client.
+ * 
+ * - REGISTERS (issue #31 batch 6, ledger (a).1/(a).2 — the
+ *   human-authorized read-contract expansion that closed the batch-1
+ *   gap): keyset LIST reads for adjustments (pending-first — the
+ *   checker's job order) and write-offs (live-first — the committee's
+ *   job order), both under corrections:view. By-id reads and every
+ *   mutation are UNTOUCHED. All keyset reads follow gate 1.3: opaque
+ *   `cursor` echoed back verbatim; no offset/page parameters.",
  *
- * - NO list/register endpoint exists on this contract: adjustments and
- *   write-offs are fetched BY ID only (the workbench looks records up
- *   by reference; the missing checker worklist is recorded as a
- *   contract follow-up on issue #31 — never faked client-side). The
- *   ONLY keyset read is the per-write-off receipts trail (gate 1.3:
- *   opaque `cursor` echoed back verbatim; no offset/page parameters).
  * - Every mutation takes a caller-supplied Idempotency-Key following
  *   the stability/rotation contract (gate 1.4). Reject and void PIN
  *   the record version in the wire body; approval and posting bodies
@@ -30,6 +32,7 @@
  *   REJECTED).
  */
 import { toApiError } from "@genesis/api-client";
+import { keysetPageSchema, type KeysetPage } from "@/modules/table/schemas";
 import { api } from "@/lib/api";
 import type { CashChannel } from "@/modules/transactions/schemas";
 import {
@@ -54,6 +57,43 @@ import {
 } from "./schemas";
 
 export const RECEIPTS_PAGE_SIZE = 20;
+export const REGISTER_PAGE_SIZE = 20;
+
+const adjustmentsPageSchema = keysetPageSchema(adjustmentSchema);
+const writeOffsPageSchema = keysetPageSchema(writeOffSchema);
+
+/**
+ * The pending-adjustments checker register (corrections:view; issue
+ * #31 ledger (a).1): keyset, PENDING FIRST then newest first — the
+ * server's order, never re-sorted locally. The checker works from
+ * this register instead of a hand-carried id.
+ */
+export async function fetchAdjustmentsPage(
+  cursor: string | null,
+
+): Promise<KeysetPage<AdjustmentRecord>> {
+  const { data, error, response } = await api.GET("/corrections/repayment-adjustments", {
+    params: { query: { cursor: cursor ?? undefined, limit: REGISTER_PAGE_SIZE } },
+  });
+  if (error !== undefined || data === undefined) throw toApiError(error, response);
+  return adjustmentsPageSchema.parse(data);
+}
+
+/**
+ * The write-off committee register (corrections:view; issue #31
+ * ledger (a).2): keyset, LIVE (requested/approved) FIRST then newest
+ * first — the server's order, never re-sorted locally. Vote/posting
+ * semantics are untouched; this is a read.
+ */
+export async function fetchWriteOffsPage(
+  cursor: string | null,
+): Promise<KeysetPage<WriteOffRecord>> {
+  const { data, error, response } = await api.GET("/corrections/write-offs", {
+    params: { query: { cursor: cursor ?? undefined, limit: REGISTER_PAGE_SIZE } },
+  });
+  if (error !== undefined || data === undefined) throw toApiError(error, response);
+  return writeOffsPageSchema.parse(data);
+}
 
 /**
  * MAKER phase (issue #24): create a PENDING adjustment bound to the

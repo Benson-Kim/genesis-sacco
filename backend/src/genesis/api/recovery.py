@@ -30,7 +30,7 @@ role resolved server-side from the assignee's role_id, addendum A4).
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -39,6 +39,7 @@ from genesis.api.authz import RequirePermission
 from genesis.application import recovery as recovery_service
 from genesis.application.auth import AuthContext
 from genesis.application.recovery import CaseNoteRecord, RecoveryCaseRecord, WorklistRow
+from genesis.domain.lending import LoanClass
 from genesis.domain.rbac import Action, Module
 from genesis.domain.recovery import RecoveryCaseStatus
 from genesis.infrastructure.db import get_sessionmaker
@@ -208,17 +209,41 @@ async def open_case(body: CaseOpenBody, ctx: CreateCtx) -> CaseOut:
     return _case_out(record)
 
 
+#: DECLARED worklist status filter vocabulary (issue #31 ledger (a).3):
+#: exactly the domain LIVE_STATUSES — the one-live-case invariant that
+#: keeps the worklist keyset's loan tiebreak valid. Code-owned Literal
+#: (the members-register include= precedent): any other value is a 422
+#: at this boundary; tests pin the Literal to domain LIVE_STATUSES so
+#: the two can never drift.
+WorklistStatusParam = Literal["open", "irrecoverable_pending_write_off", "disputed"]
+
+
 @router.get("")
 async def worklist(
     ctx: ViewCtx,
     cursor: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    status: Annotated[WorklistStatusParam | None, Query()] = None,
+    classification: Annotated[LoanClass | None, Query()] = None,
 ) -> WorklistOut:
-    """Keyset worklist, most delinquent first (addendum A5)."""
+    """Keyset worklist, most delinquent first (addendum A5).
+
+    DECLARED filters only (issue #31 ledger (a).3 — the human-
+    authorized read-contract expansion): `status` narrows to one LIVE
+    posture (default stays OPEN exactly as built), `classification` to
+    one stored prudential label (domain LoanClass). Every value is
+    bound; keyset and server ordering are preserved; an out-of-
+    vocabulary value is a 422 at this boundary.
+    """
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         page = await recovery_service.list_worklist(
-            session, ctx.tenant_id, cursor=cursor, limit=limit
+            session,
+            ctx.tenant_id,
+            cursor=cursor,
+            limit=limit,
+            status=RecoveryCaseStatus(status) if status is not None else None,
+            classification=classification,
         )
     return WorklistOut(items=[_row_out(r) for r in page.items], next_cursor=page.next_cursor)
 

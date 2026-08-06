@@ -136,6 +136,27 @@
     flex: 1 1 260px;
 }
 
+/* Register header card (the batch-6 checker/committee registers). */
+.registerHead {
+    padding: 14px;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+    font-weight: 800;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+
+}
+
+.registerNote {
+    font-size: 12px;
+    color: var(--sub);
+    font-weight: 600;
+
+}
+
 /* Lifecycle-write result panel — server figures verbatim. */
 .resultPanel {
     background: var(--panel);
