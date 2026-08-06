@@ -29,11 +29,13 @@ export type Member = z.infer<typeof memberSchema>;
 
 /**
  * Advisory financial aggregates on the single-member DETAIL read
- * (#31 batch 3). All four figures are decimal STRINGS rendered
- * verbatim: NO client-side money math ever (P15 blocker (a)), no
- * summing, no derived figures. Required, not optional, per the
- * contract: the detail read always carries the object, so a missing
- * or null aggregates is a contract violation and is REJECTED.
+ * (#31 batch 3) and on register LIST rows fetched with the OPT-IN
+ * include=aggregates expand (#31 batch 3 review). All four figures
+ * are decimal STRINGS rendered verbatim: NO client-side money math
+ * ever (P15 blocker (a)), no summing, no derived figures. Required,
+ * not optional, per the contract: the detail read and every opted-in
+ * list row always carry the object, so a missing or null aggregates
+ * is a contract violation and is REJECTED.
  */
 export const memberAggregatesSchema = z.object({
     deposits_total: z.string(),

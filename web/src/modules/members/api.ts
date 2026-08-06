@@ -24,6 +24,7 @@ import {
 export const MEMBERS_PAGE_SIZE = 20;
 
 const memberPageSchema = keysetPageSchema(memberSchema);
+const memberDetailPageSchema = keysetPageSchema(memberDetailSchema);
 
 export interface MemberListFilters {
     status: MemberStatus | "";
@@ -46,6 +47,34 @@ export async function fetchMembersPage(
     });
     if (error !== undefined || data === undefined) throw toApiError(error, response);
     return memberPageSchema.parse(data);
+}
+
+/** Register page WITH the four advisory aggregates (#31 batch 3
+ *  review — the authorized OPT-IN expand): include=aggregates makes
+ *  every row carry the same decimal-string figures as the detail
+ *  read, from ONE set-based server statement per page. Discriminated
+ *  fetch mirroring the fetchMember vs fetchMemberDetail split: every
+ *  row's aggregates object is REQUIRED and parses strictly at the
+ *  boundary, rendered VERBATIM (P15 blocker (a): no client-side money
+ *  math, ever); cross-module consumers that only resolve names keep
+ *  the flat fetchMembersPage and can never render money. */
+export async function fetchMembersPageWithAggregates(
+    filters: MemberListFilters,
+    cursor: string | null,
+): Promise<KeysetPage<MemberDetail>> {
+    const { data, error, response } = await api.GET("/members", {
+        params: {
+            query: {
+                cursor: cursor ?? undefined,
+                limit: MEMBERS_PAGE_SIZE,
+                status: filters.status === "" ? undefined : filters.status,
+                type: filters.type === "" ? undefined : filters.type,
+                include: "aggregates",
+            },
+        },
+    });
+    if (error !== undefined || data === undefined) throw toApiError(error, response);
+    return memberDetailPageSchema.parse(data);
 }
 
 /** Single member record (used by the applications detail drawer to
