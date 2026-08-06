@@ -220,6 +220,7 @@ backend:test:
     - cat backend/perf/explain_codex_review.txt || true
     - cat backend/perf/explain_member_aggregates.txt || true
     - cat backend/perf/explain_member_list_aggregates.txt || true
+    - cat backend/perf/explain_exit_eligibility.txt || true
   coverage: '/TOTAL.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
   artifacts:
     when: always

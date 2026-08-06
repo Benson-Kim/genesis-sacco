@@ -44,13 +44,13 @@ import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { announce } from "@/modules/layout/announcer";
 import { isConflict } from "@/lib/errors";
-import { fmtKes } from "@/lib/format";
+import { fmtDateTime, fmtKes } from "@/lib/format";
 import { STALE_TIME } from "@/lib/query";
 import { getOwnUserId } from "@/modules/auth/session";
 import { useKeysetList } from "@/modules/table/useKeysetList";
 import { fetchMember, fetchMembersPage } from "@/modules/members/api";
 import type { Member } from "@/modules/members/schemas";
-import { createExitRequest } from "../api";
+import { createExitRequest, fetchExitEligibility } from "../api";
 import { recordExitMaker } from "../makerRegistry";
 import { exitRequestEntrySchema, type ExitRecord, type ExitRequestEntry } from "../schemas";
 import styles from "./Exits.module.css";
@@ -102,6 +102,26 @@ export function RequestExitDrawer({ onClose }: Readonly<{ onClose: () => void }>
     staleTime: STALE_TIME.record,
   });
   const freshMember = memberDetail.data;
+
+  // ADVISORY eligibility checklist (P15 batch 5, U6 — the prototype's
+  // vExit() criteria rows), read fresh (record class, staleTime 0) the
+  // moment a member is chosen and rendered BEFORE submission. Counts
+  // and booleans only — the contract carries NO amount. The read is
+  // lock-free and ADVISORY: the server re-verdicts every blocker under
+  // locks at request time and again at settlement.
+  const eligibility = useQuery({
+    queryKey: ["exits", "eligibility", memberId === "" ? "none" : memberId],
+    queryFn: () => fetchExitEligibility(memberId),
+    enabled: memberId !== "",
+    staleTime: STALE_TIME.record,
+  });
+  const facts = eligibility.data;
+  // SELF-GATING (gate 1.6, the memberExited pattern): when the fresh
+  // advisory read reports blockers, the submit affordance is withheld —
+  // the server enforces the same blockers under locks regardless. A
+  // FAILED advisory read never gates: it is advisory only, and the
+  // locked server verdict at request time remains the enforcer.
+  const advisoryBlocked = facts !== undefined && !facts.advisory_eligible;
 
   const create = useMutation({
     // STRUCTURAL freshness guard (the F-M1 class, applied
@@ -163,6 +183,7 @@ export function RequestExitDrawer({ onClose }: Readonly<{ onClose: () => void }>
     // NEW operator intent whose key rotates via the reload epoch (!60
     // F3). NOTHING is replayed.
     void queryClient.refetchQueries({ queryKey: ["members", "detail", memberId] });
+    void queryClient.refetchQueries({ queryKey: ["exits", "eligibility", memberId] });
     void queryClient.invalidateQueries({ queryKey: ["exits", "list"] });
     setReloadEpoch((epoch) => epoch + 1);
     create.reset();
@@ -315,6 +336,60 @@ export function RequestExitDrawer({ onClose }: Readonly<{ onClose: () => void }>
               recorded for them (the server enforces this regardless).
             </Banner>
           )}
+          {memberId !== "" && eligibility.isPending && (
+            <div className={styles.formNote}>Loading the advisory eligibility checklist…</div>
+          )}
+          {memberId !== "" && eligibility.isError && (
+            <div className={styles.formNote}>
+              The advisory eligibility checklist could not be loaded — it is
+              ADVISORY only, so you can still submit: the server enforces every
+              blocker under locks at request time regardless.
+            </div>
+          )}
+          {facts !== undefined && (
+            // U6: the prototype's vExit() criteria rows — SERVER facts
+            // rendered VERBATIM (counts and booleans only; the contract
+            // carries NO amount). advisory_eligible is the server's own
+            // conjunction — never re-derived from the rows here.
+            <div className={styles.resultPanel} data-testid="eligibility-checklist">
+              <div className={styles.resultTitle}>Advisory eligibility checklist</div>
+              <Kv label="Member status">
+                {facts.member_status} —{" "}
+                {facts.status_allows_exit ? "allows an exit request" : "BLOCKS an exit request"}
+              </Kv>
+              <Kv label="Open exit request">
+                {facts.open_exit_exists ? "one already exists — BLOCKS" : "none"}
+              </Kv>
+              <Kv label="Live guarantees (block until released/substituted)">
+                {facts.live_guarantees_count}
+              </Kv>
+              <Kv label="Open loan applications (block until decided)">
+                {facts.open_applications_count}
+              </Kv>
+              <Kv label="Unresolved write-off claim">
+                {facts.unresolved_writeoff_claim ? "yes — BLOCKS" : "no"}
+              </Kv>
+              <Kv label="Active loans (informational — net within the settlement)">
+                {facts.active_loans_count}
+              </Kv>
+              <Kv label="Advisory verdict">
+                {facts.advisory_eligible ? "eligible to request" : "blocked"}
+              </Kv>
+              <div className={styles.formNote}>
+                Advisory facts as of {fmtDateTime(facts.as_of)}, read WITHOUT
+                locks: the server re-verdicts every blocker under locks when the
+                request is recorded and AGAIN at settlement — this checklist
+                decides nothing and shows no settlement figure.
+              </div>
+            </div>
+          )}
+          {advisoryBlocked && !memberExited && (
+            <Banner variant="error">
+              Advisory blockers are present — the request affordance is
+              withheld here; the server enforces (and re-verdicts) the same
+              blockers under locks regardless.
+            </Banner>
+          )}
           <FormField
             id="exit-reason"
             label="Reason (optional)"
@@ -345,7 +420,7 @@ export function RequestExitDrawer({ onClose }: Readonly<{ onClose: () => void }>
             <Button
               type="submit"
               variant="primary"
-              disabled={create.isPending || memberExited}
+              disabled={create.isPending || memberExited || advisoryBlocked}
             >
               {create.isPending ? "Recording…" : "Request exit…"}
             </Button>

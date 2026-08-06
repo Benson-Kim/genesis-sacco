@@ -126,6 +126,31 @@ class ExitListResponse(BaseModel):
     next_cursor: str | None
 
 
+class ExitEligibilityOut(BaseModel):
+    """Advisory blocker FACTS for the up-front eligibility checklist
+    (P15 batch 5, U6 — the prototype's vExit() criteria rows).
+
+    Least disclosure (gate 1.6): counts and booleans only — NEVER an
+    amount; served under members:view like every other exit read.
+    ADVISORY only: computed WITHOUT locks; the binding verdict stays
+    with the request/settlement locked recomputes (which also enforce
+    the negative-settlement rule this read cannot see).
+    """
+
+    member_id: str
+    member_status: str
+    status_allows_exit: bool
+    open_exit_exists: bool
+    live_guarantees_count: int
+    open_applications_count: int
+    #: Informational, NOT a blocker — active loans net within the
+    #: settlement (the P10 early-settlement rule).
+    active_loans_count: int
+    unresolved_writeoff_claim: bool
+    advisory_eligible: bool
+    as_of: str
+
+
 class ExitVoteResultOut(BaseModel):
     approvals: int
     rejections: int
@@ -211,6 +236,35 @@ async def list_exit_requests(
             session, ctx.tenant_id, status=status, cursor=cursor, limit=limit
         )
     return ExitListResponse(items=[_out(r) for r in items], next_cursor=next_cursor)
+
+
+@router.get("/eligibility/{member_id}")
+async def get_exit_eligibility(member_id: uuid.UUID, ctx: ViewCtx) -> ExitEligibilityOut:
+    """Advisory eligibility facts BEFORE a request is submitted
+    (members:view; P15 batch 5, U6 — human-authorized expand-only,
+    read-only contract change).
+
+    NO row locks: the checklist mirrors the blocker set the settlement
+    service enforces (same live-guarantee status set, same open-stage
+    list, the SAME unresolved-write-off SQL — gate 1.1), but the
+    BINDING verdict remains the locked recompute at request and
+    settlement time. Facts only — no amount ever travels here.
+    """
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        facts = await exits_service.exit_eligibility(session, ctx.tenant_id, member_id)
+    return ExitEligibilityOut(
+        member_id=str(facts.member_id),
+        member_status=facts.member_status,
+        status_allows_exit=facts.status_allows_exit,
+        open_exit_exists=facts.open_exit_exists,
+        live_guarantees_count=facts.live_guarantees_count,
+        open_applications_count=facts.open_applications_count,
+        active_loans_count=facts.active_loans_count,
+        unresolved_writeoff_claim=facts.unresolved_writeoff_claim,
+        advisory_eligible=facts.advisory_eligible,
+        as_of=facts.as_of.isoformat(),
+    )
 
 
 @router.get("/{exit_id}")

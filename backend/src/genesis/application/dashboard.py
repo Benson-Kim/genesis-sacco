@@ -57,7 +57,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -204,6 +204,151 @@ class GuarantorAggregates:
     guarantors: tuple[GuarantorCapacity, ...]
 
 
+# --- Chart-series read model (issue #32 / #31 batch 5, U3+X4) -------------
+#
+# The RECORDED #32 design decision, route (a): chart geometry is a
+# SERVER-computed read model. Every percentage below is derived HERE,
+# in Decimal arithmetic, from figures this module (or the reused P10
+# portfolio summary) already computed inside the same REPEATABLE READ
+# snapshot — the client renders the integers as visual scale ONLY and
+# never performs money math (P15 blocker (a) stays absolute in web/).
+#
+# Honesty rules:
+#   * The sibling slices (monthly_flows, loan_book) remain the figures
+#     of record; charts are supplements (a11y: colour-never-alone, the
+#     tables stay the accessible truth).
+#   * A month that nets NEGATIVE (reversal-only, MONTHLY_FLOWS_SQL)
+#     clamps to 0 in the chart geometry; the SIGNED truth still
+#     travels verbatim in monthly_flows.
+#   * No new SQL: these are pure functions over already-fetched slice
+#     data — no new hot-path query ships (no EXPLAIN owed).
+#   * Percentages are integers 0..100, ROUND_HALF_UP — a resolution
+#     chosen for geometry, deliberately too coarse to reconstruct any
+#     money figure.
+
+_ZERO = Decimal("0")
+_ONE_HUNDRED = Decimal("100")
+
+
+@dataclass(frozen=True)
+class FlowBarScale:
+    """One month's grouped-bar heights, share-of-window-peak (0..100)."""
+
+    month: str  # "YYYY-MM" — same key as the sibling MonthlyFlow row
+    deposits_pct: int
+    disbursements_pct: int
+
+
+@dataclass(frozen=True)
+class FlowsChart:
+    """Deposits-vs-disbursements bar geometry + KPI sparkline series."""
+
+    months: tuple[FlowBarScale, ...]
+    #: The COMMON scale ceiling (max of both series across the window,
+    #: never below zero) — serialized verbatim so the chart can caption
+    #: its scale with the server's own figure.
+    axis_max: Decimal
+
+
+@dataclass(frozen=True)
+class ClassificationShare:
+    classification: str
+    pct: int  # share of outstanding_balance, 0..100
+
+
+@dataclass(frozen=True)
+class PortfolioChart:
+    """Performing donut + classification progress-bar geometry."""
+
+    performing_pct: int
+    npl_pct: int
+    classification: tuple[ClassificationShare, ...]
+
+
+@dataclass(frozen=True)
+class DashboardCharts:
+    """Per-slice chart geometry; each sub-slice follows its parent's
+    permission grant (flows <- transactions:view, portfolio <-
+    loan_book:view) and is None (omitted) when ungranted."""
+
+    flows: FlowsChart | None
+    portfolio: PortfolioChart | None
+
+
+def scale_pct(value: Decimal, ceiling: Decimal) -> int:
+    """Share-of-ceiling as an integer percent, clamped to 0..100.
+
+    Negative values (reversal-only months) and non-positive ceilings
+    scale to 0; a value at (or, defensively, above) the ceiling is 100.
+    ROUND_HALF_UP on the integer percent — Decimal end-to-end, no
+    float ever touches a money-derived quantity.
+    """
+    if ceiling <= _ZERO or value <= _ZERO:
+        return 0
+    if value >= ceiling:
+        return 100
+    pct = (value * _ONE_HUNDRED / ceiling).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return min(int(pct), 100)
+
+
+def flows_chart(monthly: tuple[MonthlyFlow, ...]) -> FlowsChart:
+    """Bar/sparkline geometry for the monthly flow series.
+
+    One COMMON ceiling across both series (the prototype's grouped-bar
+    convention) so deposit and disbursement bars are comparable within
+    a month; the ceiling itself is exposed as axis_max so the client
+    can caption the scale with a verbatim server figure.
+    """
+    ceiling = max([_ZERO, *(f.deposits for f in monthly), *(f.disbursements for f in monthly)])
+    months = tuple(
+        FlowBarScale(
+            month=f.month,
+            deposits_pct=scale_pct(f.deposits, ceiling),
+            disbursements_pct=scale_pct(f.disbursements, ceiling),
+        )
+        for f in monthly
+    )
+    return FlowsChart(months=months, axis_max=ceiling)
+
+
+def portfolio_chart(loan_book: loans_service.PortfolioSummary) -> PortfolioChart:
+    """Donut + classification-bar geometry over the P10 summary.
+
+    npl_pct is the NPL share of the outstanding book; performing_pct is
+    its exact complement (they always sum to 100 on a non-empty book).
+    An empty book (outstanding <= 0) is 0/0 — the client renders the
+    honest empty state, never a fabricated full donut.
+    """
+    outstanding = loan_book.outstanding_balance
+    if outstanding <= _ZERO:
+        performing, npl = 0, 0
+    else:
+        npl = scale_pct(loan_book.npl_balance, outstanding)
+        performing = 100 - npl
+    shares = tuple(
+        ClassificationShare(
+            classification=s.classification.value,
+            pct=scale_pct(s.balance, outstanding),
+        )
+        for s in loan_book.by_classification
+    )
+    return PortfolioChart(performing_pct=performing, npl_pct=npl, classification=shares)
+
+
+def dashboard_charts(
+    monthly: tuple[MonthlyFlow, ...] | None,
+    loan_book: loans_service.PortfolioSummary | None,
+) -> DashboardCharts | None:
+    """Assemble the charts slice from the granted parent slices; None
+    when neither parent is granted (the slice is then omitted from the
+    response entirely — deny-by-default, gate 1.6)."""
+    flows = flows_chart(monthly) if monthly is not None else None
+    portfolio = portfolio_chart(loan_book) if loan_book is not None else None
+    if flows is None and portfolio is None:
+        return None
+    return DashboardCharts(flows=flows, portfolio=portfolio)
+
+
 @dataclass(frozen=True)
 class DashboardSummary:
     as_of: datetime
@@ -213,6 +358,9 @@ class DashboardSummary:
     pipeline: tuple[PipelineStageCount, ...] | None
     guarantors: GuarantorAggregates | None
     loan_book: loans_service.PortfolioSummary | None
+    #: Chart geometry derived from monthly_flows / loan_book (issue
+    #: #32); None when neither parent slice is granted.
+    charts: DashboardCharts | None
 
 
 def dashboard_month_starts(as_of: datetime, months: int) -> list[date]:
@@ -374,4 +522,7 @@ async def dashboard_summary(
         pipeline=pipeline,
         guarantors=guarantors,
         loan_book=loan_book,
+        # Pure derivation from the two granted parents above — same
+        # snapshot, no extra SQL (issue #32 route (a)).
+        charts=dashboard_charts(monthly, loan_book),
     )
