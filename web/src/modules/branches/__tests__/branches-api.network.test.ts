@@ -28,6 +28,8 @@
  *   a typed ApiError from ONE request (no transport-level retry).
  */
 
+export {};
+
 type FetchCall = { url: string; method: string; headers: Headers; body: string | null };
 
 const TENANT = "22222222-2222-2222-2222-222222222222";

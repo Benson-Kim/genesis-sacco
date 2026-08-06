@@ -113,11 +113,11 @@ const officerUser = {
 const memberRow = {
   id: "cccccccc-1111-2222-3333-444444444444",
   member_no: "M-0007",
-  type: "person",
+  type: "person" as const,
   name: "Wanjiku Member",
   phone: null,
   email: null,
-  status: "active",
+  status: "active" as const,
   version: 6,
 };
 
