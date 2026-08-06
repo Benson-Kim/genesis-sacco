@@ -469,7 +469,7 @@ async def list_members_with_aggregates(
     # from _member_list_clauses; every value is a bound parameter.
     rows = (
         await session.execute(
-            text(MEMBER_LIST_AGGREGATES_SQL.format(where=" AND ".join(clauses))),  # noqa: S608
+            text(MEMBER_LIST_AGGREGATES_SQL.format(where=" AND ".join(clauses))),
             params,
         )
     ).all()
