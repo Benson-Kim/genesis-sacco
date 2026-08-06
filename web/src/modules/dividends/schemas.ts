@@ -90,15 +90,17 @@ export const fyDateSchema = z.string().regex(FY_DATE_RE);
  * client — extra="forbid" server-side). Extra keys are STRIPPED at
  * this boundary.
  *
- * ATTRIBUTION HONESTY: the DB carries dividend_declarations
- * .requested_by (migration 0020) and the server enforces
- * declarer-cannot-vote / declarer-cannot-distribute 403s on it, but
- * DeclarationOut does NOT expose it — there is no attribution field
- * on this read contract for the client to render (unlike
- * ApplicationOut.created_by/recommended_by or ExitOut.requested_by
- * after !66/!71). Recorded on issue #31 as a CONTRACT FOLLOW-UP;
- * never faked client-side. Until it lands, the per-tab makerRegistry
- * is the ONLY maker witness this client has (see makerRegistry.ts).
+ * ATTRIBUTION (issue #31 ledger (a).4 — the human-authorized
+ * read-contract expansion closing the batch-2 gap): DeclarationOut
+ * now exposes `requested_by` — the EXISTING migration-0020 column
+ * that already drives the server's declarer-cannot-vote /
+ * declarer-cannot-distribute 403s — as the bare staff UUID under
+ * least disclosure (the !66/!70 exits precedent). NULLABLE, never
+ * optional (the key must be present; a missing key is contract
+ * drift and REFUSES to parse), and never invented: NULL is the
+ * honest unattributed affordance. SERVER TRUTH SUPERSEDES the
+ * per-tab maker witness (makerRegistry.ts — demoted to a fallback
+ * for unattributed rows only).
  */
 export const declarationSchema = z.object({
   id: z.string(),
@@ -117,6 +119,11 @@ export const declarationSchema = z.object({
   /** CHECK (> 0): an empty declaration is unrepresentable (0020). */
   total_payout: moneySchema,
   status: declarationStatusSchema,
+  /** Declarer attribution (issue #31 ledger (a).4): the SERVER's bare
+   * staff UUID (0020 column), nullable-NOT-optional; rendered via the
+   * short-id convention, NULL = honest "unattributed". Server truth —
+   * it supersedes the per-tab witness wherever both exist. */
+  requested_by: z.string().nullable(),
   decided_at: isoTimestampSchema.nullable(),
   distributed_at: isoTimestampSchema.nullable(),
   /** Optimistic-lock version pinning the void write (1.4). */

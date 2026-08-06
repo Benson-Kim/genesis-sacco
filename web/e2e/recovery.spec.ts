@@ -91,6 +91,9 @@ interface ApiState {
   caseReads: number;
   /** EVERY request touching /recovery-cases (deny-by-default proof). */
   recoveryCalls: number;
+  /** Every worklist GET url — the declared-filter wire proof
+   * (issue #31 ledger (a).3). */
+  worklistUrls: string[];
 }
 
 /** Browser-boundary API mock with CORS handling and write capture. */
@@ -139,6 +142,24 @@ async function mockApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
     if (path === "/recovery-cases" && method === "GET") {
+      state.worklistUrls.push(request.url());
+      // The DECLARED filters narrow the same keyset walk (issue #31
+      // ledger (a).3): a status filter serves the matching posture so
+      // the DOM leg can observe a real narrowed register.
+      if (url.searchParams.get("status") === "disputed") {
+        await respond(200, {
+          items: [
+            {
+              ...WORKLIST_ROW,
+              case_id: "dddddddd-2222-3333-4444-555555555555",
+              days_past_due: 200,
+              classification: "loss",
+            },
+          ],
+          next_cursor: null,
+        });
+        return;
+      }
       await respond(200, { items: [WORKLIST_ROW], next_cursor: null });
       return;
     }
@@ -218,6 +239,7 @@ test("happy path: OTP login → Recovery worklist renders workflow facts with NO
     dispositionHeaders: [],
     caseReads: 0,
     recoveryCalls: 0,
+    worklistUrls: [],
   };
   await mockApi(page, state);
   await login(page);
@@ -226,7 +248,9 @@ test("happy path: OTP login → Recovery worklist renders workflow facts with NO
   // The worklist renders workflow facts…
   await expect(page.getByText("Recovery worklist")).toBeVisible();
   await expect(page.getByText("120")).toBeVisible();
-  await expect(page.getByText("Doubtful")).toBeVisible();
+  // Scoped to the register table: the (a).3 classification filter now
+  // ALSO carries the label as an <option> — assert the rendered ROW.
+  await expect(page.getByRole("region", { name: "Table" }).getByText("Doubtful")).toBeVisible();
   await expect(page.getByText("— (unassigned)")).toBeVisible();
   // …and LEAST DISCLOSURE holds across the whole page (addendum A5):
   // no money figure exists anywhere in the DOM.
@@ -252,6 +276,63 @@ test("happy path: OTP login → Recovery worklist renders workflow facts with NO
   expect(state.assignHeaders[0]?.["authorization"]).toMatch(/^Bearer /);
 });
 
+test("declared worklist filters (issue #31 ledger (a).3): the DEFAULT view sends NO filter key at all; the pause segment and classification select bind the two DECLARED params ONLY — the narrowed register renders the server's rows, still no money anywhere", async ({
+  page,
+}) => {
+  const state: ApiState = {
+    caseRecord: { ...OPEN_CASE },
+    postAssign: () => [200, OPEN_CASE],
+    postDisposition: () => [200, OPEN_CASE],
+    assignBodies: [],
+    assignHeaders: [],
+    dispositionBodies: [],
+    dispositionHeaders: [],
+    caseReads: 0,
+    recoveryCalls: 0,
+    worklistUrls: [],
+  };
+  await mockApi(page, state);
+  await login(page);
+
+  await page.getByRole("link", { name: "Recovery" }).click();
+  await expect(page.getByText("120")).toBeVisible();
+
+  // The DEFAULT view sent NO filter key — byte-identical to the
+  // as-built read (keyset limit only; no offset/page ever).
+  expect(state.worklistUrls.length).toBeGreaterThan(0);
+  const defaultParams = new URL(state.worklistUrls[0] ?? "").searchParams;
+  expect(defaultParams.has("status")).toBe(false);
+  expect(defaultParams.has("classification")).toBe(false);
+  expect(defaultParams.has("offset")).toBe(false);
+  expect(defaultParams.get("limit")).toBeTruthy();
+
+  // Narrow to the disputed posture: the DECLARED param binds the
+  // code-owned vocabulary value verbatim and the register re-renders
+  // with the SERVER's narrowed rows (never a local re-sort).
+  await page.getByRole("button", { name: "Paused — disputed" }).click();
+  await expect(page.getByText("200")).toBeVisible();
+  // Scoped to the register table (the filter <option> also says "Loss").
+  await expect(page.getByRole("region", { name: "Table" }).getByText("Loss")).toBeVisible();
+  const filtered = state.worklistUrls[state.worklistUrls.length - 1] ?? "";
+  const filteredParams = new URL(filtered).searchParams;
+  expect(filteredParams.get("status")).toBe("disputed");
+  expect(filteredParams.has("classification")).toBe(false);
+
+  // Add the classification filter: BOTH declared params, nothing else
+  // beside the keyset keys (an undeclared key stays a server 422 —
+  // and can never even be constructed by the generated client).
+  await page.getByLabel("Classification").selectOption("loss");
+  await expect
+    .poll(() => {
+      const last = new URL(state.worklistUrls[state.worklistUrls.length - 1] ?? "");
+      return [...last.searchParams.keys()].sort().join(",");
+    })
+    .toBe("classification,limit,status");
+
+  // Least disclosure survives every filtered view (addendum A5).
+  await expect(page.locator("body")).not.toContainText("KES");
+});
+
 test("adversarial: disposition 409 (the single domain gatekeeper refused / version drift) → ONE attempt + conflict banner + explicit reload re-fetches (never replays); the pause body carries {version, status, reason} and NO note key", async ({
   page,
 }) => {
@@ -269,6 +350,7 @@ test("adversarial: disposition 409 (the single domain gatekeeper refused / versi
     dispositionHeaders: [],
     caseReads: 0,
     recoveryCalls: 0,
+    worklistUrls: [],
   };
   await mockApi(page, state);
   await login(page);
@@ -305,7 +387,9 @@ test("adversarial: disposition 409 (the single domain gatekeeper refused / versi
   await page.getByLabel(`Type "${PHRASE}" to confirm`).fill(PHRASE);
   await page.getByRole("button", { name: "Record disposition", exact: true }).click();
 
-  await expect(page.getByText("Paused — disputed")).toBeVisible();
+  // Scoped to the case drawer: the (a).3 status segment in the toolbar
+  // ALSO says "Paused — disputed" — assert the DRAWER's status pill.
+  await expect(page.getByLabel("Recovery case").getByText("Paused — disputed")).toBeVisible();
   expect(state.dispositionBodies).toHaveLength(2);
   const freshKey = state.dispositionHeaders[1]?.["idempotency-key"];
   expect(freshKey).toBeTruthy();
@@ -337,6 +421,7 @@ test("adversarial: deny-by-default — a role without the loan_book module gets 
     dispositionHeaders: [],
     caseReads: 0,
     recoveryCalls: 0,
+    worklistUrls: [],
   };
   await mockApi(page, state);
   await login(page);

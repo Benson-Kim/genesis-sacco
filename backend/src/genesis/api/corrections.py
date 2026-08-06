@@ -119,6 +119,15 @@ class AdjustmentRecordOut(BaseModel):
     created_at: str
 
 
+class AdjustmentListOut(BaseModel):
+    """Keyset page of the pending-adjustments checker register (issue
+    #31 ledger (a).1 — the human-authorized read-contract expansion):
+    the same rows the by-id read serialises, pending-first."""
+
+    items: list[AdjustmentRecordOut]
+    next_cursor: str | None
+
+
 class AdjustmentOut(BaseModel):
     adjustment_id: str
     reversal_txn_id: str
@@ -198,6 +207,15 @@ class WriteOffOut(BaseModel):
     transaction_id: str | None
     version: int
     created_at: str
+
+
+class WriteOffListOut(BaseModel):
+    """Keyset page of the write-off committee register (issue #31
+    ledger (a).2 — the human-authorized read-contract expansion):
+    the same rows the by-id read serialises, live-first."""
+
+    items: list[WriteOffOut]
+    next_cursor: str | None
 
 
 class WriteOffVoteResultOut(BaseModel):
@@ -331,6 +349,27 @@ async def request_repayment_adjustment(
     return _adjustment_out(record)
 
 
+@router.get("/corrections/repayment-adjustments")
+async def list_repayment_adjustments(
+    ctx: CorrectionsViewCtx,
+    cursor: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> AdjustmentListOut:
+    """The pending-adjustments checker register (issue #31 ledger
+    (a).1): keyset, PENDING FIRST then newest first — the checker's
+    job order. Served under the existing corrections view gate;
+    explicit tenant predicate doubling RLS; bound parameters only."""
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        page = await corrections_service.list_adjustments(
+            session, ctx.tenant_id, cursor=cursor, limit=limit
+        )
+    return AdjustmentListOut(
+        items=[_adjustment_out(record) for record in page.items],
+        next_cursor=page.next_cursor,
+    )
+
+
 @router.get("/corrections/repayment-adjustments/{adjustment_id}")
 async def get_repayment_adjustment(
     adjustment_id: uuid.UUID, ctx: CorrectionsViewCtx
@@ -420,6 +459,28 @@ async def request_write_off(body: WriteOffRequestBody, ctx: CorrectionsCreateCtx
             session, ctx.tenant_id, ctx.user_id, body.loan_id, reason=body.reason
         )
     return _write_off_out(record)
+
+
+@router.get("/corrections/write-offs")
+async def list_write_offs(
+    ctx: CorrectionsViewCtx,
+    cursor: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> WriteOffListOut:
+    """The write-off committee register (issue #31 ledger (a).2):
+    keyset, LIVE (requested/approved) FIRST then newest first — the
+    committee's job order. Served under the existing corrections view
+    gate; explicit tenant predicate doubling RLS; bound parameters
+    only. Vote/void/posting semantics are untouched."""
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        page = await corrections_service.list_write_offs(
+            session, ctx.tenant_id, cursor=cursor, limit=limit
+        )
+    return WriteOffListOut(
+        items=[_write_off_out(record) for record in page.items],
+        next_cursor=page.next_cursor,
+    )
 
 
 @router.get("/corrections/write-offs/{write_off_id}")

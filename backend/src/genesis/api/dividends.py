@@ -117,6 +117,14 @@ class DeclarationOut(BaseModel):
     total_rebate: str
     total_payout: str
     status: str
+    #: Declarer attribution (issue #31 ledger (a).4 — the human-
+    #: authorized read-contract expansion): the EXISTING 0020 column
+    #: that already drives the server's declarer-cannot-vote/distribute
+    #: 403s, exposed as the bare staff UUID under least disclosure (the
+    #: !66/!70 exits precedent — resolving it stays behind
+    #: access_control). Nullable, never invented: a NULL (system-actor
+    #: declaration) serialises as an honest null.
+    requested_by: str | None
     decided_at: str | None
     distributed_at: str | None
     version: int
@@ -174,6 +182,7 @@ def _declaration_out(record: dividends_service.DeclarationRecord) -> Declaration
         total_rebate=str(record.total_rebate),
         total_payout=str(record.total_payout),
         status=record.status.value,
+        requested_by=str(record.requested_by) if record.requested_by else None,
         decided_at=record.decided_at.isoformat() if record.decided_at else None,
         distributed_at=record.distributed_at.isoformat() if record.distributed_at else None,
         version=record.version,

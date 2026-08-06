@@ -1731,3 +1731,224 @@ def test_cross_tenant_corrections_rows_are_invisible() -> None:
         assert res.status_code == 404
 
     asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Issue #31 batch 6 — ledger (a).1/(a).2: the corrections registers
+# (human-authorized read-contract expansion; read-only, expand-only)
+# ---------------------------------------------------------------------------
+
+
+async def _reject_adjustment(tid: uuid.UUID, adjustment_id: uuid.UUID, version: int = 1) -> None:
+    """Reject a pending adjustment through a distinct freshly-seeded
+    checker (the service enforces maker != checker regardless)."""
+    checker, _ = await _seed_extra_user(tid, "System Admin")
+    async with tenant_session(factory(), tid) as session:
+        await corrections_service.reject_repayment_adjustment(
+            session, tid, checker, adjustment_id, version=version, reason="register fixture"
+        )
+
+
+def test_a1_register_adjustments_lists_pending_first_with_exact_keyset_order() -> None:
+    """Ledger (a).1 ordering oracle, HAND-COMPUTED from creation order:
+    four repayments (500/600/700/800) each get an adjustment —
+    A1 (500, POSTED), A2 (600, PENDING), A3 (700, REJECTED),
+    A4 (800, PENDING), created strictly in that order. The checker's
+    register order is the PENDING band newest-first, then terminal
+    history newest-first: [A4, A2, A3, A1]. The limit=1 keyset walk
+    must reproduce EXACTLY that sequence page-by-page (opaque cursor
+    echoed verbatim) and terminate with a null cursor. Falsifiable:
+    drop the pending-first band from adjustments_register_sql and the
+    expected sequence breaks at page 1 (created_at DESC alone would
+    lead with A4 but page 2 would surface A3, not A2)."""
+
+    async def run() -> None:
+        tid, actor, token = await _seed_actor()
+        loan_id, _ = await _disburse(tid)
+
+        async def make(amount: str) -> corrections_service.AdjustmentRecord:
+            repayment = await _repay(tid, actor, loan_id, amount)
+            return await _request(tid, actor, await _repayment_id_for_txn(tid, repayment.txn_id))
+
+        a1 = await make("500.00")
+        checker, _ = await _seed_extra_user(tid, "System Admin")
+        await _approve(tid, checker, a1.id)  # POSTED
+        a2 = await make("600.00")  # PENDING
+        a3 = await make("700.00")
+        await _reject_adjustment(tid, a3.id)  # REJECTED
+        a4 = await make("800.00")  # PENDING
+        expected = [str(a4.id), str(a2.id), str(a3.id), str(a1.id)]
+
+        async with api_client() as client:
+            # Full page: the whole register in one read.
+            res = await client.get("/corrections/repayment-adjustments", headers=_headers(token))
+            assert res.status_code == 200, res.text
+            page = res.json()
+            assert [row["id"] for row in page["items"]] == expected
+            assert page["next_cursor"] is None
+            # Money strings serialise verbatim (blocker (a)): the
+            # PENDING leader carries its hand-computed allocation.
+            assert page["items"][0]["amount"] == "800.00"
+            assert page["items"][0]["status"] == "pending_approval"
+            assert page["items"][3]["status"] == "posted"
+
+            # limit=1 keyset walk reproduces the exact sequence. The
+            # opaque cursor travels URL-ENCODED via params (the house
+            # walk convention — it embeds an ISO timestamp whose "+"
+            # a raw interpolation would decode as a space).
+            seen: list[str] = []
+            cursor: str | None = None
+            for _ in range(4):
+                params: dict[str, str | int] = {"limit": 1}
+                if cursor:
+                    params["cursor"] = cursor
+                res = await client.get(
+                    "/corrections/repayment-adjustments", params=params, headers=_headers(token)
+                )
+                assert res.status_code == 200, res.text
+                body = res.json()
+                assert len(body["items"]) == 1
+                seen.append(body["items"][0]["id"])
+                cursor = body["next_cursor"]
+            assert seen == expected
+            assert cursor is None
+
+    asyncio.run(run())
+
+
+def test_a2_register_write_offs_lists_live_first_with_exact_keyset_order() -> None:
+    """Ledger (a).2 ordering oracle, HAND-COMPUTED from creation order
+    across four loans: W1 rejected (voided), W2 requested, W3 posted
+    (quorum 2 then executed), W4 approved (quorum 2, unposted) —
+    created strictly W1 < W2 < W3 < W4. The committee's register order
+    is the LIVE band (requested/approved) newest-first, then terminal
+    history newest-first: [W4, W2, W3, W1] — proving BOTH live
+    statuses lead and BOTH terminal statuses trail. The limit=1 keyset
+    walk reproduces exactly that sequence. Falsifiable: drop the
+    live-first band from write_offs_register_sql and page 1 leads with
+    W4 but page 2 surfaces W3, not W2."""
+
+    async def run() -> None:
+        tid, requester, token = await _seed_actor()
+        voter1, _ = await _seed_extra_user(tid, "Credit Committee")
+        voter2, _ = await _seed_extra_user(tid, "Credit Committee")
+
+        async def make() -> corrections_service.WriteOffRecord:
+            loan_id, _ = await _disburse(tid)
+            await _classify_npl(tid, loan_id)
+            return await _request_write_off(tid, requester, loan_id)
+
+        w1 = await make()
+        async with tenant_session(factory(), tid) as session:
+            await corrections_service.void_write_off(
+                session, tid, voter1, w1.id, version=1
+            )  # REJECTED
+        w2 = await make()  # REQUESTED
+        w3 = await make()
+        await _vote(tid, voter1, w3.id)
+        await _vote(tid, voter2, w3.id)
+        async with tenant_session(factory(), tid) as session:
+            await corrections_service.post_write_off(session, tid, voter1, w3.id)  # POSTED
+        w4 = await make()
+        await _vote(tid, voter1, w4.id)
+        await _vote(tid, voter2, w4.id)  # APPROVED (unposted)
+        expected = [str(w4.id), str(w2.id), str(w3.id), str(w1.id)]
+
+        async with api_client() as client:
+            res = await client.get("/corrections/write-offs", headers=_headers(token))
+            assert res.status_code == 200, res.text
+            page = res.json()
+            assert [row["id"] for row in page["items"]] == expected
+            assert page["next_cursor"] is None
+            statuses = [row["status"] for row in page["items"]]
+            assert statuses == ["approved", "requested", "posted", "rejected"]
+            # Verbatim snapshot money (untouched loans: balance
+            # 24,000.00, penalty 0.00 -> total 24,000.00).
+            assert page["items"][0]["total_written_off"] == "24000.00"
+
+            # The opaque cursor travels URL-ENCODED via params (the
+            # house walk convention — it embeds an ISO timestamp).
+            seen: list[str] = []
+            cursor: str | None = None
+            for _ in range(4):
+                params: dict[str, str | int] = {"limit": 1}
+                if cursor:
+                    params["cursor"] = cursor
+                res = await client.get(
+                    "/corrections/write-offs", params=params, headers=_headers(token)
+                )
+                assert res.status_code == 200, res.text
+                body = res.json()
+                assert len(body["items"]) == 1
+                seen.append(body["items"][0]["id"])
+                cursor = body["next_cursor"]
+            assert seen == expected
+            assert cursor is None
+
+    asyncio.run(run())
+
+
+def test_a3_register_routes_enforce_corrections_view_per_role() -> None:
+    """Both register LIST routes sit under the EXISTING corrections
+    view gate (never generic transactions): every seeded role probes
+    both reads and the outcome follows corrections x VIEW exactly —
+    200 (an empty register is still an authorised read) or 403.
+    Falsifiable: gate the routes on transactions:view and the Teller
+    suddenly reads the fraud-channel register, failing this matrix."""
+
+    async def run() -> None:
+        matrix = seed_matrix()
+        tid, _, _ = await _seed_actor()  # seeds the full permission matrix
+        for role_name in ROLE_NAMES:
+            _, token = await _seed_extra_user(tid, role_name)
+            can_view = matrix[role_name][Module.CORRECTIONS][Action.VIEW]
+            async with api_client() as client:
+                for path in ("/corrections/repayment-adjustments", "/corrections/write-offs"):
+                    res = await client.get(path, headers=_headers(token))
+                    if can_view:
+                        assert res.status_code == 200, (role_name, path, res.status_code)
+                    else:
+                        assert res.status_code == 403, (role_name, path, res.status_code)
+
+    asyncio.run(run())
+
+
+def test_registers_cross_tenant_invisible_and_rejections_echo_no_figures() -> None:
+    """Explicit tenant predicate doubling RLS: tenant A's adjustment
+    (1,000.00) and write-off (24,000.00) rows are INVISIBLE to tenant
+    B's register reads (200 with empty items — never a 403 oracle that
+    would confirm existence). Rejection paths echo NO figures (rule 7):
+    the Teller's 403 envelope and a forged-cursor 400 envelope carry
+    the category + correlation id ONLY — never a money string from the
+    register rows."""
+
+    async def run() -> None:
+        tid_a, actor_a, _ = await _seed_actor()
+        _, teller_token = await _seed_extra_user(tid_a, "Teller")
+        _, _, token_b = await _seed_actor()
+        loan_id, _ = await _disburse(tid_a)
+        repayment = await _repay(tid_a, actor_a, loan_id, "1000.00")
+        await _request(tid_a, actor_a, await _repayment_id_for_txn(tid_a, repayment.txn_id))
+        wo_loan, _ = await _disburse(tid_a)
+        await _classify_npl(tid_a, wo_loan)
+        await _request_write_off(tid_a, actor_a, wo_loan)
+
+        async with api_client() as client:
+            for path in ("/corrections/repayment-adjustments", "/corrections/write-offs"):
+                res = await client.get(path, headers=_headers(token_b))
+                assert res.status_code == 200, (path, res.status_code)
+                assert res.json() == {"items": [], "next_cursor": None}
+
+                forbidden = await client.get(path, headers=_headers(teller_token))
+                assert forbidden.status_code == 403
+                assert set(forbidden.json().keys()) == {"category", "correlation_id"}
+                for figure in ("1000.00", "24000.00"):
+                    assert figure not in forbidden.text
+
+                forged = await client.get(f"{path}?cursor=not-a-cursor", headers=_headers(token_b))
+                assert forged.status_code == 400
+                assert set(forged.json().keys()) == {"category", "correlation_id"}
+                for figure in ("1000.00", "24000.00"):
+                    assert figure not in forged.text
+
+    asyncio.run(run())

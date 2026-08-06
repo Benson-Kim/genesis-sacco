@@ -83,6 +83,22 @@ export function DividendsScreen() {
       ),
     },
     {
+      key: "declared_by",
+      header: "Declared by",
+      // Declarer attribution (issue #31 ledger (a).4): the SERVER's
+      // bare staff UUID via the short-id convention — least
+      // disclosure, no name/email is ever fetched for it. NULL is the
+      // honest unattributed affordance — never invented.
+      render: (declaration) =>
+        declaration.requested_by !== null ? (
+          <span className={styles.mono} title={declaration.requested_by}>
+            {declaration.requested_by.slice(0, 8)}
+          </span>
+        ) : (
+          <span className={styles.muted}>— (unattributed)</span>
+        ),
+    },
+    {
       key: "fy",
       header: "Financial year",
       render: (declaration) => (

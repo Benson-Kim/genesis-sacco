@@ -105,6 +105,11 @@ function declaredDeclaration(overrides: Partial<DeclarationRecord> = {}): Declar
     total_rebate: "108000.00",
     total_payout: "178000.10",
     status: "declared",
+    // Fixture default: an UNATTRIBUTED server record (requested_by
+    // null — e.g. a system-actor declaration). The witness-fallback
+    // legs below exercise exactly this branch; the server-truth legs
+    // override it per test (issue #31 ledger (a).4).
+    requested_by: null,
     decided_at: null,
     distributed_at: null,
     version: 7,
@@ -527,19 +532,22 @@ test("SoD STRUCTURAL (blocker (f), vote): the witnessed declarer gets NO vote af
   expect(mocked.voteOnDeclaration).not.toHaveBeenCalled();
 });
 
-test("witness honesty (the contract gap, stated): an UNWITNESSED maker renders the vote controls with the HONEST label — the read contract exposes no attribution and none is invented; the server 403 renders the least-disclosure banner, session intact", async () => {
+test("attribution honesty (NULL leg): an UNATTRIBUTED record (requested_by null) with no tab witness renders the vote controls with the HONEST label — nothing is invented; the server 403 renders the least-disclosure banner, session intact", async () => {
   const user = userEvent.setup();
-  // NO recordDividendMaker call: the declarer is unknown to this tab
-  // AND DeclarationOut carries no requested_by (unlike ExitOut) — the
-  // honest label states the gap and its #31 follow-up.
+  // NO recordDividendMaker call AND requested_by is null (the fixture
+  // default): both the server record and this tab are honest about
+  // not knowing the declarer — the label states it plainly.
   mocked.voteOnDeclaration.mockRejectedValue(new ApiError(403, "forbidden", "corr-f"));
   mountScreen();
 
   expect(dividendMakerOf(DECL_ID)).toBe(DIVIDEND_MAKER_UNKNOWN);
   await openDetail(user);
   expect(
-    await screen.findByText(/not exposed by the read contract .*recorded on #31/),
+    await screen.findByText(/unattributed on the server record .*attribution is never invented/),
   ).toBeInTheDocument();
+  // The NULL affordance renders in BOTH consumption sites: the
+  // register's "Declared by" column and the drawer's detail grid.
+  expect(screen.getAllByText("— (unattributed)").length).toBeGreaterThanOrEqual(2);
   // Controls DO render (the server remains the enforcer)…
   await user.click(screen.getByRole("button", { name: "Vote approve" }));
   await user.click(await armDanger(user, "Confirm approve vote"));
@@ -550,6 +558,80 @@ test("witness honesty (the contract gap, stated): an UNWITNESSED maker renders t
   expect(screen.queryByText(/forbidden/i)).toBeNull();
   expect(mocked.voteOnDeclaration).toHaveBeenCalledTimes(1);
   expect(hasSession()).toBe(true);
+});
+
+test("SERVER TRUTH SUPERSEDES the per-tab witness (issue #31 ledger (a).4): a record attributed to YOU withholds the vote controls even though this tab witnessed nothing; the short id renders under least disclosure", async () => {
+  const user = userEvent.setup();
+  // NO recordDividendMaker call — the registry knows nothing; the
+  // SERVER attributes the declaration to the signed-in operator.
+  mocked.fetchDeclarationsPage.mockResolvedValue({
+    items: [declaredDeclaration({ requested_by: ADMIN_ID })],
+    nextCursor: null,
+  });
+  mocked.fetchDeclaration.mockResolvedValue(declaredDeclaration({ requested_by: ADMIN_ID }));
+  mountScreen();
+
+  expect(dividendMakerOf(DECL_ID)).toBe(DIVIDEND_MAKER_UNKNOWN);
+  await openDetail(user);
+  // The panel's SoD self-check matches on SERVER truth — checker
+  // controls never mount for the attributed declarer.
+  expect(
+    await screen.findByText(/You declared this dividend \(server attribution\)/),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Vote approve" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Vote reject" })).toBeNull();
+  expect(mocked.voteOnDeclaration).not.toHaveBeenCalled();
+});
+
+test("SERVER TRUTH SUPERSEDES a CONTRADICTING witness: the tab witnessed the signed-in operator as maker, but the server attributes ANOTHER officer — controls render (the witness is demoted, never preferred) and the short id renders with the full UUID as title", async () => {
+  const user = userEvent.setup();
+  // The per-tab registry claims the signed-in operator declared it…
+  recordDividendMaker(DECL_ID, ADMIN_ID);
+  // …but the SERVER record attributes a different officer: server
+  // truth wins and the checker controls mount.
+  mocked.fetchDeclarationsPage.mockResolvedValue({
+    items: [declaredDeclaration({ requested_by: OTHER_OFFICER_ID })],
+    nextCursor: null,
+  });
+  mocked.fetchDeclaration.mockResolvedValue(
+    declaredDeclaration({ requested_by: OTHER_OFFICER_ID }),
+  );
+  mountScreen();
+
+  await openDetail(user);
+  expect(
+    await screen.findByText(
+      new RegExp(`Declaring officer ${OTHER_OFFICER_ID.slice(0, 8)} \\(server attribution\\)`),
+    ),
+  ).toBeInTheDocument();
+  // Short-id render, full UUID only in the title attribute (least
+  // disclosure — no name/email is ever fetched). The drawer's Kv and
+  // the register column both carry it.
+  const attributed = screen.getAllByTitle(OTHER_OFFICER_ID);
+  expect(attributed.length).toBeGreaterThan(0);
+  for (const el of attributed) {
+    expect(el).toHaveTextContent(OTHER_OFFICER_ID.slice(0, 8));
+  }
+  expect(screen.getByRole("button", { name: "Vote approve" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Vote reject" })).toBeEnabled();
+});
+
+test("attribution XSS inertness: a hostile requested_by string renders as inert sliced TEXT (no element injection anywhere)", async () => {
+  const user = userEvent.setup();
+  const hostile = "<img src=x onerror=window.__pwned=1>";
+  mocked.fetchDeclarationsPage.mockResolvedValue({
+    items: [declaredDeclaration({ requested_by: hostile })],
+    nextCursor: null,
+  });
+  mocked.fetchDeclaration.mockResolvedValue(declaredDeclaration({ requested_by: hostile }));
+  const { container } = mountScreen();
+
+  // The register column renders the sliced hostile string as TEXT.
+  expect(await screen.findByText(hostile.slice(0, 8))).toBeInTheDocument();
+  await openDetail(user);
+  expect(container.querySelector("img")).toBeNull();
+  expect(container.querySelector("script")).toBeNull();
+  expect((window as { __pwned?: unknown }).__pwned).toBeUndefined();
 });
 
 test("DISTRIBUTE (F-M1 + single write): the dialog FRESH-READS the record (staleTime 0 — a second read on top of the drawer's); a triple-clicked confirm runs ONCE; the run report renders VERBATIM incl. the issue-#19 unclaimed leg; a PARTIAL run keeps the re-run armed", async () => {

@@ -935,6 +935,67 @@ def test_api_rejects_caller_supplied_money_parameters_with_422() -> None:
     asyncio.run(run())
 
 
+def test_declaration_read_contract_exposes_requested_by_verbatim_or_null() -> None:
+    """Issue #31 batch 6, ledger (a).4 (human-authorized read-contract
+    expansion): DeclarationOut carries the EXISTING 0020 requested_by
+    column — the same persisted value that already drives the
+    declarer-cannot-vote/distribute 403s — as the bare staff UUID.
+
+    Oracles: (1) an API declaration by the seeded admin reads back
+    requested_by == that admin's UUID string on BOTH the detail and
+    the list read; (2) attribution is NEVER invented — a service-level
+    declaration with actor None (the system-actor branch) reads back
+    an honest JSON null; (3) nullable-NOT-optional: the key is PRESENT
+    on every serialised row. Ships NO migration (the column and its
+    write-once pin are 0020's). Falsifiable: drop the field from
+    DeclarationOut and the key-presence assertions fail; map it from
+    anything but record.requested_by and the UUID equality fails."""
+
+    async def run() -> None:
+        tid, admin_id, token = await seed_actor()
+        await _configure_dividends(tid, admin_id)
+        await _member_with_share_history(tid, amount="12000.00", on=FY.start)
+        headers = {"authorization": f"Bearer {token}"}
+        async with api_client() as client:
+            declared = await client.post(
+                "/dividends/declarations",
+                json={},
+                headers={**headers, "idempotency-key": f"dcl-{uuid.uuid4().hex[:10]}"},
+            )
+            assert declared.status_code == 201, declared.text
+            body = declared.json()
+            assert body["requested_by"] == str(admin_id)
+
+            detail = await client.get(f"/dividends/declarations/{body['id']}", headers=headers)
+            assert detail.status_code == 200
+            assert detail.json()["requested_by"] == str(admin_id)
+
+            listing = await client.get("/dividends/declarations", headers=headers)
+            assert listing.status_code == 200
+            rows = listing.json()["items"]
+            assert [r["id"] for r in rows] == [body["id"]]
+            assert rows[0]["requested_by"] == str(admin_id)
+            # Nullable, NOT optional: the key is present on the row.
+            assert "requested_by" in rows[0]
+
+        # The NULL leg (system-actor declaration): void the live FY
+        # slot first, then declare with NO actor — the honest null.
+        async with tenant_session(factory(), tid) as session:
+            await void_declaration(session, tid, admin_id, uuid.UUID(body["id"]), version=1)
+        system_declared = await declare_dividend(_scope(tid), tid, None, today=TODAY)
+        assert system_declared.requested_by is None
+        async with api_client() as client:
+            detail = await client.get(
+                f"/dividends/declarations/{system_declared.id}", headers=headers
+            )
+            assert detail.status_code == 200
+            payload = detail.json()
+            assert "requested_by" in payload
+            assert payload["requested_by"] is None
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # 8. Distribution-vs-lock race: SKIP LOCKED + idempotent re-run
 # ---------------------------------------------------------------------------

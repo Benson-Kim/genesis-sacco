@@ -9,7 +9,10 @@
  *   ever enters a URL.
  * - Keyset pagination ONLY on the worklist and notes reads (gate 1.3):
  *   the opaque cursor echoes back VERBATIM; no offset/page parameter
- *   exists, and the worklist declares NO filter parameters at all.
+ *   exists. The worklist sends ONLY the two DECLARED filter params
+ *   (issue #31 ledger (a).3) — code-owned vocabulary values verbatim,
+ *   "" meaning ABSENT (the no-filter request stays byte-identical to
+ *   the as-built read); the exact wire key set is pinned.
  * - NO money parameter exists in ANY body, and NO timestamp can even
  *   be sent (addendum A7): every wire body is asserted KEY-BY-KEY —
  *   open {loan_id}, assign {version, assignee_id}, notes {note}, and
@@ -212,9 +215,12 @@ afterEach(() => {
   session.clearSession();
 });
 
-test("GET /recovery-cases: keyset params ONLY (no offset/page/filter); the opaque cursor echoes back VERBATIM; secrets ride as HEADERS", async () => {
-  await recoveryApi.fetchWorklistPage(null);
-  const page = await recoveryApi.fetchWorklistPage("cursor-page-2");
+/** The default (no-filter) view — "" values send NOTHING. */
+const NO_FILTERS = { status: "", classification: "" } as const;
+
+test("GET /recovery-cases: keyset params ONLY; the no-filter request stays BYTE-IDENTICAL to the as-built read (no status/classification key on the wire); the opaque cursor echoes back VERBATIM; secrets ride as HEADERS", async () => {
+  await recoveryApi.fetchWorklistPage(NO_FILTERS, null);
+  const page = await recoveryApi.fetchWorklistPage(NO_FILTERS, "cursor-page-2");
   expect(calls).toHaveLength(2);
 
   const first = new URL(calls[0]!.url);
@@ -223,7 +229,8 @@ test("GET /recovery-cases: keyset params ONLY (no offset/page/filter); the opaqu
   expect(first.searchParams.has("cursor")).toBe(false);
   expect(first.searchParams.has("offset")).toBe(false);
   expect(first.searchParams.has("page")).toBe(false);
-  // The contract declares NO filter parameters — none may be invented.
+  // "" filters are ABSENT from the URL — the server's as-built default
+  // (OPEN, most delinquent first) is requested byte-identically.
   expect(first.searchParams.has("status")).toBe(false);
   expect(first.searchParams.has("classification")).toBe(false);
   expect(first.searchParams.has("assignee")).toBe(false);
@@ -238,6 +245,31 @@ test("GET /recovery-cases: keyset params ONLY (no offset/page/filter); the opaqu
 
   expect(page.items[0]?.days_past_due).toBe(120);
   expect(page.nextCursor).toBe("cursor-page-2");
+});
+
+test("GET /recovery-cases with the DECLARED filters (issue #31 ledger (a).3): status and classification travel as the code-owned vocabulary values VERBATIM, alongside keyset params ONLY — no undeclared key can reach the wire", async () => {
+  await recoveryApi.fetchWorklistPage(
+    { status: "irrecoverable_pending_write_off", classification: "loss" },
+    "cursor-page-2",
+  );
+  expect(calls).toHaveLength(1);
+
+  const url = new URL(calls[0]!.url);
+  expect(url.pathname).toBe("/recovery-cases");
+  // The two declared params, the vocabulary member verbatim (the
+  // server binds it; an out-of-vocabulary value is its 422).
+  expect(url.searchParams.get("status")).toBe("irrecoverable_pending_write_off");
+  expect(url.searchParams.get("classification")).toBe("loss");
+  // Keyset params preserved beside the filters; the EXACT key set is
+  // pinned — an undeclared/invented parameter fails this test.
+  expect(url.searchParams.get("cursor")).toBe("cursor-page-2");
+  expect(url.searchParams.get("limit")).toBe(String(recoveryApi.WORKLIST_PAGE_SIZE));
+  expect([...url.searchParams.keys()].sort()).toEqual([
+    "classification",
+    "cursor",
+    "limit",
+    "status",
+  ]);
 });
 
 test("POST /recovery-cases: the body carries {loan_id} and NOTHING else — no timestamp, classification or DPD can even be sent (addendum A7); EXTRA response keys are STRIPPED", async () => {
@@ -376,7 +408,7 @@ test("a 422 surfaces field-level messages as ONE typed ApiError (canonical field
 
 test("LEAST DISCLOSURE (addendum A5): a money key smuggled onto a worklist row is STRIPPED at the boundary — no money field exists in the parsed shape", async () => {
   worklistVariant = "money-smuggle";
-  const page = await recoveryApi.fetchWorklistPage(null);
+  const page = await recoveryApi.fetchWorklistPage(NO_FILTERS, null);
   const row = page.items[0]!;
   // The A5 posture: the stripped row carries workflow facts only.
   expect("balance" in row).toBe(false);
@@ -396,7 +428,9 @@ test("LEAST DISCLOSURE (addendum A5): a money key smuggled onto a worklist row i
 
 test("unknown worklist classification is a contract violation and is REJECTED — it can never render a pill", async () => {
   worklistVariant = "unknown-status";
-  const thrown = await recoveryApi.fetchWorklistPage(null).catch((error: unknown) => error);
+  const thrown = await recoveryApi
+    .fetchWorklistPage(NO_FILTERS, null)
+    .catch((error: unknown) => error);
   expect(thrown).toBeInstanceOf(Error);
   expect(thrown).not.toBeInstanceOf(ApiError);
   expect(String(thrown)).toContain("classification");
@@ -404,7 +438,9 @@ test("unknown worklist classification is a contract violation and is REJECTED �
 
 test("a garbage SLA timestamp is REJECTED at the boundary (the !63 F-R4 lesson) — 'Invalid Date' can never render on the case record", async () => {
   worklistVariant = "garbage-timestamp";
-  const thrown = await recoveryApi.fetchWorklistPage(null).catch((error: unknown) => error);
+  const thrown = await recoveryApi
+    .fetchWorklistPage(NO_FILTERS, null)
+    .catch((error: unknown) => error);
   expect(thrown).toBeInstanceOf(Error);
   expect(thrown).not.toBeInstanceOf(ApiError);
   expect(String(thrown)).toContain("opened_at");

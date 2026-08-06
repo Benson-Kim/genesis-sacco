@@ -2,17 +2,16 @@
  * Per-tab dividend-declarer registry (issue #31 batch 2 — separation
  * of duties, UX side; the exits/applications makerRegistry precedent).
  *
- * WHY THIS IS THE ONLY WITNESS HERE (contract honesty): the DB
- * carries dividend_declarations.requested_by (migration 0020) and the
- * server enforces it — the declarer can neither VOTE on nor
- * DISTRIBUTE their own declaration (403, application/dividends.py) —
- * but DeclarationOut does NOT expose the field, so unlike the exits
- * and applications modules after !66/!71 there is NO server
- * attribution for this client to prefer. That read-contract gap is
- * recorded on issue #31 as a contract follow-up (the !66 R3/R4
- * pattern: expose the bare UUID under least disclosure); it is NEVER
- * faked client-side. Until it lands, this per-tab registry is the
- * sole maker witness feeding MakerCheckerPanel.
+ * DEMOTED TO A FALLBACK (issue #31 ledger (a).4 — the human-authorized
+ * read-contract expansion): DeclarationOut now exposes `requested_by`
+ * (the migration-0020 column the server's declarer-cannot-vote /
+ * declarer-cannot-distribute 403s already enforce) as the bare
+ * nullable staff UUID — SERVER TRUTH, and it SUPERSEDES this per-tab
+ * witness everywhere (the exits !66/0036 precedent). This registry is
+ * consulted ONLY when the server record is unattributed
+ * (requested_by === null — e.g. a system-actor declaration): for
+ * those rows the tab's own witness is still honest signal; nothing is
+ * ever invented for rows this tab did not witness.
  *
  * Scope and honesty: the registry is per-tab and in-memory — it cannot
  * know a declaration made by another operator or in another tab, and

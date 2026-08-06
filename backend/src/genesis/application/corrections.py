@@ -392,6 +392,87 @@ async def get_adjustment(
     return _row_to_adjustment(row)
 
 
+# ---------------------------------------------------------------------------
+# Corrections registers (issue #31 batch 6, ledger (a).1/(a).2 — the
+# HUMAN-AUTHORIZED read-contract expansion): keyset LIST reads so the
+# checker/committee no longer works from a hand-carried id. Read-only;
+# no mutation or by-id semantics change.
+# ---------------------------------------------------------------------------
+
+
+def _parse_register_cursor(cursor: str, *, entity: str) -> tuple[bool, datetime, str]:
+    """Parse an opaque '<actionable 0|1>|<created_at iso>|<uuid>' keyset
+    cursor for the two-band (actionable-first) register order. The
+    leading flag is the band of the last row of the previous page; a
+    forged flag is rejected exactly like a forged timestamp."""
+    flag_raw, _, rest = cursor.partition("|")
+    if flag_raw not in {"0", "1"}:
+        raise InvalidInputError(f"invalid {entity} cursor")
+    c_ts, c_id = parse_created_id_cursor(rest, entity=entity)
+    return flag_raw == "1", c_ts, c_id
+
+
+def _build_register_cursor(actionable: bool, created_at: datetime, row_id: object) -> str:
+    return f"{1 if actionable else 0}|{build_created_id_cursor(created_at, row_id)}"
+
+
+def adjustments_register_sql(*, with_cursor: bool) -> str:
+    """The pending-adjustments checker register (ledger (a).1).
+
+    ORDER BY (status = 'pending_approval') DESC, created_at DESC,
+    id DESC — the checker's job order: PENDING FIRST, newest first
+    inside each band; terminal history behind. Uniform-DESC keyset row
+    comparison, served by idx_repayment_adjustments_register (0038,
+    shipped with this query — gate 1.3; EXPLAIN-asserted, falsifiable
+    by dropping it). Static fragments chosen in code; every value is a
+    bound parameter (v1.1 rule 6); explicit tenant predicate on top of
+    forced RLS (rule 4).
+    """
+    cursor = (
+        "AND ((status = 'pending_approval'), created_at, id) "
+        "< (CAST(:c_flag AS boolean), CAST(:c_ts AS timestamptz), CAST(:c_id AS uuid)) "
+    )
+    return (
+        f"SELECT {_ADJUSTMENT_COLS} FROM repayment_adjustments "  # noqa: S608
+        "WHERE tenant_id = CAST(:tid AS uuid) "
+        f"{cursor if with_cursor else ''}"
+        "ORDER BY (status = 'pending_approval') DESC, created_at DESC, id DESC "
+        "LIMIT :limit"
+    )
+
+
+@dataclass(frozen=True)
+class AdjustmentPage:
+    items: list[AdjustmentRecord]
+    next_cursor: str | None
+
+
+async def list_adjustments(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    cursor: str | None,
+    limit: int,
+) -> AdjustmentPage:
+    """Keyset adjustments register, pending-first (ledger (a).1)."""
+    params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
+    if cursor is not None:
+        c_flag, c_ts, c_id = _parse_register_cursor(cursor, entity="adjustment register")
+        params["c_flag"] = c_flag
+        params["c_ts"] = c_ts
+        params["c_id"] = c_id
+    stmt = text(adjustments_register_sql(with_cursor=cursor is not None))
+    rows = (await session.execute(stmt, params)).all()
+    items = [_row_to_adjustment(r) for r in rows[:limit]]
+    next_cursor = None
+    if len(rows) > limit and items:
+        last = items[-1]
+        next_cursor = _build_register_cursor(
+            last.status is AdjustmentStatus.PENDING_APPROVAL, last.created_at, last.id
+        )
+    return AdjustmentPage(items=items, next_cursor=next_cursor)
+
+
 @dataclass(frozen=True)
 class AdjustmentResult:
     adjustment_id: uuid.UUID
@@ -1309,6 +1390,72 @@ async def get_write_off(
     if row is None:
         raise NotFoundError(f"loan write-off {write_off_id} not found")
     return _row_to_write_off(row)
+
+
+#: The committee-actionable (LIVE) write-off statuses — the register's
+#: leading band (a requested row awaits votes; an approved row awaits
+#: posting). 0038 pins the same set in its index expression.
+LIVE_WRITE_OFF_STATUSES: frozenset[WriteOffStatus] = frozenset(
+    {WriteOffStatus.REQUESTED, WriteOffStatus.APPROVED}
+)
+
+
+def write_offs_register_sql(*, with_cursor: bool) -> str:
+    """The write-off committee register (ledger (a).2).
+
+    ORDER BY (status IN ('requested', 'approved')) DESC,
+    created_at DESC, id DESC — the committee's job order: LIVE rows
+    (awaiting votes or posting) FIRST, newest first inside each band;
+    terminal history (rejected/posted) behind. Uniform-DESC keyset row
+    comparison, served by idx_loan_write_offs_register (0038, shipped
+    with this query — gate 1.3; EXPLAIN-asserted, falsifiable by
+    dropping it). Static fragments chosen in code; every value is a
+    bound parameter (v1.1 rule 6); explicit tenant predicate on top of
+    forced RLS (rule 4).
+    """
+    cursor = (
+        "AND ((status IN ('requested', 'approved')), created_at, id) "
+        "< (CAST(:c_flag AS boolean), CAST(:c_ts AS timestamptz), CAST(:c_id AS uuid)) "
+    )
+    return (
+        f"SELECT {_WRITE_OFF_COLS} FROM loan_write_offs "  # noqa: S608
+        "WHERE tenant_id = CAST(:tid AS uuid) "
+        f"{cursor if with_cursor else ''}"
+        "ORDER BY (status IN ('requested', 'approved')) DESC, created_at DESC, id DESC "
+        "LIMIT :limit"
+    )
+
+
+@dataclass(frozen=True)
+class WriteOffPage:
+    items: list[WriteOffRecord]
+    next_cursor: str | None
+
+
+async def list_write_offs(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    cursor: str | None,
+    limit: int,
+) -> WriteOffPage:
+    """Keyset write-off register, live-first (ledger (a).2)."""
+    params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
+    if cursor is not None:
+        c_flag, c_ts, c_id = _parse_register_cursor(cursor, entity="write-off register")
+        params["c_flag"] = c_flag
+        params["c_ts"] = c_ts
+        params["c_id"] = c_id
+    stmt = text(write_offs_register_sql(with_cursor=cursor is not None))
+    rows = (await session.execute(stmt, params)).all()
+    items = [_row_to_write_off(r) for r in rows[:limit]]
+    next_cursor = None
+    if len(rows) > limit and items:
+        last = items[-1]
+        next_cursor = _build_register_cursor(
+            last.status in LIVE_WRITE_OFF_STATUSES, last.created_at, last.id
+        )
+    return WriteOffPage(items=items, next_cursor=next_cursor)
 
 
 async def request_write_off(

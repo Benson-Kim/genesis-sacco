@@ -28,9 +28,10 @@
  *   reload-and-re-enter flow with an INFORMATIONAL notice +
  *   announce() (!60 F5); the failed request is NEVER replayed.
  * - The result panel renders the SERVER's snapshot VERBATIM (blocker
- *   (a)). The maker identity this tab witnessed is recorded for the
- *   MakerCheckerPanel SoD check (the ONLY witness available —
- *   DeclarationOut exposes no attribution field; see makerRegistry).
+ *   (a)). The maker identity this tab witnessed is still recorded,
+ *   but only as the FALLBACK for unattributed rows — DeclarationOut
+ *   now exposes requested_by (issue #31 ledger (a).4) and server
+ *   truth supersedes the per-tab witness; see makerRegistry.
  */
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
