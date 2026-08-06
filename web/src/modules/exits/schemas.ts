@@ -184,3 +184,42 @@ export const exitRequestEntrySchema = z.object({
 });
 
 export type ExitRequestEntry = z.infer<typeof exitRequestEntrySchema>;
+
+/**
+ * Advisory exit-eligibility facts (ExitEligibilityOut,
+ * `GET /member-exits/eligibility/{member_id}` — P15 batch 5, U6: the
+ * prototype's vExit() criteria rows, surfaced BEFORE a request is
+ * submitted).
+ *
+ * COUNTS AND BOOLEANS ONLY — the contract carries NO amount (least
+ * disclosure, gate 1.6), so no money shape exists at this boundary and
+ * nothing here may ever feed fmtKes. KEY-EXACT and REQUIRED: no field
+ * in this contract is nullable — a missing key is a contract violation
+ * and is REJECTED, never defaulted (nullable-not-optional posture; here
+ * that means neither is allowed). ADVISORY only: the read is computed
+ * WITHOUT locks — the BINDING verdict stays with the server's locked
+ * recomputes at request time and again at settlement; the client
+ * renders the facts verbatim and NEVER re-derives the verdict from the
+ * component facts (advisory_eligible is the server's own conjunction).
+ */
+export const exitEligibilitySchema = z.object({
+  member_id: z.string(),
+  /** Reject-unknowns, mirroring the members boundary: an unrecognised
+   * status must never label a checklist row. */
+  member_status: statementMemberStatusSchema,
+  status_allows_exit: z.boolean(),
+  open_exit_exists: z.boolean(),
+  /** Counts are non-negative INTEGERS — a float, a negative or a
+   * stringified number is a contract violation and is REJECTED (it
+   * would silently mislabel a blocker row). */
+  live_guarantees_count: z.number().int().nonnegative(),
+  open_applications_count: z.number().int().nonnegative(),
+  /** Informational, NOT a blocker — active loans net within the
+   * settlement (the P10 early-settlement rule). */
+  active_loans_count: z.number().int().nonnegative(),
+  unresolved_writeoff_claim: z.boolean(),
+  advisory_eligible: z.boolean(),
+  as_of: timestampSchema,
+});
+
+export type ExitEligibility = z.infer<typeof exitEligibilitySchema>;
