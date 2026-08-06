@@ -285,7 +285,7 @@ export function ClosePeriodDialog({ onClose }: Readonly<{ onClose: () => void }>
 
       {confirmEntry !== null && (
         <ConfirmDangerModal
-          title="Close accounting period"
+          title="Confirm period close"
           confirmPhrase={monthPhrase(confirmEntry)}
           confirmLabel="Close period"
           pending={close.isPending}
