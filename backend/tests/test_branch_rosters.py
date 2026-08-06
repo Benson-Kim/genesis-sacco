@@ -232,7 +232,7 @@ def test_roster_404_before_facts_unknown_and_cross_tenant() -> None:
     read; the rejection echoes no roster fact."""
 
     async def run() -> None:
-        tid_a, _, token_a = await seed_actor()
+        _, _, token_a = await seed_actor()
         _, _, token_b = await seed_actor()
         foreign_branch = await _create_branch(token_b, f"F-{uuid.uuid4().hex[:8]}")
         headers = {"authorization": f"Bearer {token_a}"}

@@ -136,7 +136,7 @@ def test_legs_404_before_facts_unknown_and_cross_tenant() -> None:
     rejection echoes no account and no amount."""
 
     async def run() -> None:
-        tid_a, _, token_a = await seed_actor()
+        _, _, token_a = await seed_actor()
         tid_b, _, _ = await seed_actor()
         mid_b = await seed_member(tid_b, name="Foreign Legs Member")
         foreign_txn = await seed_three_leg_repayment(tid_b, mid_b)

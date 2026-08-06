@@ -57,7 +57,8 @@ const aggregates = {
 };
 
 function withoutBranchId(row: Record<string, unknown>): Record<string, unknown> {
-  const { branch_id: _omitted, ...rest } = row;
+  const rest = { ...row };
+  delete rest["branch_id"];
   return rest;
 }
 

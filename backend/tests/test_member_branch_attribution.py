@@ -53,7 +53,7 @@ AGGREGATE_KEYS = {
 
 def test_member_reads_carry_nullable_branch_attribution() -> None:
     async def run() -> None:
-        tid, _, token = await seed_actor()
+        _, _, token = await seed_actor()
         headers = {"authorization": f"Bearer {token}"}
         async with api_client() as client:
             # Create: a new member starts UNASSIGNED — branch_id null,
