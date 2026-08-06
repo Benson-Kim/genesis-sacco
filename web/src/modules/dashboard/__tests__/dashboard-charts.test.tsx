@@ -170,7 +170,9 @@ describe("chart rendering — verbatim server geometry, never derived", () => {
     // Donut: server integers as text; ring is aria-hidden geometry.
     expect(screen.getByTestId("performing-donut")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getAllByText("75%").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("25%")).toBeInTheDocument();
+    // "25%" legitimately renders TWICE from the fixture: the donut's
+    // npl_pct stat AND the loss classification's pct text.
+    expect(screen.getAllByText("25%").length).toBeGreaterThanOrEqual(2);
 
     // Classification bars: name + pct TEXT (colour-never-alone) with
     // widths exactly the server share.

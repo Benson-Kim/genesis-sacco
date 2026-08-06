@@ -174,9 +174,13 @@ describe("ViewExportDrawer", () => {
   });
 
   it("hostile artifact cells render as inert TEXT (XSS)", async () => {
+    // The payload carries quotes, so on the wire it must ride as a
+    // QUOTED cell with doubled quotes (the parser's own strict
+    // grammar — a bare quote in an unquoted cell rightly THROWS).
     const hostile = '<img src=x onerror="window.__pwnedView=1">';
+    const wireCell = `"${hostile.replaceAll('"', '""')}"`;
     mockGet.mockResolvedValue({
-      response: streamResponse({ text: `A\r\n${hostile}\r\n` }),
+      response: streamResponse({ text: `A\r\n${wireCell}\r\n` }),
     });
     const { container } = renderDrawer();
     expect(await screen.findByText(hostile)).toBeInTheDocument();

@@ -137,9 +137,11 @@ function mountDrawer() {
   );
 }
 
-/** Select the (only) member and wait for the checklist to land. */
+/** Select the (only) member and wait for the checklist to land. The
+ * option list is async (keyset page) — wait for it before selecting. */
 async function selectMember(user: ReturnType<typeof userEvent.setup>) {
-  await user.selectOptions(await screen.findByLabelText("Member"), MEMBER_ID);
+  await screen.findByRole("option", { name: /Jane Wanjiku/ });
+  await user.selectOptions(screen.getByLabelText("Member"), MEMBER_ID);
   return await screen.findByTestId("eligibility-checklist");
 }
 
@@ -231,7 +233,8 @@ test("advisory-only degradation: a FAILED eligibility read never gates — the h
   const user = userEvent.setup();
   mountDrawer();
 
-  await user.selectOptions(await screen.findByLabelText("Member"), MEMBER_ID);
+  await screen.findByRole("option", { name: /Jane Wanjiku/ });
+  await user.selectOptions(screen.getByLabelText("Member"), MEMBER_ID);
 
   // The honest degradation note (Providers retry the query ONCE with a
   // backoff before erroring — allow for the retry delay).

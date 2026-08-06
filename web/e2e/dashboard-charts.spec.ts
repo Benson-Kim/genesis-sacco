@@ -229,8 +229,10 @@ test("the four #32 affordances render the SERVER's geometry verbatim; charts sta
     await expect(page.getByTestId(id)).toHaveAttribute("aria-hidden", "true");
   }
   // …while the tables/stat text stay the figures of record — the
-  // reversal month's SIGN renders verbatim in the flows TABLE.
-  await expect(page.getByText("KES -200,000.00")).toBeVisible();
+  // reversal month's SIGN renders verbatim in the flows TABLE (the
+  // table uses the unlabelled fmtAmount; the KES label lives on the
+  // stat cards).
+  await expect(page.getByRole("cell", { name: "-200,000.00" })).toBeVisible();
   await expect(page.getByText("KES 1,234,567.10")).toBeVisible();
 
   // Client hygiene: nothing left the page except the app itself and
@@ -249,7 +251,7 @@ test("a summary WITHOUT the charts slice renders the tables honestly with ZERO c
 
   // The figures of record are all there…
   await expect(page.getByText("KES 1,234,567.10")).toBeVisible();
-  await expect(page.getByText("KES -200,000.00")).toBeVisible();
+  await expect(page.getByRole("cell", { name: "-200,000.00" })).toBeVisible();
 
   // …and NO geometry exists anywhere: absent slice, absent charts.
   await expect(page.getByTestId("sparkline-gold")).toHaveCount(0);

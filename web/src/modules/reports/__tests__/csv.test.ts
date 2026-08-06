@@ -71,7 +71,12 @@ describe("parseCsv — the backend CsvBuilder grammar", () => {
   });
 
   it("hostile markup survives as verbatim TEXT cells (inertness is the renderer's job, fidelity is ours)", () => {
+    // The payload carries quotes, so the WIRE cell must be quoted with
+    // doubled quotes (RFC 4180 — the stray-quote leg above proves the
+    // unquoted form is rightly rejected); the PARSED value is the
+    // hostile string byte-identically.
     const hostile = '<img src=x onerror="steal()">';
-    expect(parseCsv(`A\r\n${hostile}\r\n`)).toEqual([["A"], [hostile]]);
+    const wireCell = `"${hostile.replaceAll('"', '""')}"`;
+    expect(parseCsv(`A\r\n${wireCell}\r\n`)).toEqual([["A"], [hostile]]);
   });
 });

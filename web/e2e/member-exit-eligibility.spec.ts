@@ -186,7 +186,9 @@ async function login(page: Page): Promise<void> {
 async function openDrawerAndPick(page: Page): Promise<void> {
   await page.getByRole("link", { name: "Member exit" }).click();
   await page.getByRole("button", { name: "+ Request exit" }).click();
-  await page.getByLabel("Member").selectOption(MEMBER_ID);
+  // exact: the drawer's own dialog label ("Request member exit")
+  // substring-matches a bare "Member" under strict mode.
+  await page.getByLabel("Member", { exact: true }).selectOption(MEMBER_ID);
 }
 
 test("happy path: the checklist renders the server's facts VERBATIM (counts/booleans, NO amount) BEFORE submission; the request then commits exactly ONE key-exact POST", async ({

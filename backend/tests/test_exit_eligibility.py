@@ -146,7 +146,7 @@ async def _seed_recovery(
             text(
                 "INSERT INTO transactions (id, tenant_id, txn_ref, member_id, type, "
                 "amount, channel, occurred_at) VALUES (CAST(:id AS uuid), "
-                "CAST(:tid AS uuid), :ref, CAST(:m AS uuid), 'recovery', "
+                "CAST(:tid AS uuid), :ref, CAST(:m AS uuid), 'loan_recovery', "
                 ":amount, 'bank', :ts)"
             ),
             {
