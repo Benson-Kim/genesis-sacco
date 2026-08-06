@@ -12,9 +12,10 @@ Prompt format: ROLE / DEPENDS / PROMPT (give verbatim to the executor) / EXIT.
 
 ## STATUS REGISTER (authoritative — update in the same MR as the work)
 
-Evidence-based as of main @ 2026-08-03, post-!51/!52/!53/!54 merges
-(alembic head on main 0034; no in-flight migration claims — next free
-0035; see the registry deltas below). Legend: ✅ DONE (merged to main, EXIT met) · 🔄 IN PROGRESS
+Evidence-based as of main @ `34f4ace` (2026-08-06), post-!70–!78
+merges (alembic head on main **0038** as-merged; ONE in-flight claim —
+0039 is the #31 batch-8 MR's (!79), `INCOMING` per this register's own
+convention, never as-built; see the registry deltas below). Legend: ✅ DONE (merged to main, EXIT met) · 🔄 IN PROGRESS
 (open MR cited) · ❌ TODO (no evidence on main). A prompt may not be
 marked ✅ without citing its evidence (migration number, merged MR,
 or test/artifact present on main).
@@ -57,7 +58,7 @@ or test/artifact present on main).
 | P-DIAG.5 | ✅ DONE | sequence-committee-voting / -outbox-dispatch / -snapshot-bind-reverify |
 | P14 | ✅ DONE | !13 merged 2026-08-03; web:* jobs green (incl. spec/client drift + permanent stale-client negative proof) |
 | P14.5 | ✅ DONE | 0035 member identity (!65); test_member_auth / test_member_identity FM1–FM5 + test_idempotency cross-actor MISS; combined-state pipeline 2732748398 green incl. migrate-check up→down→up (823 passed, cov 89.03%) |
-| P15 | 🔄 IN PROGRESS | batch 1 on MR !56 (Dashboard, Members, Access control + Phase B shared primitives incl. mandatory-usage blocker (f)); remaining 7 module batches + Playwright E2E follow one MR per batch |
+| P15 | 🔄 IN PROGRESS | module batches 1–7 DELIVERED & MERGED, one MR per batch — batch 1 !73 (squash `fc9312a` / merge `4cf3ca3`), batch 2 !72 (`3ca038d` / `9b44170`), batch 3 !74 (`58c7e7a` / `99d2f0c`), batch 4 !75 (`1fb3a2b` / `4ec2cee`), batch 5 !76 (`ad593d5` / `fbbfe42`), batch 6 !77 (`b28e3c0` / `eeb8113`), batch 7 !78 (`b4fb116` / `34f4ace`) — every sha verified in the main git log 2026-08-06; batch 8 (contract follow-ups + adversarial hardening) IN PROGRESS on !79, branch `duo/feature/31-batch8-contract-followups` (carries the in-flight 0039 claim, `INCOMING`) |
 | P16 | ❌ TODO | no mobile/ tree |
 | P17 | ❌ TODO | depends P16, P14.5 |
 | P18 | ❌ TODO | depends P16 |
