@@ -23,12 +23,15 @@
   0038_corrections_register_indexes.py (two expand-only register
   keyset indexes; no table/RLS change) ships in that MR (same-commit
   refresh per v1.2 rule 11 / spot-check check 5).
-  Migration head 0038 -> 0040 by the issue-#31 batch-7 remediation
+  Migration head 0038 -> 0039 by the issue-#31 batch-8 MR (!79,
+  merged): 0039_member_dividend_payout.py (one nullable TEXT column +
+  CHECK on members; no RLS change).
+  Migration head 0039 -> 0040 by the issue-#31 batch-7 remediation
   MR (senior-review finding N1): 0040_members_numeric_member_no_index.py
   (one expand-only expression index; no table/RLS change) ships in
-  that MR (same-commit refresh per v1.2 rule 11 / spot-check check
-  5); 0039 is !79's in-flight rule-14 claim and lands on its own
-  track (this MR re-chains down_revision when !79 merges).
+  that MR; down_revision re-chained 0038 -> 0039 after !79 merged
+  (the 0017 precedent; same-commit refresh per v1.2 rule 11 /
+  spot-check check 5).
   Traceability: every as-built box cites its module below and in the
   companion table (§2); the checked-in spot-check script
   `c4-spot-check.py` verifies every cited module path exists at the
