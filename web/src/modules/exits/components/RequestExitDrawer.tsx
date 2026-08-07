@@ -34,10 +34,10 @@
  *   documented loan-exceeds-assets branch). The maker identity this
  *   tab witnessed is recorded for the MakerCheckerPanel's SoD check.
  */
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import { fromApiError, fromZodError, mergeFieldErrors, type FieldErrors } from "@/modules/forms/form-errors";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
@@ -54,15 +54,6 @@ import { createExitRequest, fetchExitEligibility } from "../api";
 import { recordExitMaker } from "../makerRegistry";
 import { exitRequestEntrySchema, type ExitRecord, type ExitRequestEntry } from "../schemas";
 import styles from "./Exits.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 export function RequestExitDrawer({ onClose }: Readonly<{ onClose: () => void }>) {
   const queryClient = useQueryClient();
