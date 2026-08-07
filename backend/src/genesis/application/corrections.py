@@ -142,13 +142,6 @@ from genesis.application.pagination import (
     parse_created_id_cursor,
 )
 from genesis.application.sod import require_distinct_non_assurance_checker
-
-#: Cursor scope ids (#31 batch 13): signed cursors are bound to ONE
-#: endpoint - the three corrections registers never share positions
-#: (gate 1.6).
-_ADJUSTMENTS_SCOPE = "corrections.adjustments"
-_WRITE_OFFS_SCOPE = "corrections.write_offs"
-_WO_RECOVERIES_SCOPE = "corrections.write_off_recoveries"
 from genesis.application.tenant_settings import committee_quorum, enforce_authority_band
 
 # Reuse-first (gate 1.1): the P13.13 single member-status gatekeeper —
@@ -162,6 +155,13 @@ from genesis.domain.members import MemberStatus, MoneyOperation
 from genesis.domain.money import ZERO, to_cents
 from genesis.domain.tenant_config import SETTINGS_REGISTRY
 from genesis.errors import ConflictError, ForbiddenError, InvalidInputError, NotFoundError
+
+#: Cursor scope ids (#31 batch 13): signed cursors are bound to ONE
+#: endpoint - the three corrections registers never share positions
+#: (gate 1.6).
+_ADJUSTMENTS_SCOPE = "corrections.adjustments"
+_WRITE_OFFS_SCOPE = "corrections.write_offs"
+_WO_RECOVERIES_SCOPE = "corrections.write_off_recoveries"
 
 # ---------------------------------------------------------------------------
 # Misc fees (P13.15 part 2)

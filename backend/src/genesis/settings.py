@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # Opaque keyset cursor signing (#31 batch 13 / review finding N4):
     # environment-only HMAC secret (the jwt_signing_key pattern — no
     # literal secrets, gate 1.6) plus the active key-version byte
-    # (1–255). Rotation: deploy a new key WITH a bumped version;
+    # (1-255). Rotation: deploy a new key WITH a bumped version;
     # tokens minted under the old version fail closed as sanitized
     # 400s (cursors are short-lived pagination state).
     cursor_signing_key: str = ""

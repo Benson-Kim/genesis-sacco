@@ -32,7 +32,6 @@ forge keyset positions. Token layout::
 from __future__ import annotations
 
 import base64
-import binascii
 import hashlib
 import hmac
 import struct

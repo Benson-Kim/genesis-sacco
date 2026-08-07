@@ -164,9 +164,7 @@ def test_unconfigured_key_is_a_server_error_not_a_400(
 ) -> None:
     """An unset signing key is a DEPLOYMENT error (sanitized 500 path),
     never a 400 that blames the caller (the jwt_signing_key pattern)."""
-    monkeypatch.setattr(
-        pagination, "get_settings", lambda: get_settings().model_copy(update={"cursor_signing_key": ""})
-    )
+    unconfigured = get_settings().model_copy(update={"cursor_signing_key": ""})
+    monkeypatch.setattr(pagination, "get_settings", lambda: unconfigured)
     with pytest.raises(RuntimeError, match="cursor signing key not configured"):
         encode_cursor("GP-0042", tenant_id=TENANT, endpoint=ENDPOINT)
-)

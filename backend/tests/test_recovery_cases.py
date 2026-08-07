@@ -57,9 +57,9 @@ from sqlalchemy.exc import DBAPIError
 
 from db_helpers import api_client, factory, seed_user, unique_email
 from export_helpers import add_user, count, seed_actor
-from genesis.application.pagination import encode_cursor
 from genesis.application import recovery as recovery_service
 from genesis.application.arrears import run_arrears_for_tenant
+from genesis.application.pagination import encode_cursor
 from genesis.domain.rbac import AUDITOR, ROLE_NAMES, Action, Module, seed_matrix
 from genesis.errors import ConflictError, NotFoundError
 from genesis.infrastructure.tenancy import tenant_session

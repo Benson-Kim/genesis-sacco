@@ -60,13 +60,13 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from db_helpers import api_client, factory, seed_user, unique_email
-from genesis.application.pagination import encode_cursor
 from genesis.application import corrections as corrections_service
 from genesis.application import loans as loans_service
 from genesis.application import member_exits as exits_service
 from genesis.application import recovery as recovery_service
 from genesis.application.auth import AuthContext, issue_access_token
 from genesis.application.ledger import disburse_loan
+from genesis.application.pagination import encode_cursor
 from genesis.application.rbac import seed_permissions
 from genesis.application.recovery import run_recovery_close_pass
 from genesis.domain.committee import Vote
