@@ -106,7 +106,9 @@ def test_batch7_reads_are_index_backed() -> None:
                     await _explain(
                         session,
                         TRANSACTION_LEGS_SQL,
-                        {"tid": str(tid), "txn": str(txn_id)},
+                        # leg_cap mirrors the production bind (#31 N3:
+                        # MAX_TRANSACTION_LEGS + 1 overflow sentinel).
+                        {"tid": str(tid), "txn": str(txn_id), "leg_cap": 65},
                     ),
                 )
             )

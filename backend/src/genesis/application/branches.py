@@ -208,23 +208,37 @@ def branch_users_roster_sql(*, with_cursor: bool) -> str:
 
 
 def branch_members_roster_sql(*, with_cursor: bool) -> str:
-    """MEMBER roster of one branch (#31 ledger (j).1) — keyset on member_no.
+    """MEMBER roster of one branch (#31 ledger (j).1) — NUMERIC member_no keyset.
 
-    member_no is monotonic per tenant (the P8 list_members precedent),
-    so it doubles as the stable cursor. Least disclosure (gate 1.6):
-    the roster names WHO belongs to the branch — no contact details,
-    no figures; the member record stays on the P8 /members reads under
-    the same members:view gate. Served by idx_members_branch (0016) —
-    NO migration. Static fragments chosen in code; every value is a
-    bound parameter (v1.1 rule 6).
+    member_no is monotonic per tenant NUMERICALLY, not lexicographically
+    (senior review N1): the domain format is a constant 'GP-' prefix +
+    a zero-padded sequence of AT LEAST four digits, so as TEXT
+    'GP-10000' < 'GP-9999' and a bare member_no order breaks past
+    9,999 members. Ordering by (length(member_no), member_no) is the
+    numeric order for this fixed format — longer means strictly
+    bigger, equal length means zero-padded lexicographic == numeric —
+    and the row-value keyset predicate walks it exhaustively and
+    without overlap across the 4->5 digit boundary
+    (tests/test_member_no_numeric_order.py). Least disclosure (gate
+    1.6): the roster names WHO belongs to the branch — no contact
+    details, no figures; the member record stays on the P8 /members
+    reads under the same members:view gate. The equality-probed
+    single-branch roster is a bounded top-N under idx_members_branch
+    (0016) — NO new index needed here (the 0041 expression index
+    serves the TENANT-WIDE listing). Static fragments chosen in code;
+    every value is a bound parameter (v1.1 rule 6).
     """
-    after = "AND m.member_no > :cursor " if with_cursor else ""
+    after = (
+        "AND (length(m.member_no), m.member_no) > (length(:cursor), :cursor) "
+        if with_cursor
+        else ""
+    )
     return (
         "SELECT m.id, m.member_no, m.name, m.status FROM members m "  # noqa: S608
         "WHERE m.tenant_id = CAST(:tid AS uuid) "
         "AND m.branch_id = CAST(:bid AS uuid) "
         f"{after}"
-        "ORDER BY m.member_no LIMIT :limit"
+        "ORDER BY length(m.member_no), m.member_no LIMIT :limit"
     )
 
 
