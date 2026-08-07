@@ -133,7 +133,13 @@ from genesis.application.ledger import (
     post_reversal,
 )
 from genesis.application.outbox import enqueue_event
-from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
+from genesis.application.pagination import (
+    build_band_register_cursor,
+    build_created_id_cursor,
+    parse_band_register_cursor,
+    parse_created_id_cursor,
+)
+from genesis.application.sod import require_distinct_non_assurance_checker
 from genesis.application.tenant_settings import committee_quorum, enforce_authority_band
 
 # Reuse-first (gate 1.1): the P13.13 single member-status gatekeeper —
@@ -145,7 +151,6 @@ from genesis.domain.ledger import Account, Channel
 from genesis.domain.lending import NPL_CLASSES, LoanClass, LoanStatus, loan_transition
 from genesis.domain.members import MemberStatus, MoneyOperation
 from genesis.domain.money import ZERO, to_cents
-from genesis.domain.rbac import ASSURANCE_ROLES
 from genesis.domain.tenant_config import SETTINGS_REGISTRY
 from genesis.errors import ConflictError, ForbiddenError, InvalidInputError, NotFoundError
 
@@ -286,34 +291,20 @@ async def _require_distinct_non_assurance_checker(
 ) -> None:
     """Segregation of duties for the CHECKER actions (issue #24 N1).
 
-    The checker must be a DIFFERENT user than the maker — the 0031
-    ck_repayment_adjustments_sod CHECK is the collusion-resistant DB
-    backstop behind this guard — and must not hold an assurance
-    function (the !47 B2 principle: the Auditor reviews the corrections
-    trail and therefore can never act inside it). The role name is
-    resolved SERVER-SIDE from the actor's role_id (users -> roles
-    join), never from the JWT or a client-supplied flag.
+    ONE shared copy since MR !83 (gate 1.1 — the share-transfer
+    maker-checker workflow, issue #31 (l), is the second consumer):
+    the guard body lives in application/sod.py; this wrapper keeps the
+    corrections wording. The 0031 ck_repayment_adjustments_sod CHECK
+    is the collusion-resistant DB backstop behind it.
     """
-    if actor_id == maker_id:
-        raise ConflictError("the maker of an adjustment cannot check it (segregation of duties)")
-    row = (
-        await session.execute(
-            text(
-                "SELECT r.name FROM users u "
-                "JOIN roles r ON r.id = u.role_id AND r.tenant_id = CAST(:tid AS uuid) "
-                "WHERE u.id = CAST(:uid AS uuid) AND u.tenant_id = CAST(:tid AS uuid)"
-            ),
-            {"uid": str(actor_id), "tid": str(tenant_id)},
-        )
-    ).first()
-    if row is None:
-        # Fail closed (the enforce_authority_band posture): an actor
-        # the users table cannot vouch for checks nothing.
-        raise ForbiddenError(f"actor {actor_id} has no resolvable role for the checker action")
-    if str(row[0]) in ASSURANCE_ROLES:
-        raise ConflictError(
-            "assurance roles are excluded from checking adjustments (audit independence)"
-        )
+    await require_distinct_non_assurance_checker(
+        session,
+        tenant_id,
+        actor_id,
+        maker_id,
+        subject="an adjustment",
+        subject_plural="adjustments",
+    )
 
 
 @dataclass(frozen=True)
@@ -400,22 +391,6 @@ async def get_adjustment(
 # ---------------------------------------------------------------------------
 
 
-def _parse_register_cursor(cursor: str, *, entity: str) -> tuple[bool, datetime, str]:
-    """Parse an opaque '<actionable 0|1>|<created_at iso>|<uuid>' keyset
-    cursor for the two-band (actionable-first) register order. The
-    leading flag is the band of the last row of the previous page; a
-    forged flag is rejected exactly like a forged timestamp."""
-    flag_raw, _, rest = cursor.partition("|")
-    if flag_raw not in {"0", "1"}:
-        raise InvalidInputError(f"invalid {entity} cursor")
-    c_ts, c_id = parse_created_id_cursor(rest, entity=entity)
-    return flag_raw == "1", c_ts, c_id
-
-
-def _build_register_cursor(actionable: bool, created_at: datetime, row_id: object) -> str:
-    return f"{1 if actionable else 0}|{build_created_id_cursor(created_at, row_id)}"
-
-
 def adjustments_register_sql(*, with_cursor: bool) -> str:
     """The pending-adjustments checker register (ledger (a).1).
 
@@ -457,7 +432,7 @@ async def list_adjustments(
     """Keyset adjustments register, pending-first (ledger (a).1)."""
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if cursor is not None:
-        c_flag, c_ts, c_id = _parse_register_cursor(cursor, entity="adjustment register")
+        c_flag, c_ts, c_id = parse_band_register_cursor(cursor, entity="adjustment register")
         params["c_flag"] = c_flag
         params["c_ts"] = c_ts
         params["c_id"] = c_id
@@ -467,7 +442,7 @@ async def list_adjustments(
     next_cursor = None
     if len(rows) > limit and items:
         last = items[-1]
-        next_cursor = _build_register_cursor(
+        next_cursor = build_band_register_cursor(
             last.status is AdjustmentStatus.PENDING_APPROVAL, last.created_at, last.id
         )
     return AdjustmentPage(items=items, next_cursor=next_cursor)
@@ -1442,7 +1417,7 @@ async def list_write_offs(
     """Keyset write-off register, live-first (ledger (a).2)."""
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if cursor is not None:
-        c_flag, c_ts, c_id = _parse_register_cursor(cursor, entity="write-off register")
+        c_flag, c_ts, c_id = parse_band_register_cursor(cursor, entity="write-off register")
         params["c_flag"] = c_flag
         params["c_ts"] = c_ts
         params["c_id"] = c_id
@@ -1452,7 +1427,7 @@ async def list_write_offs(
     next_cursor = None
     if len(rows) > limit and items:
         last = items[-1]
-        next_cursor = _build_register_cursor(
+        next_cursor = build_band_register_cursor(
             last.status in LIVE_WRITE_OFF_STATUSES, last.created_at, last.id
         )
     return WriteOffPage(items=items, next_cursor=next_cursor)

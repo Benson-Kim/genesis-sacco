@@ -3,34 +3,79 @@ import { moneySchema } from "@/lib/schemas";
 
 /**
  * Zod-validated boundary for the share-transfers console (issue #31
- * batch 6, ledger (e) — audit #30 R2 remainder: the P13.11 share
- * lifecycle's `POST /members/{member_id}/share-transfers` had NO
- * console surface). Shapes mirror the generated client types
- * (components["schemas"]["ShareTransferOut"]) — the drift-checked
- * OpenAPI snapshot remains the contract; these schemas only assert it
- * at runtime.
+ * batch 10, ledger (l)/(m) — the !77 human-authorized remediation
+ * reworking the batch-6 ledger-(e) console). Shapes mirror the
+ * generated client types (components["schemas"]["ShareTransfer*"]) —
+ * the drift-checked OpenAPI snapshot remains the contract; these
+ * schemas only assert it at runtime.
  *
- * CONTRACT HONESTY (what exists, nothing more): the share-transfers
- * contract is the ONE mutation — there is NO transfer register/list
- * read, NO by-id read and NO version-pinned record behind it (the
- * transfer is atomic and terminal: both member rows are locked
- * server-side, both balances move, the share_transfers row and both
- * ledger legs post in one transaction). This console therefore
- * consumes exactly the POST; the missing read register is RECORDED on
- * issue #31 — never faked client-side from response accumulation.
+ * THE CONTRACT (two-phase maker-checker + register):
+ * - `POST /members/{member_id}/share-transfers` — MAKER phase
+ *   (members:approve): creates a PENDING workflow record bound to the
+ *   persisted approval snapshot. NO money moves.
+ * - `POST /share-transfers/{id}/approval` — CHECKER phase
+ *   (members:approve, a DIFFERENT principal; assurance excluded;
+ *   maker ≠ checker is ALSO a 0040 DB CHECK): the server re-verifies
+ *   the snapshot under the full lock set (409 on drift posting
+ *   NOTHING), then posts BOTH ledger legs atomically and notifies
+ *   BOTH members via the outbox.
+ * - `POST /share-transfers/{id}/rejection` — version-pinned checker
+ *   rejection with the MANDATORY rationale (!52 F2).
+ * - `GET /share-transfers` (+ by-id) — the ledger-(m) history
+ *   register (members:view, the house read-split): keyset, PENDING
+ *   FIRST then newest first (the server's order, never re-sorted).
  *
  * MONEY (P15 blocker (a)): the request amount is the operation's
- * SUBJECT (like a deposit amount — the one caller-known figure),
- * typed as a decimal STRING end-to-end and never parsed into a
- * number. Every response figure (amount echoed, both closing figures)
- * is a server-computed decimal string asserted by moneySchema and
- * rendered VERBATIM — the two balances are never summed, netted or
- * reconciled client-side (non-additive by design: they belong to two
- * different members).
+ * SUBJECT, typed as a decimal STRING end-to-end and never parsed into
+ * a number. Every response figure is a server-computed decimal string
+ * asserted by moneySchema and rendered VERBATIM — balances belong to
+ * two different members and are never summed, netted or reconciled
+ * client-side.
+ *
+ * LEAST DISCLOSURE: register rows carry bare UUIDs (the !66/!70
+ * short-id convention) and NO balance snapshot — the audit rows hold
+ * the exact figures server-side.
  */
 
-/** ShareTransferOut — every key REQUIRED (key-exact: a missing key is
- * contract drift and refuses to parse; extra keys are stripped). */
+export const TRANSFER_STATUSES = ["pending", "posted", "rejected"] as const;
+export type TransferStatus = (typeof TRANSFER_STATUSES)[number];
+
+export const TRANSFER_STATUS_LABELS: Record<TransferStatus, string> = {
+  pending: "Pending approval",
+  posted: "Posted",
+  rejected: "Rejected",
+};
+
+export function isTerminalTransferStatus(status: TransferStatus): boolean {
+  return status !== "pending";
+}
+
+/** ShareTransferRecordOut — the workflow record (register rows, the
+ * request/rejection responses and the by-id read). Every key REQUIRED
+ * (key-exact: a missing key is contract drift and refuses to parse;
+ * extra keys are stripped). Maker/checker attribution and the ledger
+ * transaction ids are NULLABLE-never-optional server truth: a null is
+ * honest history (pre-0040 rows carry no approver; a pending row has
+ * posted nothing), never an invented value. */
+export const shareTransferRecordSchema = z.object({
+  id: z.string(),
+  from_member_id: z.string(),
+  to_member_id: z.string(),
+  amount: moneySchema,
+  status: z.enum(TRANSFER_STATUSES),
+  out_transaction_id: z.string().nullable(),
+  in_transaction_id: z.string().nullable(),
+  created_by: z.string().nullable(),
+  approved_by: z.string().nullable(),
+  decided_at: z.string().nullable(),
+  version: z.number().int().min(1),
+  created_at: z.string(),
+});
+
+export type ShareTransferRecord = z.infer<typeof shareTransferRecordSchema>;
+
+/** ShareTransferOut — the APPROVAL result: the money actually moved
+ * (phase 2). Every key REQUIRED; no nullable leg exists. */
 export const shareTransferResultSchema = z.object({
   transfer_id: z.string(),
   /** The ST-OUT / ST-IN double-entry pair refs — evidence of BOTH
@@ -47,10 +92,11 @@ export type ShareTransferResult = z.infer<typeof shareTransferResultSchema>;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Client-side pre-validation of the entry form (the server
+ * Client-side pre-validation of the maker's request form (the server
  * re-validates and is the enforcer — gate 1.6: 2dp bound at the
- * contract, balance check under BOTH member row locks, active-member
- * and distinct-members checks server-side).
+ * contract, balance check under the full lock set, active-member and
+ * distinct-members checks server-side; self-transfer is ALSO a 0020
+ * DB CHECK).
  */
 export const transferEntrySchema = z
   .object({
@@ -89,3 +135,12 @@ export const transferEntrySchema = z
   });
 
 export type TransferEntry = z.infer<typeof transferEntrySchema>;
+
+/** The checker's rejection rationale — REQUIRED (!52 F2; the server
+ * enforces min_length=1/max 500 at the contract regardless). */
+export const rejectReasonEntrySchema = z.object({
+  reason: z
+    .string()
+    .min(1, "The rejection rationale is required (four-eyes practice).")
+    .max(500, "Keep the reason under 500 characters."),
+});

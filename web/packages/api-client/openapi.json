@@ -5778,6 +5778,13 @@
         "title": "SettlementQuoteOut",
         "type": "object"
       },
+      "ShareTransferApproveBody": {
+        "additionalProperties": false,
+        "description": "NO money fields, ever (v1.1 rule 1): every figure derives from\nthe persisted pending transfer; extra=\"forbid\" -> 422.",
+        "properties": {},
+        "title": "ShareTransferApproveBody",
+        "type": "object"
+      },
       "ShareTransferBody": {
         "additionalProperties": false,
         "description": "The transferee and the subject amount only (2dp enforced at the\ncontract; the balance check runs server-side under the locks).",
@@ -5809,7 +5816,36 @@
         "title": "ShareTransferBody",
         "type": "object"
       },
+      "ShareTransferListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ShareTransferRecordOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "ShareTransferListOut",
+        "type": "object"
+      },
       "ShareTransferOut": {
+        "description": "The APPROVAL result \u2014 the money actually moved (phase 2).",
         "properties": {
           "amount": {
             "title": "Amount",
@@ -5845,6 +5881,133 @@
           "to_balance_after"
         ],
         "title": "ShareTransferOut",
+        "type": "object"
+      },
+      "ShareTransferRecordOut": {
+        "description": "The workflow record (issue #31 (l)/(m)): the register row and\nthe request/rejection responses. Least disclosure: bare UUIDs (the\n!66/!70 precedent \u2014 resolving them stays behind the entitled\nmodules), the amount as the verbatim decimal string, and NO\nrequest-time balance snapshot (the approval re-verifies it\nserver-side; the audit rows carry the exact figures). Maker and\nchecker attribution are nullable-never-optional server truth: a\nNULL (pre-0040 history) serialises as an honest null, never an\ninvented principal.",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "string"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "from_member_id": {
+            "title": "From Member Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "in_transaction_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Transaction Id"
+          },
+          "out_transaction_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Out Transaction Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "to_member_id": {
+            "title": "To Member Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "from_member_id",
+          "to_member_id",
+          "amount",
+          "status",
+          "out_transaction_id",
+          "in_transaction_id",
+          "created_by",
+          "approved_by",
+          "decided_at",
+          "version",
+          "created_at"
+        ],
+        "title": "ShareTransferRecordOut",
+        "type": "object"
+      },
+      "ShareTransferRejectBody": {
+        "additionalProperties": false,
+        "description": "Version-pinned rejection with the MANDATORY checker rationale\n(the !52 F2 posture); workflow metadata only, never money.",
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "reason"
+        ],
+        "title": "ShareTransferRejectBody",
         "type": "object"
       },
       "Side": {
@@ -11746,8 +11909,8 @@
     },
     "/members/{member_id}/share-transfers": {
       "post": {
-        "description": "Transfer share capital to an active member (the exit path).",
-        "operationId": "transfer_shares_members__member_id__share_transfers_post",
+        "description": "MAKER phase (issue #31 (l)): create a PENDING transfer bound to\nthe persisted approval snapshot \u2014 NO money moves until a distinct\nchecker approves.",
+        "operationId": "request_share_transfer_members__member_id__share_transfers_post",
         "parameters": [
           {
             "in": "path",
@@ -11775,7 +11938,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ShareTransferOut"
+                  "$ref": "#/components/schemas/ShareTransferRecordOut"
                 }
               }
             },
@@ -11792,7 +11955,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Transfer Shares",
+        "summary": "Request Share Transfer",
         "tags": [
           "dividends"
         ]
@@ -12663,6 +12826,219 @@
         "summary": "Update Settings",
         "tags": [
           "settings"
+        ]
+      }
+    },
+    "/share-transfers": {
+      "get": {
+        "description": "The share-transfer history register (issue #31 ledger (m)):\nkeyset, PENDING FIRST then newest first \u2014 the checker's job order\n(the 0038 band pattern). Served under members:view (the house\nread-split); explicit tenant predicate doubling RLS; bound\nparameters only.",
+        "operationId": "list_share_transfers_share_transfers_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareTransferListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Share Transfers",
+        "tags": [
+          "dividends"
+        ]
+      }
+    },
+    "/share-transfers/{transfer_id}": {
+      "get": {
+        "operationId": "get_share_transfer_share_transfers__transfer_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transfer_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Transfer Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareTransferRecordOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Share Transfer",
+        "tags": [
+          "dividends"
+        ]
+      }
+    },
+    "/share-transfers/{transfer_id}/approval": {
+      "post": {
+        "description": "CHECKER phase (issue #31 (l)): a DISTINCT, non-assurance\nprincipal re-verifies the snapshot under the full lock set (409 on\ndrift, posting nothing), then posts BOTH ledger legs, updates both\nbalances and notifies BOTH members via the outbox \u2014 atomically.",
+        "operationId": "approve_share_transfer_share_transfers__transfer_id__approval_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transfer_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Transfer Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareTransferApproveBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareTransferOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Share Transfer",
+        "tags": [
+          "dividends"
+        ]
+      }
+    },
+    "/share-transfers/{transfer_id}/rejection": {
+      "post": {
+        "description": "Reject a pending transfer (checker decision, optimistic-locked)\n\u2014 the checker's rationale is REQUIRED (!52 F2) and recorded in the\naudit row, never echoed.",
+        "operationId": "reject_share_transfer_share_transfers__transfer_id__rejection_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transfer_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Transfer Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareTransferRejectBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareTransferRecordOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reject Share Transfer",
+        "tags": [
+          "dividends"
         ]
       }
     },
