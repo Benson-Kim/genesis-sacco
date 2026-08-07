@@ -118,12 +118,16 @@ class LedgerLegOut(BaseModel):
     amount: str
 
 
+# NOTE (#31 remediation N3, kept OUT of the docstring so the OpenAPI
+# snapshot stays byte-identical — zero wire-contract change): the
+# "bounded by construction" claim below is now ALSO enforced by the
+# service's hard MAX_TRANSACTION_LEGS defensive cap
+# (application/transactions.py) — overflow is a sanitized 500, never a
+# silently unbounded response.
 class TransactionLegsResponse(BaseModel):
-    """All legs of one posting. Unpaginated: the widest posting builder
-    (the P12 exit settlement) writes 7 legs, and the service enforces
-    the hard MAX_TRANSACTION_LEGS defensive cap (#31 remediation N3 —
-    overflow is a sanitized 500, never a silently unbounded response),
-    so the response is bounded without a cursor."""
+    """All legs of one posting. Unpaginated BY CONSTRUCTION: the widest
+    posting builder (the P12 exit settlement) writes 7 legs, so the
+    response is bounded without a cursor."""
 
     items: list[LedgerLegOut]
 

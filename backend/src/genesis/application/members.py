@@ -411,15 +411,14 @@ async def get_member(
 ) -> MemberRecord:
     # Explicit tenant predicate on top of RLS (defence in depth,
     # gate 1.6 v1.1; issue #17).
-    row = (
-        await session.execute(
-            text(
-                "SELECT id, member_no, type, name, phone, email, status, version, branch_id "
-                "FROM members WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
-            ),
-            {"id": str(member_id), "tid": str(tenant_id)},
-        )
-    ).mappings().first()
+    result = await session.execute(
+        text(
+            "SELECT id, member_no, type, name, phone, email, status, version, branch_id "
+            "FROM members WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+        ),
+        {"id": str(member_id), "tid": str(tenant_id)},
+    )
+    row = result.mappings().first()
     if row is None:
         raise NotFoundError(f"member {member_id} not found")
     return _row_to_record(row)
