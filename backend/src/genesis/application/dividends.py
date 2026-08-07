@@ -176,6 +176,8 @@ from genesis.errors import ConflictError, ForbiddenError, InvalidInputError, Not
 __all__ = [
     "DEFAULT_BATCH_SIZE",
     "DIVIDEND_CONFIG_SQL",
+    "PAYOUT_CREDIT_ROUTING",
+    "PAYOUT_FALLBACK_TOKENS",
     "DeclarationRecord",
     "DeclarationStatus",
     "DeclarationTotals",
@@ -183,8 +185,6 @@ __all__ = [
     "DividendConfig",
     "DividendVoteTally",
     "MemberEntitlement",
-    "PAYOUT_CREDIT_ROUTING",
-    "PAYOUT_FALLBACK_TOKENS",
     "ShareTransferPage",
     "ShareTransferRecord",
     "ShareTransferResult",
