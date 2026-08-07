@@ -13,6 +13,12 @@
   sign-in, guarantor consent/self-release as MEMBER-principal acts,
   the staff-attested override, the credential-link admin — is drawn
   first-class (F15, §3.15) with CNS_* element ids.
+  Reconciled by the issue-#31 batch-10 MR (!83): share transfer —
+  previously named in §4 as out-of-scope (the one-call
+  transfer_shares) — became a money-bearing TWO-PHASE maker-checker
+  workflow with a history register (ledger items (l)/(m), the !77
+  human-authorized remediation) and is drawn first-class (F16,
+  §3.16) with STF_* element ids.
   Status: as-built, derived from code (not from MR prose).
   AUDIENCE: the DIAGRAMS are for SACCO managers, auditors and
   committee members — business vocabulary only inside the drawings
@@ -22,7 +28,7 @@
   Drift rule: v1.2 rule 11 — any MR that changes a diagrammed flow,
   store, or trust boundary MUST update this file in the same MR.
   Lock statements in this file cite lock-order.md edge ids ONLY
-  (E1-E24 and the §3 single-node lockers); the chains are NEVER
+  (E1-E25 and the §3 single-node lockers); the chains are NEVER
   restated here — lock-order.md is the single authority (rule 11).
   STRIDE-per-element threat model over these elements: stride.md
   (P-DIAG.4).
@@ -47,7 +53,7 @@
   executing MR flips them to as-built (v1.2 rule 11).
 - **Element ids.** Every element carries a stable id (`L0_*`, `TXN_*`,
   `DSB_*`, `RPY_*`, `EXIT_*`, `DIV_*`, `INT_*`, `DRM_*`, `EXP_*`,
-  `OBX_*`, `FEE_*`, `ADJ_*`, `WOF_*`, `RCV_*`, `RCS_*`, `CNS_*`). `stride.md`
+  `OBX_*`, `FEE_*`, `ADJ_*`, `WOF_*`, `RCV_*`, `RCS_*`, `CNS_*`, `STF_*`). `stride.md`
   (P-DIAG.4) references these ids; renaming one is a change to both
   files (rule 11).
 - **Traceability.** Every process/store/flow row in the footer tables
@@ -57,7 +63,7 @@
   convention); line numbers are avoided because parallel MRs shift
   them.
 - **Locks.** Where a flow takes row/advisory locks, the footer cites
-  the `lock-order.md` edge id (E1-E24) or its §3 single-node-locker
+  the `lock-order.md` edge id (E1-E25) or its §3 single-node-locker
   row — never the chain itself (rule 11).
 - **Stores are logical record books.** The ledger book drawn in the
   flows is physically `ledger_entries` + `transactions` +
@@ -982,6 +988,76 @@ flowchart LR
 | CNS_S4 | `loan_applications` (0001) — the release anchor; remaining cover re-verified at execution under the borrower's deposit row (the P7 gate math, `_release_locked_guarantee`) | (within the CNS_P3 chain) |
 | CNS_S5 / CNS_S6 | `audit_log`, `outbox_events` (0001) — inherit the shared audit/outbox rows (stride.md §0 coverage map) | — |
 
+### 3.16 F16 — maker-checker share transfer + history register (issue #31 (l)/(m), batch 10 !83)
+
+Plain language: moving share capital from one member to another is
+moving MONEY between two people, so — like undoing a repayment (F11)
+— it takes FOUR EYES. One staff member (the maker) requests the
+transfer; the system checks both members are active, checks the giver
+actually holds that much share capital, and freezes the giver's
+balance at that moment. NOTHING moves yet. A DIFFERENT staff member
+(the checker — never the maker, never an auditor) approves: the
+system re-checks that both members are STILL active and the giver's
+balance is EXACTLY as frozen — if anything moved, nothing posts and
+the request must be rejected and raised afresh. Only then do the two
+share movements post, and BOTH members are notified — so the victim
+of a colluding pair always sees their equity move. A rejection
+requires a written reason and closes the request permanently. Every
+request — pending, completed or rejected — stays on a register the
+auditor can walk, unfinished business first.
+
+```mermaid
+flowchart LR
+    %% P-DIAG.3 F16 — drawn as-built by the issue-#31 batch-10 MR (!83)
+    STF_E1["Maker (staff)"]
+    STF_E2["Checker (different staff;<br/>auditors excluded)"]
+    STF_E3["Both members<br/>(giver & receiver)"]
+    subgraph TB1["TB1 — signed-in staff only"]
+        STF_P1(["request the transfer:<br/>both members checked active,<br/>the giver's balance frozen"])
+        STF_P2(["approve: four-eyes check,<br/>frozen balance re-verified —<br/>anything moved = nothing posts"])
+        STF_P3(["post the two share movements;<br/>notify BOTH members"])
+        STF_P4(["reject: written reason required;<br/>the request is closed for good"])
+        STF_P5(["walk the transfer register:<br/>unfinished business first"])
+    end
+    subgraph TB2["TB2 — this SACCO's records only"]
+        STF_S1[("transfer requests<br/>(frozen balance; write-once;<br/>maker can never be checker —<br/>enforced by the database itself)")]
+        STF_S2[("members<br/>(both must be active,<br/>checked again at approval)")]
+        STF_S3[("share accounts<br/>(giver debited, receiver credited,<br/>in one indivisible step)")]
+        STF_S4[("the ledger<br/>(one OUT and one IN posting)")]
+        STF_S5[("audit trail")]
+        STF_S6[("notification outbox")]
+    end
+
+    STF_E1 -->|"requests"| STF_P1
+    STF_P1 -->|"self-transfer refused;<br/>both members must be active"| STF_S2
+    STF_P1 -->|"pending request,<br/>balance frozen"| STF_S1
+    STF_E2 -->|"approves"| STF_P2
+    STF_P2 -->|"maker may never check;<br/>frozen vs live compared"| STF_S1
+    STF_P2 --> STF_P3
+    STF_P3 -->|"OUT + IN postings"| STF_S4
+    STF_P3 -->|"both balances updated"| STF_S3
+    STF_P3 -->|"exact figures, before & after"| STF_S5
+    STF_P3 -->|"one notice EACH"| STF_S6
+    STF_S6 -.->|"you gave / you received"| STF_E3
+    STF_E2 -->|"rejects, with a reason"| STF_P4
+    STF_P4 -->|"closed for good; kept<br/>as workflow history"| STF_S1
+    STF_P5 -->|"pending first, newest first;<br/>ids and figures only, no names"| STF_S1
+```
+
+#### Source of truth (F16)
+
+| Element | Citation | Locks (lock-order.md ids only) |
+|---|---|---|
+| STF_P1 | `api/dividends.py:request_share_transfer` (`POST /members/{member_id}/share-transfers`, `RequirePermission(MEMBERS, APPROVE)`) → `application/dividends.py:request_share_transfer` — self-transfer refused server-side AND unrepresentable at the DB (0020 CHECK); both members strictly ACTIVE via the P13.13 `domain/members.py:member_may` capability map; amount 2dp-quantised (`to_cents`) and re-verified under the giver's account row; PENDING row INSERTed with the persisted snapshot (`from_balance_at_request`, the 0040 pending-snapshot CHECK) | full transfer chain via `_lock_transfer_chain` (members in global member-id order, then share accounts — the E13 total order); the INSERT is a plain write |
+| STF_P2 | `api/dividends.py:approve_share_transfer` (`POST /share-transfers/{transfer_id}/approval`, `RequirePermission(MEMBERS, APPROVE)`) → `application/dividends.py:approve_share_transfer` — transfer row locked FIRST (workflow anchor), `domain/dividends.py:share_transfer_transition` gatekeeper, SoD via the shared `application/sod.py:require_distinct_non_assurance_checker` (maker ≠ checker server-side; `ASSURANCE_ROLES` excluded; the 0040 `ck_share_transfers_sod` CHECK is the DB backstop), snapshot re-verified component-by-component (both statuses + the frozen balance), 409 on drift posting NOTHING | E25 → the shared `_lock_transfer_chain` (E13 order) |
+| STF_P3 | same function, post-verification half: `application/ledger.py:post_share_transfer` (P7 ST-OUT/ST-IN contract), both `_set_balance` writes, the one-shot decision fill permitted by the 0040 write-once/status-machine trigger, in-transaction audit, operator outbox event + ONE `share_transfer.member_notice` per member (ids and amount only — never names; the P13.13 detection-control precedent: the victim of a colluding pair sees their equity move) | (same transaction) → E15 → E16 |
+| STF_P4 | `api/dividends.py:reject_share_transfer` (`POST /share-transfers/{transfer_id}/rejection`) → `application/dividends.py:reject_share_transfer` — checker decision (same SoD), version-pinned (409 on stale), MANDATORY rationale into the audit `after` payload (the !52 F2 posture), never echoed; rejected rows are terminal write-once workflow history | STFR row alone (§3 single-node row) |
+| STF_P5 | `api/dividends.py:list_share_transfers` (`GET /share-transfers`, `RequirePermission(MEMBERS, VIEW)` — the house read-split) + `get_share_transfer` (`GET /share-transfers/{transfer_id}`, the checker's refresh) → `application/dividends.py:list_share_transfers` / `get_share_transfer` — keyset register, PENDING FIRST then newest first (the 0038 band pattern), hard max 100, served by `idx_share_transfers_register` (0040, EXPLAIN-asserted); least disclosure: bare UUIDs and verbatim decimal strings, no names | no locks |
+| STF_S1 | `share_transfers` (0020; 0040: status machine + SoD CHECK + pending-snapshot CHECK + txns-iff-posted CHECK + write-once/status-machine trigger + register index; pre-0040 rows backfilled `posted` with NULL approver — truthful history) | — |
+| STF_S2/STF_S3 | `members` (0001), `share_accounts` (0001/0020) — both re-locked and re-checked at approval | (within the STF_P1/P2 chains) |
+| STF_S4 | ledger stores (`ledger_entries` + `transactions` + `txn_ref_sequences`) — inherit the §1 append-only rows | — |
+| STF_S5/STF_S6 | `audit_log`, `outbox_events` (0001) — inherit the shared audit/outbox rows (stride.md §0 coverage map) | — |
+
 ## 4. Cross-reference
 
 - **Threats:** every element id above has STRIDE rows in
@@ -998,8 +1074,7 @@ flowchart LR
 - **Out-of-scope as-built flows** (not money-bearing in the P-DIAG.3
   sense, listed for completeness, no diagram): arrears/penalty
   classification batch (posts nothing; `application/arrears.py`; its
-  recovery close pass IS drawn — F14), share transfer
-  (`application/dividends.py:transfer_shares`), period close +
+  recovery close pass IS drawn — F14), period close +
   P13.17a/b snapshot/rollup writers
   (`application/accounting_periods.py:close_period`,
   `portfolio_snapshots.py`, `period_rollups.py` — write-once
@@ -1024,3 +1099,9 @@ first-class as F15 by the issue-#30 close-out MR !71),
 and the single post-closure outcome note extend F14 and its stride.md
 rows in that MR. The P13.15 flip recorded here at authoring was
 executed by THIS MR (F10–F13 drawn as-built).
+**Issue #31 (l)/(m) (batch 10, !83):** share transfer left the §4
+out-of-scope list — the retired one-call
+`application/dividends.py:transfer_shares` became the two-phase
+maker-checker workflow + history register drawn first-class as F16
+(§3.16), with its stride.md rows and the lock-order.md E25 anchor
+edge landed in the same MR (rule 11).
