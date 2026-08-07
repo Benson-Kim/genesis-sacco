@@ -146,8 +146,8 @@ from genesis.application.pagination import (
     parse_band_register_cursor,
     parse_created_id_cursor,
 )
-from genesis.application.sod import require_distinct_non_assurance_checker
 from genesis.application.period_balances import average_daily_balance
+from genesis.application.sod import require_distinct_non_assurance_checker
 from genesis.application.tenant_settings import committee_quorum
 from genesis.application.transactions import _lock_account, _set_balance
 from genesis.domain.committee import Decision, Vote, decide
