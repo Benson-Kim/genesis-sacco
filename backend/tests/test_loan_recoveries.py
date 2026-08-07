@@ -60,6 +60,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from db_helpers import api_client, factory, seed_user, unique_email
+from genesis.application.pagination import encode_cursor
 from genesis.application import corrections as corrections_service
 from genesis.application import loans as loans_service
 from genesis.application import member_exits as exits_service
@@ -1053,5 +1054,20 @@ def test_receipts_listing_pages_by_keyset_with_reconstructed_totals() -> None:
             assert [r["amount"] for r in body2["items"]] == ["300.00"]
             assert body2["recovered_total"] == "600.00"
             assert body2["next_cursor"] is None
+
+            # FM9 (#31 batch 13): forged cursors are sanitized 400s —
+            # garbage AND a validly signed token for a FOREIGN scope
+            # (same tenant), which only the tag check can refuse.
+            cross_scope = encode_cursor(
+                body1["next_cursor"], tenant_id=tid, endpoint="tamper.test"
+            )
+            for forged in ("not-a-cursor", cross_scope):
+                res = await client.get(
+                    f"/corrections/write-offs/{record.id}/recoveries",
+                    params={"cursor": forged},
+                    headers=_headers(token),
+                )
+                assert res.status_code == 400, (forged, res.text)
+                assert set(res.json().keys()) == {"category", "correlation_id"}
 
     asyncio.run(run())
