@@ -48,7 +48,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_helpers import api_client, factory
-from export_helpers import seed_actor
+from export_helpers import create_branch, seed_actor, seed_member_no
 from genesis.application.guarantees import live_guarantee_params
 from genesis.application.members import (
     MEMBER_LIST_AGGREGATES_SQL,
@@ -57,7 +57,6 @@ from genesis.application.members import (
 )
 from genesis.domain.lending import LoanStatus
 from genesis.infrastructure.tenancy import tenant_session
-from test_branch_rosters import _create_branch, _seed_member_no
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("DATABASE_URL"), reason="requires a migrated database"
@@ -73,9 +72,9 @@ _BOUNDARY_ORDER = ["GP-9998", "GP-9999", "GP-10000", "GP-10001"]
 async def _seed_boundary_tenant() -> tuple[uuid.UUID, str, str]:
     """One tenant, one branch, the four boundary members on the branch."""
     tid, _, token = await seed_actor()
-    branch_id = await _create_branch(token, f"N1-{uuid.uuid4().hex[:8]}")
+    branch_id = await create_branch(token, f"N1-{uuid.uuid4().hex[:8]}")
     for i, member_no in enumerate(_BOUNDARY_ORDER):
-        await _seed_member_no(tid, member_no, name=f"Boundary {i}", branch_id=branch_id)
+        await seed_member_no(tid, member_no, name=f"Boundary {i}", branch_id=branch_id)
     return tid, branch_id, token
 
 

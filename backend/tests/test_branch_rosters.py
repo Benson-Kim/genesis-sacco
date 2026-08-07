@@ -36,25 +36,13 @@ import pytest
 from sqlalchemy import text
 
 from db_helpers import api_client, factory
-from export_helpers import add_user, seed_actor
+from export_helpers import add_user, create_branch, seed_actor, seed_member_no
 from genesis.domain.rbac import ROLE_NAMES, Action, Module, seed_matrix
 from genesis.infrastructure.tenancy import tenant_session
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("DATABASE_URL"), reason="requires a migrated database"
 )
-
-
-async def _create_branch(token: str, name: str) -> str:
-    async with api_client() as client:
-        res = await client.post(
-            "/branches",
-            json={"name": name},
-            headers={"authorization": f"Bearer {token}"},
-        )
-        assert res.status_code == 201, res.text
-        branch_id: str = res.json()["id"]
-    return branch_id
 
 
 async def _assign_user(tid: uuid.UUID, user_id: uuid.UUID, branch_id: str) -> None:
@@ -68,36 +56,6 @@ async def _assign_user(tid: uuid.UUID, user_id: uuid.UUID, branch_id: str) -> No
         )
 
 
-async def _seed_member_no(
-    tid: uuid.UUID,
-    member_no: str,
-    *,
-    name: str,
-    status: str = "active",
-    branch_id: str | None = None,
-) -> uuid.UUID:
-    """Member with a CONTROLLED member_no so keyset order is hand-computable."""
-    mid = uuid.uuid4()
-    async with tenant_session(factory(), tid) as session:
-        await session.execute(
-            text(
-                "INSERT INTO members "
-                "(id, tenant_id, member_no, type, name, status, branch_id) "
-                "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :no, 'person', "
-                ":name, :status, CAST(:bid AS uuid))"
-            ),
-            {
-                "id": str(mid),
-                "tid": str(tid),
-                "no": member_no,
-                "name": name,
-                "status": status,
-                "bid": branch_id,
-            },
-        )
-    return mid
-
-
 def test_branch_users_roster_scoping_and_keyset() -> None:
     """Hand-computed mix: 3 users on branch A, 1 on branch B, 1
     unassigned. limit=2 walks branch A exhaustively on the house
@@ -106,8 +64,8 @@ def test_branch_users_roster_scoping_and_keyset() -> None:
 
     async def run() -> None:
         tid, _, admin_token = await seed_actor()
-        branch_a = await _create_branch(admin_token, f"A-{uuid.uuid4().hex[:8]}")
-        branch_b = await _create_branch(admin_token, f"B-{uuid.uuid4().hex[:8]}")
+        branch_a = await create_branch(admin_token, f"A-{uuid.uuid4().hex[:8]}")
+        branch_b = await create_branch(admin_token, f"B-{uuid.uuid4().hex[:8]}")
         a_users = []
         for _ in range(3):
             uid, _ = await add_user(tid, "Teller")
@@ -182,13 +140,13 @@ def test_branch_members_roster_scoping_keyset_and_status_mix() -> None:
 
     async def run() -> None:
         tid, _, admin_token = await seed_actor()
-        branch_a = await _create_branch(admin_token, f"A-{uuid.uuid4().hex[:8]}")
-        branch_b = await _create_branch(admin_token, f"B-{uuid.uuid4().hex[:8]}")
-        await _seed_member_no(tid, "GP-7001", name="Alpha", branch_id=branch_a)
-        await _seed_member_no(tid, "GP-7002", name="Bravo", status="dormant", branch_id=branch_a)
-        await _seed_member_no(tid, "GP-7003", name="Carol", branch_id=branch_a)
-        await _seed_member_no(tid, "GP-7004", name="Delta", branch_id=branch_b)
-        await _seed_member_no(tid, "GP-7005", name="Echo")  # unassigned
+        branch_a = await create_branch(admin_token, f"A-{uuid.uuid4().hex[:8]}")
+        branch_b = await create_branch(admin_token, f"B-{uuid.uuid4().hex[:8]}")
+        await seed_member_no(tid, "GP-7001", name="Alpha", branch_id=branch_a)
+        await seed_member_no(tid, "GP-7002", name="Bravo", status="dormant", branch_id=branch_a)
+        await seed_member_no(tid, "GP-7003", name="Carol", branch_id=branch_a)
+        await seed_member_no(tid, "GP-7004", name="Delta", branch_id=branch_b)
+        await seed_member_no(tid, "GP-7005", name="Echo")  # unassigned
 
         headers = {"authorization": f"Bearer {admin_token}"}
         async with api_client() as client:
@@ -241,10 +199,10 @@ def test_roster_routes_matrix_every_role_permission_split() -> None:
     async def run() -> None:
         matrix = seed_matrix()
         tid, _, admin_token = await seed_actor()
-        branch = await _create_branch(admin_token, f"M-{uuid.uuid4().hex[:8]}")
+        branch = await create_branch(admin_token, f"M-{uuid.uuid4().hex[:8]}")
         roster_user, _ = await add_user(tid, "Teller")
         await _assign_user(tid, roster_user, branch)
-        await _seed_member_no(tid, "GP-7100", name="Matrix Roster Member", branch_id=branch)
+        await seed_member_no(tid, "GP-7100", name="Matrix Roster Member", branch_id=branch)
         for role_name in ROLE_NAMES:
             _, token = await add_user(tid, role_name)
             headers = {"authorization": f"Bearer {token}"}
@@ -271,7 +229,7 @@ def test_roster_404_before_facts_unknown_and_cross_tenant() -> None:
     async def run() -> None:
         _, _, token_a = await seed_actor()
         _, _, token_b = await seed_actor()
-        foreign_branch = await _create_branch(token_b, f"F-{uuid.uuid4().hex[:8]}")
+        foreign_branch = await create_branch(token_b, f"F-{uuid.uuid4().hex[:8]}")
         headers = {"authorization": f"Bearer {token_a}"}
         async with api_client() as client:
             for path in ("users", "members"):
