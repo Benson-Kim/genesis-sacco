@@ -1,7 +1,7 @@
 """members numeric member_no keyset index (issue #31 remediation N1)
 
 Revision ID: 0040
-Revises: 0038
+Revises: 0039
 Create Date: 2026-08-07
 
 Expand-only revision backing the #31 post-merge remediation of senior
