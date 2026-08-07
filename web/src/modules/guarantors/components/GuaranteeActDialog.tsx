@@ -27,10 +27,10 @@
  *   affordances (per-tab conflict marking) — the stale act is never
  *   replayed and cannot be re-armed from a stale copy.
  */
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import { fromApiError } from "@/modules/forms/form-errors";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
@@ -52,15 +52,6 @@ const TITLES: Record<GuaranteeAct, string> = {
   consent: "Record guarantor consent",
   release: "Release guarantee",
 };
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 function MemberKv({ label, memberId }: Readonly<{ label: string; memberId: string }>) {
   const member = useQuery({

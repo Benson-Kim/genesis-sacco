@@ -41,10 +41,10 @@
  *   write affordance (the server enforces the transition matrix
  *   regardless).
  */
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal, Pill } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal, Pill } from "@genesis/design-system";
 import { MakerCheckerPanel } from "@/modules/authz/components/MakerCheckerPanel";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
@@ -62,15 +62,6 @@ import { recordVotedExit, useHasVotedOnExit } from "../votedRegistry";
 import { isTerminalExitStatus, type ExitRecord, type ExitVote, type ExitVoteResult } from "../schemas";
 import { exitStatusPill } from "./pills";
 import styles from "./Exits.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 export function ExitDetailDrawer({
   exitId,

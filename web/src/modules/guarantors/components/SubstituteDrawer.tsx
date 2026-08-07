@@ -26,10 +26,10 @@
  *   the contract, reload refetches the server aggregates and
  *   structurally WITHDRAWS this tab's stale copy — never a replay.
  */
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import {
   fromApiError,
@@ -56,15 +56,6 @@ import {
 } from "../schemas";
 import { guaranteeStatusPill } from "./pills";
 import styles from "./Guarantors.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 export function SubstituteDrawer({
   guarantee,

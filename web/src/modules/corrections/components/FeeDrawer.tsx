@@ -23,10 +23,10 @@
  * - A 409 renders the shared ConflictBanner's explicit
  *   reload-and-re-enter flow — NOTHING is replayed.
  */
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import {
   fromApiError,
@@ -52,15 +52,6 @@ import { z } from "zod";
 import { postFee } from "../api";
 import { FEE_TYPES, FEE_TYPE_LABELS, feeTypeSchema, type FeeResult } from "../schemas";
 import styles from "./Corrections.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 /** Client-side pre-validation (the server re-validates — gate 1.6):
  * member, code-owned fee type, cash channel. NO amount can even be

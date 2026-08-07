@@ -64,27 +64,6 @@
     color: var(--ink);
 }
 
-.kvRow {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 7px 0;
-    border-bottom: 1px solid var(--panel);
-    font-size: 13px;
-}
-
-.kvKey {
-    color: var(--sub);
-    font-weight: 600;
-}
-
-.kvVal {
-    font-weight: 700;
-    color: var(--ink);
-    text-align: right;
-    overflow-wrap: anywhere;
-}
-
 /* Register header card (the exits register-head convention). */
 .registerHead {
     padding: 14px;

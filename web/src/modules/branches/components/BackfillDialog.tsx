@@ -27,12 +27,11 @@
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Button, Modal } from "@genesis/design-system";
+import { Button, Kv, Modal } from "@genesis/design-system";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { announce } from "@/modules/layout/announcer";
 import { runBranchBackfill, SERVER_DEFAULT_BATCH_SIZE } from "../api";
 import type { BackfillRun } from "../schemas";
-import { Kv } from "./Kv";
 import styles from "./Branches.module.css";
 
 export function BackfillDialog({ onClose }: Readonly<{ onClose: () => void }>) {

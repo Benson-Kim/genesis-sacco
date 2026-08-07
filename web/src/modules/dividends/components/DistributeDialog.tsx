@@ -46,7 +46,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { MakerCheckerPanel } from "@/modules/authz/components/MakerCheckerPanel";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
@@ -58,7 +58,6 @@ import { STALE_TIME } from "@/lib/query";
 import { distributeDeclaration, fetchDeclaration, SERVER_DEFAULT_BATCH_SIZE } from "../api";
 import { DIVIDEND_MAKER_UNKNOWN, dividendMakerOf } from "../makerRegistry";
 import type { DistributionRun } from "../schemas";
-import { Kv } from "./Kv";
 import styles from "./Dividends.module.css";
 
 export function DistributeDialog({

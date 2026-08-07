@@ -24,7 +24,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, Modal } from "@genesis/design-system";
+import { Banner, Button, Kv, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import { fromApiError, mergeFieldErrors, type FieldErrors } from "@/modules/forms/form-errors";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
@@ -34,7 +34,6 @@ import { isConflict } from "@/lib/errors";
 import { fmtDateTime } from "@/lib/format";
 import { createBranch } from "../api";
 import { branchNameEntrySchema, type BranchRecord } from "../schemas";
-import { Kv } from "./Kv";
 import styles from "./Branches.module.css";
 
 export function BranchCreateDrawer({ onClose }: Readonly<{ onClose: () => void }>) {

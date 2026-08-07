@@ -36,7 +36,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { announce } from "@/modules/layout/announcer";
@@ -46,7 +46,6 @@ import { fmtKes } from "@/lib/format";
 import { declareDividend, SERVER_DEFAULT_BATCH_SIZE } from "../api";
 import { recordDividendMaker } from "../makerRegistry";
 import type { DeclarationRecord } from "../schemas";
-import { Kv } from "./Kv";
 import styles from "./Dividends.module.css";
 
 /** ConfirmDangerModal phrase: no record id exists before the create,
