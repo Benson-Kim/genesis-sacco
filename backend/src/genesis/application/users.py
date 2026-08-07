@@ -71,6 +71,8 @@ from genesis.application.audit import record_audit
 from genesis.application.outbox import enqueue_event
 from genesis.application.pagination import (
     build_created_id_cursor,
+    decode_cursor,
+    encode_cursor,
     parse_created_id_cursor,
 )
 from genesis.domain.rbac import SYSTEM_ADMIN
@@ -80,6 +82,10 @@ from genesis.domain.users import (
     transition,
 )
 from genesis.errors import ConflictError, ForbiddenError, NotFoundError
+
+#: Cursor scope id (#31 batch 13): signed cursors are bound to this
+#: endpoint and this tenant — no cross-scope replay (gate 1.6).
+_USERS_LIST_SCOPE = "users.list"
 
 
 @dataclass(frozen=True)
@@ -267,7 +273,12 @@ async def list_users(
     limit = max(1, min(limit, 100))
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if cursor:
-        c_ts, c_id = parse_created_id_cursor(cursor, entity="user")
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the plaintext parse stays as defense-in-depth.
+        inner = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=_USERS_LIST_SCOPE, entity="user"
+        )
+        c_ts, c_id = parse_created_id_cursor(inner, entity="user")
         params["c_ts"] = c_ts
         params["c_id"] = c_id
     if status is not None:
@@ -290,7 +301,11 @@ async def list_users(
     next_cursor = None
     if len(rows) > limit and items:
         last = items[-1]
-        next_cursor = build_created_id_cursor(last.created_at, last.id)
+        next_cursor = encode_cursor(
+            build_created_id_cursor(last.created_at, last.id),
+            tenant_id=tenant_id,
+            endpoint=_USERS_LIST_SCOPE,
+        )
     return UserPage(items=items, next_cursor=next_cursor)
 
 

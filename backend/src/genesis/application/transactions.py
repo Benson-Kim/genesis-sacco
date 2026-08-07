@@ -25,7 +25,12 @@ from genesis.application.audit import record_audit
 from genesis.application.guarantees import live_pledged_total
 from genesis.application.ledger import post_deposit, post_share_topup, post_withdrawal
 from genesis.application.members import reactivate_dormant_member
-from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
+from genesis.application.pagination import (
+    build_created_id_cursor,
+    decode_cursor,
+    encode_cursor,
+    parse_created_id_cursor,
+)
 from genesis.domain.ledger import (
     MEMBER_DIRECTION,
     Account,
@@ -48,6 +53,10 @@ from genesis.errors import (
 _ACCOUNT_TABLES = {"deposit": "deposit_accounts", "share": "share_accounts"}
 
 _TXN_COLS = "id, txn_ref, member_id, type, amount, channel, occurred_at, reversal_of_id, created_by"
+
+#: Cursor scope id (#31 batch 13): signed cursors are bound to this
+#: endpoint and this tenant — no cross-scope replay (gate 1.6).
+_TXN_LIST_SCOPE = "transactions.list"
 
 
 @dataclass(frozen=True)
@@ -409,7 +418,12 @@ async def list_transactions(
         clauses.append("occurred_at < :d_to")
         params["d_to"] = date_to + timedelta(days=1)  # inclusive end date
     if cursor:
-        params["c_ts"], params["c_id"] = parse_created_id_cursor(cursor, entity="transaction")
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the plaintext parse stays as defense-in-depth.
+        inner = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=_TXN_LIST_SCOPE, entity="transaction"
+        )
+        params["c_ts"], params["c_id"] = parse_created_id_cursor(inner, entity="transaction")
         clauses.append("(occurred_at, id) < (:c_ts, CAST(:c_id AS uuid))")
     where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
     # Static fragments chosen in code; all values are bound parameters.
@@ -428,7 +442,11 @@ async def list_transactions(
     next_cursor = None
     if len(rows) > limit and page_rows:
         last = page_rows[-1]
-        next_cursor = build_created_id_cursor(last[6], last[0])
+        next_cursor = encode_cursor(
+            build_created_id_cursor(last[6], last[0]),
+            tenant_id=tenant_id,
+            endpoint=_TXN_LIST_SCOPE,
+        )
     return items, next_cursor
 
 

@@ -21,7 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from genesis.application.audit import record_audit
 from genesis.application.loan_products import get_product
 from genesis.application.outbox import enqueue_event
-from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
+from genesis.application.pagination import (
+    build_created_id_cursor,
+    decode_cursor,
+    encode_cursor,
+    parse_created_id_cursor,
+)
 from genesis.application.tenant_settings import committee_quorum, enforce_authority_band
 from genesis.domain.committee import Decision, Vote, decide
 from genesis.domain.lending import ApplicationStage, InvalidTransitionError, transition
@@ -34,6 +39,10 @@ from genesis.errors import ConflictError, ForbiddenError, InvalidInputError, Not
 API_TRANSITION_TARGETS = frozenset(
     {ApplicationStage.APPRAISAL, ApplicationStage.COMMITTEE, ApplicationStage.REJECTED}
 )
+
+#: Cursor scope id (#31 batch 13): signed cursors are bound to this
+#: endpoint and this tenant — no cross-scope replay (gate 1.6).
+_APPLICATIONS_LIST_SCOPE = "applications.list"
 
 _COLS = (
     "id, member_id, product_id, amount, term_months, rate_pct, purpose, stage, cover_pct, "
@@ -372,7 +381,12 @@ async def list_applications(
         clauses.append("stage = :stage")
         params["stage"] = stage.value
     if cursor:
-        params["c_ts"], params["c_id"] = parse_created_id_cursor(cursor, entity="application")
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the plaintext parse stays as defense-in-depth.
+        inner = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=_APPLICATIONS_LIST_SCOPE, entity="application"
+        )
+        params["c_ts"], params["c_id"] = parse_created_id_cursor(inner, entity="application")
         clauses.append("(created_at, id) < (:c_ts, CAST(:c_id AS uuid))")
     where = f"WHERE {' AND '.join(clauses)} "
     # Static fragments chosen in code; all values are bound parameters.
@@ -391,7 +405,11 @@ async def list_applications(
     next_cursor = None
     if len(rows) > limit and page_rows:
         last = page_rows[-1]
-        next_cursor = build_created_id_cursor(last[0], last[1])
+        next_cursor = encode_cursor(
+            build_created_id_cursor(last[0], last[1]),
+            tenant_id=tenant_id,
+            endpoint=_APPLICATIONS_LIST_SCOPE,
+        )
     return items, next_cursor
 
 
