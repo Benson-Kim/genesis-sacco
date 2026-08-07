@@ -460,16 +460,40 @@ def build_exit_settlement_posting(
     )
 
 
-def build_dividend_distribution_posting(dividend: Decimal, rebate: Decimal) -> PostingSpec:
+def build_dividend_distribution_posting(
+    dividend: Decimal, rebate: Decimal, *, credit_account: Account | None = None
+) -> PostingSpec:
     """One member's dividend + rebate payout (P13.11): DV- ref, ACCRUAL.
 
-    DR expense.dividends / CR member.shares for the dividend component
-    (capitalised into share capital, so it compounds into the NEXT
-    financial year's share basis — gate 1.5) and DR expense.rebates /
-    CR member.deposits for the deposit-rebate component. Components are
-    rounded upstream by the single money primitive; at least one must
-    be positive (zero entitlements are skipped, never posted).
+    Default (credit_account=None — byte-identical to the pre-batch-12
+    behaviour): DR expense.dividends / CR member.shares for the
+    dividend component (capitalised into share capital, so it
+    compounds into the NEXT financial year's share basis — gate 1.5)
+    and DR expense.rebates / CR member.deposits for the rebate
+    component.
+
+    Since #31 batch 12 (human-authorized on #31, 2026-08-07) the
+    distribution engine may route BOTH member-side credit legs to a
+    single retention destination chosen by the member's stored
+    dividend_payout preference: credit_account is a CODE-OWNED value
+    restricted to member.deposits or member.shares (never
+    caller-supplied, never a cash account — external channels are
+    unbuilt and are never faked; the engine falls back to the default
+    with credit_account=None). The DR legs keep their expense
+    classification either way, so the legs stay balanced and the
+    declared totals conserve exactly.
+
+    Components are rounded upstream by the single money primitive; at
+    least one must be positive (zero entitlements are skipped, never
+    posted).
     """
+    if credit_account is not None and credit_account not in (
+        Account.MEMBER_DEPOSITS,
+        Account.MEMBER_SHARES,
+    ):
+        raise ValueError("dividend credit destination must be a member retention account")
+    dividend_credit = Account.MEMBER_SHARES if credit_account is None else credit_account
+    rebate_credit = Account.MEMBER_DEPOSITS if credit_account is None else credit_account
     dividend = to_cents(dividend)
     rebate = to_cents(rebate)
     if dividend < ZERO or rebate < ZERO:
@@ -480,10 +504,10 @@ def build_dividend_distribution_posting(dividend: Decimal, rebate: Decimal) -> P
     lines: list[LedgerLine] = []
     if dividend > ZERO:
         lines.append(LedgerLine(account=Account.DIVIDEND_EXPENSE, side=Side.DEBIT, amount=dividend))
-        lines.append(LedgerLine(account=Account.MEMBER_SHARES, side=Side.CREDIT, amount=dividend))
+        lines.append(LedgerLine(account=dividend_credit, side=Side.CREDIT, amount=dividend))
     if rebate > ZERO:
         lines.append(LedgerLine(account=Account.REBATE_EXPENSE, side=Side.DEBIT, amount=rebate))
-        lines.append(LedgerLine(account=Account.MEMBER_DEPOSITS, side=Side.CREDIT, amount=rebate))
+        lines.append(LedgerLine(account=rebate_credit, side=Side.CREDIT, amount=rebate))
     return PostingSpec(
         txn_type=TxnType.DIVIDEND_POSTING,
         channel=Channel.ACCRUAL,
