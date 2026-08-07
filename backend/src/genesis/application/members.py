@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -120,21 +121,24 @@ class MemberAggregates:
 #: empty-SUM zero to column scale so a zero-activity member serializes
 #: '0.00', never bare '0'.
 MEMBER_AGGREGATES_SQL = (
+    # Columns carry explicit AS labels (#31 remediation N2): the read
+    # path maps them BY NAME, so a reordered or widened SELECT list
+    # can never silently misalign a money figure.
     "SELECT "
     "CAST(COALESCE((SELECT balance FROM deposit_accounts "
     "WHERE member_id = CAST(:mid AS uuid) "
-    "AND tenant_id = CAST(:tid AS uuid)), 0) AS numeric(18,2)), "
+    "AND tenant_id = CAST(:tid AS uuid)), 0) AS numeric(18,2)) AS deposits_total, "
     "CAST(COALESCE((SELECT balance FROM share_accounts "
     "WHERE member_id = CAST(:mid AS uuid) "
-    "AND tenant_id = CAST(:tid AS uuid)), 0) AS numeric(18,2)), "
+    "AND tenant_id = CAST(:tid AS uuid)), 0) AS numeric(18,2)) AS shares_total, "
     "CAST((SELECT COALESCE(SUM(balance), 0) FROM loans "
     "WHERE member_id = CAST(:mid AS uuid) "
     "AND tenant_id = CAST(:tid AS uuid) "
-    "AND status = :loan_active) AS numeric(18,2)), "
+    "AND status = :loan_active) AS numeric(18,2)) AS loans_outstanding, "
     "CAST((SELECT COALESCE(SUM(amount), 0) FROM guarantees "
     "WHERE guarantor_member_id = CAST(:mid AS uuid) "
     "AND tenant_id = CAST(:tid AS uuid) "
-    "AND status IN (:live0, :live1)) AS numeric(18,2))"
+    "AND status IN (:live0, :live1)) AS numeric(18,2)) AS guarantees_pledged"
 )
 
 
@@ -180,12 +184,15 @@ MEMBER_LIST_SQL = (
 #: the derivation). The CAST normalises the empty aggregate to column
 #: scale so zero-activity rows serialize '0.00', never bare '0'.
 MEMBER_LIST_AGGREGATES_SQL = (
+    # Aggregate columns carry explicit AS labels (#31 remediation N2):
+    # the read path maps BY NAME, so a widened SELECT list (e.g. !79's
+    # dividend_payout) can never silently misalign a money figure.
     "SELECT m.id, m.member_no, m.type, m.name, m.phone, m.email, m.status, m.version, "
     "m.branch_id, "
-    "CAST(COALESCE(d.balance, 0) AS numeric(18,2)), "
-    "CAST(COALESCE(s.balance, 0) AS numeric(18,2)), "
-    "CAST(COALESCE(l.total, 0) AS numeric(18,2)), "
-    "CAST(COALESCE(g.total, 0) AS numeric(18,2)) "
+    "CAST(COALESCE(d.balance, 0) AS numeric(18,2)) AS deposits_total, "
+    "CAST(COALESCE(s.balance, 0) AS numeric(18,2)) AS shares_total, "
+    "CAST(COALESCE(l.total, 0) AS numeric(18,2)) AS loans_outstanding, "
+    "CAST(COALESCE(g.total, 0) AS numeric(18,2)) AS guarantees_pledged "
     "FROM members m "
     "LEFT JOIN LATERAL (SELECT balance FROM deposit_accounts "
     "WHERE tenant_id = CAST(:tid AS uuid) AND member_id = m.id) d ON true "
@@ -214,36 +221,47 @@ async def member_aggregates(
     response carries the four amounts and nothing else, and no
     rejection path echoes them.
     """
-    row = (
-        await session.execute(
-            text(MEMBER_AGGREGATES_SQL),
-            {
-                "mid": str(member_id),
-                "tid": str(tenant_id),
-                "loan_active": LoanStatus.ACTIVE.value,
-                **live_guarantee_params(),
-            },
-        )
-    ).one()
+    # Named column access (#31 remediation N2): a widened SELECT list
+    # can never silently misalign a money figure.
+    result = await session.execute(
+        text(MEMBER_AGGREGATES_SQL),
+        {
+            "mid": str(member_id),
+            "tid": str(tenant_id),
+            "loan_active": LoanStatus.ACTIVE.value,
+            **live_guarantee_params(),
+        },
+    )
+    row = result.mappings().one()
     return MemberAggregates(
-        deposits_total=Decimal(str(row[0])),
-        shares_total=Decimal(str(row[1])),
-        loans_outstanding=Decimal(str(row[2])),
-        guarantees_pledged=Decimal(str(row[3])),
+        deposits_total=Decimal(str(row["deposits_total"])),
+        shares_total=Decimal(str(row["shares_total"])),
+        loans_outstanding=Decimal(str(row["loans_outstanding"])),
+        guarantees_pledged=Decimal(str(row["guarantees_pledged"])),
     )
 
 
-def _row_to_record(row: Any) -> MemberRecord:
+def _row_to_record(row: Mapping[str, Any]) -> MemberRecord:
+    """Build a MemberRecord by COLUMN NAME (#31 remediation N2).
+
+    Positional indexes silently misalign whenever a column joins the
+    SELECT list — batch 7 had to shift them for branch_id and !79
+    shifts them again for dividend_payout. Named access makes an added
+    column a no-op here and a missing one a LOUD KeyError, so a money
+    aggregate can never be read from the wrong slot. Callers pass
+    .mappings() rows (behaviour-identical: every existing member suite
+    stays green unchanged).
+    """
     return MemberRecord(
-        id=uuid.UUID(str(row[0])),
-        member_no=str(row[1]),
-        type=MemberType(str(row[2])),
-        name=str(row[3]),
-        phone=str(row[4]) if row[4] is not None else None,
-        email=str(row[5]) if row[5] is not None else None,
-        status=MemberStatus(str(row[6])),
-        version=int(row[7]),
-        branch_id=uuid.UUID(str(row[8])) if row[8] is not None else None,
+        id=uuid.UUID(str(row["id"])),
+        member_no=str(row["member_no"]),
+        type=MemberType(str(row["type"])),
+        name=str(row["name"]),
+        phone=str(row["phone"]) if row["phone"] is not None else None,
+        email=str(row["email"]) if row["email"] is not None else None,
+        status=MemberStatus(str(row["status"])),
+        version=int(row["version"]),
+        branch_id=uuid.UUID(str(row["branch_id"])) if row["branch_id"] is not None else None,
     )
 
 
@@ -401,7 +419,7 @@ async def get_member(
             ),
             {"id": str(member_id), "tid": str(tenant_id)},
         )
-    ).first()
+    ).mappings().first()
     if row is None:
         raise NotFoundError(f"member {member_id} not found")
     return _row_to_record(row)
@@ -466,12 +484,12 @@ async def list_members(
     )
     # The {where} slot only ever receives the static clause literals
     # from _member_list_clauses; every value is a bound parameter.
-    rows = (
-        await session.execute(
-            text(MEMBER_LIST_SQL.format(where=" AND ".join(clauses))),
-            params,
-        )
-    ).all()
+    # Named row access (#31 remediation N2) via .mappings().
+    result = await session.execute(
+        text(MEMBER_LIST_SQL.format(where=" AND ".join(clauses))),
+        params,
+    )
+    rows = result.mappings().all()
     items = [_row_to_record(r) for r in rows[:limit]]
     next_cursor = items[-1].member_no if len(rows) > limit and items else None
     return MemberPage(items=items, next_cursor=next_cursor)
@@ -506,21 +524,23 @@ async def list_members_with_aggregates(
     params.update(live_guarantee_params())
     # The {where} slot only ever receives the static clause literals
     # from _member_list_clauses; every value is a bound parameter.
-    rows = (
-        await session.execute(
-            text(MEMBER_LIST_AGGREGATES_SQL.format(where=" AND ".join(clauses))),
-            params,
-        )
-    ).all()
+    # Named row access (#31 remediation N2): the four money aggregates
+    # are read by their AS labels, so a widened SELECT list (!79's
+    # dividend_payout) can never silently shift them.
+    result = await session.execute(
+        text(MEMBER_LIST_AGGREGATES_SQL.format(where=" AND ".join(clauses))),
+        params,
+    )
+    rows = result.mappings().all()
     page_rows = rows[:limit]
     items = [
         MemberWithAggregates(
             record=_row_to_record(row),
             aggregates=MemberAggregates(
-                deposits_total=Decimal(str(row[9])),
-                shares_total=Decimal(str(row[10])),
-                loans_outstanding=Decimal(str(row[11])),
-                guarantees_pledged=Decimal(str(row[12])),
+                deposits_total=Decimal(str(row["deposits_total"])),
+                shares_total=Decimal(str(row["shares_total"])),
+                loans_outstanding=Decimal(str(row["loans_outstanding"])),
+                guarantees_pledged=Decimal(str(row["guarantees_pledged"])),
             ),
         )
         for row in page_rows
