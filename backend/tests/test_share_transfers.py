@@ -295,7 +295,10 @@ def test_approval_posts_atomically_with_member_attributed_legs_and_notices() -> 
         # BOTH sides, in the same transaction (remove either enqueue in
         # approve_share_transfer and these counts fail).
         assert (
-            await count(tid, "SELECT count(*) FROM audit_log WHERE action = 'share_transfer.posted'")
+            await count(
+                tid,
+                "SELECT count(*) FROM audit_log WHERE action = 'share_transfer.posted'",
+            )
             == 1
         )
         assert (
