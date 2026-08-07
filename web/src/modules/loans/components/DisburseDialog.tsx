@@ -30,10 +30,10 @@
  *   figure are server-resolved. The result (loan id, txn ref, schedule)
  *   renders VERBATIM from the response (blocker (a)).
  */
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
@@ -54,15 +54,6 @@ import {
 } from "../schemas";
 import { ScheduleTable } from "./ScheduleTable";
 import styles from "./Loans.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 export function DisburseDialog({
   applicationId,

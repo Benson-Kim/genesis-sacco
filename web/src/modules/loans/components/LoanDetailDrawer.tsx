@@ -23,10 +23,10 @@
  *   mounts only with that grant AND only on an ACTIVE loan (the UI
  *   never offers what the API forbids — gate 1.6).
  */
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import { fromApiError, fromZodError, mergeFieldErrors, type FieldErrors } from "@/modules/forms/form-errors";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
@@ -55,15 +55,6 @@ import {
 import { loanClassPill, loanStatusPill } from "./pills";
 import { ScheduleTable } from "./ScheduleTable";
 import styles from "./Loans.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 export function LoanDetailDrawer({
   loanId,
