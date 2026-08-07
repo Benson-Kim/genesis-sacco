@@ -13,13 +13,12 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, text
+from sqlalchemy import CursorResult, RowMapping, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -241,7 +240,7 @@ async def member_aggregates(
     )
 
 
-def _row_to_record(row: Mapping[str, Any]) -> MemberRecord:
+def _row_to_record(row: RowMapping) -> MemberRecord:
     """Build a MemberRecord by COLUMN NAME (#31 remediation N2).
 
     Positional indexes silently misalign whenever a column joins the
