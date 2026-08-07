@@ -224,6 +224,7 @@ backend:test:
     - cat backend/perf/explain_member_list_aggregates.txt || true
     - cat backend/perf/explain_exit_eligibility.txt || true
     - cat backend/perf/explain_batch7.txt || true
+    - cat backend/perf/explain_remediation_n1.txt || true
     - cat backend/perf/explain_batch8.txt || true
     - cat backend/perf/explain_batch10.txt || true
   coverage: '/TOTAL.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'

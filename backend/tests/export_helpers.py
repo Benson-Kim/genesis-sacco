@@ -5,7 +5,7 @@ from functools import partial
 
 from sqlalchemy import text
 
-from db_helpers import factory, seed_user, unique_email
+from db_helpers import api_client, factory, seed_user, unique_email
 from genesis.application.auth import AuthContext, issue_access_token
 from genesis.application.exports import ExportCycleSummary, run_pending_exports
 from genesis.application.rbac import seed_permissions
@@ -55,6 +55,24 @@ async def add_user(tid: uuid.UUID, role_name: str) -> tuple[uuid.UUID, str]:
     return user_id, token
 
 
+async def create_branch(token: str, name: str) -> str:
+    """Create a branch through the real API; returns the branch id.
+
+    Shared by the roster suites and the remediation-N1 boundary suite
+    (review R1 on !83 — never a private cross-suite import, the F5
+    lesson).
+    """
+    async with api_client() as client:
+        res = await client.post(
+            "/branches",
+            json={"name": name},
+            headers={"authorization": f"Bearer {token}"},
+        )
+        assert res.status_code == 201, res.text
+        branch_id: str = res.json()["id"]
+    return branch_id
+
+
 async def seed_member(
     tid: uuid.UUID,
     *,
@@ -80,6 +98,41 @@ async def seed_member(
                 ),
                 {"id": str(uuid.uuid4()), "tid": str(tid), "m": str(mid), "bal": bal},
             )
+    return mid
+
+
+async def seed_member_no(
+    tid: uuid.UUID,
+    member_no: str,
+    *,
+    name: str,
+    status: str = "active",
+    branch_id: str | None = None,
+) -> uuid.UUID:
+    """Member with a CONTROLLED member_no so keyset order is hand-computable.
+
+    Shared by the roster suites and the remediation-N1 boundary suite
+    (review R1 on !83 — never a private cross-suite import, the F5
+    lesson).
+    """
+    mid = uuid.uuid4()
+    async with tenant_session(factory(), tid) as session:
+        await session.execute(
+            text(
+                "INSERT INTO members "
+                "(id, tenant_id, member_no, type, name, status, branch_id) "
+                "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :no, 'person', "
+                ":name, :status, CAST(:bid AS uuid))"
+            ),
+            {
+                "id": str(mid),
+                "tid": str(tid),
+                "no": member_no,
+                "name": name,
+                "status": status,
+                "bid": branch_id,
+            },
+        )
     return mid
 
 

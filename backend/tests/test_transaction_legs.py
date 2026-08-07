@@ -31,6 +31,7 @@ import uuid
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import text
 
 from db_helpers import api_client, factory
 from export_helpers import add_user, seed_actor, seed_member, seed_three_leg_repayment
@@ -148,5 +149,70 @@ def test_legs_404_before_facts_unknown_and_cross_tenant() -> None:
             assert res.status_code == 404, res.text
             assert "100.00" not in res.text
             assert "cash.mpesa" not in res.text
+
+    asyncio.run(run())
+
+
+def test_legs_over_cap_guard_sanitized_500() -> None:
+    """#31 remediation N3 — the hard defensive cap is FALSIFIABLE: a
+    posting whose leg count exceeds MAX_TRANSACTION_LEGS (64) trips a
+    sanitized 500 (internal_error category + correlation id) with NO
+    account and NO figure echoed. Hand-computed oracle: 40 DR x 1.00 +
+    40 CR x 1.00 = 80 balanced legs (DR total = CR total = 40.00 =
+    transactions.amount, so the deferred 0004/0014 trigger accepts the
+    commit — only direct SQL can build this; every real builder writes
+    at most 7 legs). Remove the guard in transaction_legs and this
+    test fails with a 200 carrying 80 rows."""
+
+    async def run() -> None:
+        tid, _, token = await seed_actor()
+        mid = await seed_member(tid, name="Over Cap Legs Member")
+        txn_id = uuid.uuid4()
+        async with tenant_session(factory(), tid) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO transactions "
+                    "(id, tenant_id, txn_ref, member_id, type, amount, channel) "
+                    "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :ref, "
+                    "CAST(:mid AS uuid), 'loan_repayment', 40.00, 'mpesa')"
+                ),
+                {
+                    "id": str(txn_id),
+                    "tid": str(tid),
+                    "mid": str(mid),
+                    "ref": f"RP-{txn_id.hex[:8]}",
+                },
+            )
+            for account, side in (("cash.mpesa", "debit"), ("loans.receivable", "credit")):
+                await session.execute(
+                    text(
+                        "INSERT INTO ledger_entries "
+                        "(id, tenant_id, transaction_id, account, side, amount) "
+                        "SELECT gen_random_uuid(), CAST(:tid AS uuid), "
+                        "CAST(:txn AS uuid), :account, :side, 1.00 "
+                        "FROM generate_series(1, 40)"
+                    ),
+                    {
+                        "tid": str(tid),
+                        "txn": str(txn_id),
+                        "account": account,
+                        "side": side,
+                    },
+                )
+        async with api_client() as client:
+            res = await client.get(
+                f"/transactions/{txn_id}/legs",
+                headers={"authorization": f"Bearer {token}"},
+            )
+        assert res.status_code == 500, res.text
+        body = res.json()
+        # Sanitized envelope ONLY: category + correlation id — no leg
+        # rows, no account, no amount, no count (least disclosure).
+        assert set(body.keys()) == {"category", "correlation_id"}
+        assert body["category"] == "internal_error"
+        assert "1.00" not in res.text
+        assert "40.00" not in res.text
+        assert "cash.mpesa" not in res.text
+        assert "loans.receivable" not in res.text
 
     asyncio.run(run())

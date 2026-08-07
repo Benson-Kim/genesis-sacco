@@ -36,7 +36,12 @@ from genesis.domain.ledger import (
 )
 from genesis.domain.members import MemberStatus, MoneyOperation, member_may
 from genesis.domain.money import ZERO, to_cents
-from genesis.errors import ConflictError, InvalidInputError, NotFoundError
+from genesis.errors import (
+    ConflictError,
+    InvalidInputError,
+    InvariantViolationError,
+    NotFoundError,
+)
 
 #: The two account tables this module maintains. Table names are always
 #: taken from this mapping (never from user input) before interpolation.
@@ -427,6 +432,19 @@ async def list_transactions(
     return items, next_cursor
 
 
+#: Hard defensive cap on the legs of ONE posting (#31 remediation N3).
+#: The widest as-built posting builder (the P12 exit settlement)
+#: writes 7 legs; 64 is comfortable headroom for any legitimate future
+#: builder while keeping the unpaginated legs response bounded by a
+#: GUARD, not merely "by construction". transaction_legs fetches
+#: cap + 1 rows and raises InvariantViolationError (a sanitized 500,
+#: no figures echoed — gate 1.6) when the cap is exceeded, so a future
+#: builder that unbounds a posting trips loudly instead of silently
+#: widening the response (falsifiable leg in
+#: tests/test_transaction_legs.py: remove the guard and the over-cap
+#: posting serves 200).
+MAX_TRANSACTION_LEGS = 64
+
 #: Legs drill-down read (#31 ledger (g), audit #30 A3): the per-posting
 #: DR/CR legs from the append-only ledger_entries truth. Module-level
 #: so the EXPLAIN capture (tests/test_batch7_explain.py) asserts
@@ -435,16 +453,18 @@ async def list_transactions(
 #: bound parameter (v1.1 rule 6). Served by idx_ledger_txn (0001:
 #: tenant_id, transaction_id) — this read ships NO migration. The leg
 #: set is bounded by construction (the widest posting builder, the P12
-#: exit settlement, writes 7 legs), so no pagination exists here;
-#: ORDER BY side DESC (debits first — the accountant's DR-before-CR
-#: convention), account, id is a total order making the response
-#: deterministic even though all legs of one posting share the same
-#: transaction-stable created_at.
+#: exit settlement, writes 7 legs) AND by the MAX_TRANSACTION_LEGS
+#: guard above (#31 remediation N3: :leg_cap is bound to cap + 1 so
+#: overflow is DETECTED, never truncated silently), so no pagination
+#: exists here; ORDER BY side DESC (debits first — the accountant's
+#: DR-before-CR convention), account, id is a total order making the
+#: response deterministic even though all legs of one posting share
+#: the same transaction-stable created_at.
 TRANSACTION_LEGS_SQL = (
     "SELECT account, side, amount FROM ledger_entries "
     "WHERE tenant_id = CAST(:tid AS uuid) "
     "AND transaction_id = CAST(:txn AS uuid) "
-    "ORDER BY side DESC, account, id"
+    "ORDER BY side DESC, account, id LIMIT :leg_cap"
 )
 
 
@@ -472,7 +492,9 @@ async def transaction_legs(
     nothing is summed, netted or derived here — the 0004/0014 DB
     constraint trigger already proved balance at commit time, and the
     web client renders each row verbatim without a computed total
-    (P15 blocker (a)).
+    (P15 blocker (a)). The response is bounded by the
+    MAX_TRANSACTION_LEGS guard (#31 remediation N3), not merely by
+    construction.
     """
     exists = (
         await session.execute(
@@ -489,9 +511,24 @@ async def transaction_legs(
     rows = (
         await session.execute(
             text(TRANSACTION_LEGS_SQL),
-            {"tid": str(tenant_id), "txn": str(transaction_id)},
+            {
+                "tid": str(tenant_id),
+                "txn": str(transaction_id),
+                # cap + 1: the sentinel row proves overflow (#31 N3).
+                "leg_cap": MAX_TRANSACTION_LEGS + 1,
+            },
         )
     ).all()
+    if len(rows) > MAX_TRANSACTION_LEGS:
+        # Defensive bound (#31 remediation N3): a legitimate posting
+        # never comes close (widest builder: 7 legs); tripping this
+        # means a future builder unbounded a posting. Sanitized 500 —
+        # the message names the id only, never an account or a figure
+        # (gate 1.6); the ledger rows themselves stay intact and
+        # auditable for staff entitled to them.
+        raise InvariantViolationError(
+            f"transaction {transaction_id} exceeds the bounded ledger-leg maximum"
+        )
     return [
         LedgerLegRecord(
             account=Account(str(r[0])),
