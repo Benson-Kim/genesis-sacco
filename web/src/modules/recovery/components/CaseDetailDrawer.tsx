@@ -32,10 +32,10 @@
  *   renders the shared ConflictBanner's explicit reload-and-re-enter
  *   flow — NOTHING is replayed.
  */
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal, Pill } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal, Pill } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
@@ -61,15 +61,6 @@ import {
 } from "../schemas";
 import { caseStatusPill } from "./pills";
 import styles from "./Recovery.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 /** Bare staff UUID under least disclosure (the !70 short-id convention). */
 function ShortId({ id }: Readonly<{ id: string }>) {
