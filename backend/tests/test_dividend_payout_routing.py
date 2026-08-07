@@ -91,9 +91,7 @@ async def _set_preference(tid: uuid.UUID, mid: uuid.UUID, token: str) -> None:
     """Write the preference through the REAL versioned update path."""
     async with tenant_session(factory(), tid) as session:
         current = await get_member(session, tid, mid)
-        await update_member(
-            session, tid, None, mid, version=current.version, dividend_payout=token
-        )
+        await update_member(session, tid, None, mid, version=current.version, dividend_payout=token)
 
 
 async def _member_with_both_histories(
