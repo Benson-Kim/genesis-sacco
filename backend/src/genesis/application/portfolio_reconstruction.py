@@ -25,6 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.domain.ledger import Account
+from genesis.domain.lending import NPL_DPD_DAYS
 from genesis.domain.money import to_cents
 
 #: One month-end snapshot, reconstructed from the append-only record
@@ -77,10 +78,10 @@ SELECT
     COUNT(*) AS loans,
     COALESCE(SUM(l.principal - COALESCE(pp.principal_paid, 0)), 0) AS gross,
     COUNT(*) FILTER (
-        WHERE fu.due IS NOT NULL AND (:d_date - fu.due) > 90
+        WHERE fu.due IS NOT NULL AND (:d_date - fu.due) > :dpd_days
     ) AS npl_loans,
     COALESCE(SUM(l.principal - COALESCE(pp.principal_paid, 0)) FILTER (
-        WHERE fu.due IS NOT NULL AND (:d_date - fu.due) > 90
+        WHERE fu.due IS NOT NULL AND (:d_date - fu.due) > :dpd_days
     ), 0) AS npl_balance
 FROM loans l
 LEFT JOIN principal_paid pp ON pp.loan_id = l.id
@@ -105,7 +106,14 @@ def npl_trend_month_ends(as_of: datetime, months: int) -> list[date]:
 
 @dataclass(frozen=True)
 class MonthPortfolio:
-    """The four figures NPL_TREND_MONTH_SQL yields for one cutoff."""
+    """The four figures NPL_TREND_MONTH_SQL yields for one cutoff.
+
+    npl_loans / npl_balance are the FLAGGED bucket at the dpd_days
+    threshold the caller selected: the NPL bucket at the default
+    NPL_DPD_DAYS (every pre-batch-8 caller), the PAR-30 bucket at
+    PAR_DPD_DAYS (the #31 batch-8 dashboard trend). Field names keep
+    the as-built NPL spelling so the snapshot writer's stored-column
+    mapping is untouched."""
 
     month_end: date
     loans: int
@@ -120,6 +128,7 @@ async def reconstruct_month(
     month_end: date,
     *,
     as_of: datetime | None = None,
+    dpd_days: int = NPL_DPD_DAYS,
 ) -> MonthPortfolio:
     """Execute the reconstruction for exactly one cutoff.
 
@@ -127,7 +136,12 @@ async def reconstruct_month(
     as_of cap (the export's snapshot instant) additionally bounds the
     CURRENT, incomplete month exactly as the P13 export always has.
     All values are bound parameters; the receivable account identifier
-    comes from the code-owned chart (v1.1 rule 6).
+    comes from the code-owned chart (v1.1 rule 6). dpd_days selects
+    the flagged bucket from the code-owned domain/lending thresholds —
+    the default (NPL_DPD_DAYS, 90) keeps every pre-batch-8 caller
+    (snapshot writer, NPL-trend export) behaviour-identical; the
+    dashboard PAR-30 trend (#31 batch 8 ledger (k)) passes
+    PAR_DPD_DAYS (30). Never caller input.
     """
     cutoff = datetime(month_end.year, month_end.month, month_end.day, tzinfo=UTC)
     d_next = cutoff + timedelta(days=1)
@@ -141,6 +155,7 @@ async def reconstruct_month(
                 "d_next": d_next,
                 "d_date": month_end,
                 "receivable_account": Account.LOANS_RECEIVABLE.value,
+                "dpd_days": dpd_days,
             },
         )
     ).one()

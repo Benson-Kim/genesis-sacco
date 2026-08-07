@@ -242,6 +242,29 @@ export function MemberKycDrawer({
         </div>
       )}
 
+      {/* Dividend payout PREFERENCE (#31 ledger (c)): the fresh
+          detail read's nullable dividend_payout, the server's own
+          code-owned vocabulary token rendered VERBATIM — never
+          re-labelled, never money math. NULL is the honest "not set"
+          state (a preference is never invented). Stored preference
+          ONLY: the P13.11 distribution engine does not consume it
+          (batch-8 fence). */}
+      {detailQuery.data !== undefined && (
+        <div className={styles.summaryPanel}>
+          <div className={styles.panelSubTitle}>Dividend payout</div>
+          <dl className={styles.summaryList}>
+            <div className={styles.summaryRow}>
+              <dt>Preference</dt>
+              <dd>
+                {detailQuery.data.dividend_payout === null
+                  ? "— (not set; the member edit records it)"
+                  : detailQuery.data.dividend_payout}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      )}
+
       <div className={styles.summaryPanel}>
         <div className={styles.panelSubTitle}>Financial summary</div>
         {detailQuery.isPending && (

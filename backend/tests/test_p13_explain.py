@@ -109,6 +109,10 @@ def test_p13_report_and_export_queries_are_index_backed() -> None:
                     "d_next": now,
                     "d_date": now.date(),
                     "receivable_account": "loans.receivable",
+                    # #31 batch 8 (ledger (k)): the flagged-bucket
+                    # threshold became a bound parameter (NPL 90 here —
+                    # the pre-batch-8 behaviour; PAR-30 passes 30).
+                    "dpd_days": 90,
                 },
             )
             claim = await _explain(session, CLAIM_SQL, {"tid": str(tid)})

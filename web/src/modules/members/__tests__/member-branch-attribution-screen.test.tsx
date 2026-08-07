@@ -77,6 +77,7 @@ const MEMBER: Member = {
   status: "active",
   version: 1,
   branch_id: null,
+  dividend_payout: null,
 };
 
 const AGGREGATES = {
