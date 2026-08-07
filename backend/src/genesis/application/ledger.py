@@ -630,9 +630,10 @@ async def post_share_transfer(
     Two member-attributed transactions through the clearing account
     (see genesis.domain.ledger for why one netted posting would blind
     the ledger-reconstructed share basis); the clearing account nets
-    to zero inside this one transaction. The caller (P13.11
-    transfer_shares) owns the atomic unit and the row locks. One
-    outbox event describes the whole transfer (gates 1.2, 1.5).
+    to zero inside this one transaction. The caller (the issue-#31 (l)
+    checker phase, dividends.approve_share_transfer) owns the atomic
+    unit and the row locks. One outbox event describes the whole
+    transfer (gates 1.2, 1.5).
     """
     out_spec = build_share_transfer_out_posting(amount)
     in_spec = build_share_transfer_in_posting(amount)
