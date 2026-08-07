@@ -55,6 +55,18 @@ class UnprocessableError(AppError):
     category = ErrorCategory.VALIDATION
 
 
+class InvariantViolationError(AppError):
+    """Raised when a code-owned structural invariant breaks at read time —
+    e.g. a response bounded 'by construction' exceeding its hard
+    defensive cap (#31 remediation N3, transactions.MAX_TRANSACTION_LEGS).
+    Surfaces as a sanitized 500 (internal_error category + correlation
+    id); the message is internal-only and carries no figures (gate 1.6).
+    """
+
+    status_code = 500
+    category = ErrorCategory.INTERNAL
+
+
 class ForbiddenError(AppError):
     status_code = 403
     category = ErrorCategory.FORBIDDEN

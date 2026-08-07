@@ -119,9 +119,11 @@ class LedgerLegOut(BaseModel):
 
 
 class TransactionLegsResponse(BaseModel):
-    """All legs of one posting. Unpaginated BY CONSTRUCTION: the widest
-    posting builder (the P12 exit settlement) writes 7 legs, so the
-    response is bounded without a cursor."""
+    """All legs of one posting. Unpaginated: the widest posting builder
+    (the P12 exit settlement) writes 7 legs, and the service enforces
+    the hard MAX_TRANSACTION_LEGS defensive cap (#31 remediation N3 —
+    overflow is a sanitized 500, never a silently unbounded response),
+    so the response is bounded without a cursor."""
 
     items: list[LedgerLegOut]
 
