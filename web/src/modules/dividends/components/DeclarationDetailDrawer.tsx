@@ -42,7 +42,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal, Pill } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal, Pill } from "@genesis/design-system";
 import { MakerCheckerPanel } from "@/modules/authz/components/MakerCheckerPanel";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
@@ -63,7 +63,6 @@ import {
   type DividendVoteResult,
 } from "../schemas";
 import { declarationStatusPill } from "./pills";
-import { Kv } from "./Kv";
 import styles from "./Dividends.module.css";
 
 export function DeclarationDetailDrawer({
