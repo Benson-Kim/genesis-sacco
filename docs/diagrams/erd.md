@@ -22,6 +22,13 @@
   (0037_committee_recommender.py, down_revision = "0036" — alters
   loan_applications only, no new table); diagram 2.B, §3 and §6
   updated accordingly (v1.2 rules 11/14).
+  Extended for 0040 by the issue-#31 batch-10 MR (!83), IN THE SAME
+  COMMITS as the migration: alembic head 0038 -> 0040
+  (0040_share_transfer_maker_checker.py, down_revision = "0038" —
+  alters share_transfers only, no new table; 0038 added indexes only
+  and needed no ERD change; 0039 is the in-flight !79 claim, absent
+  from this tree, its re-chain declared in !83); diagram 2.D and §3
+  updated accordingly (v1.2 rules 11/14).
   Derived exclusively from backend/migrations/versions/*.py — every
   entity is a real table from a migration; every edge cites the FK
   that implements it. Falsifiable gate: erd-spot-check.py (§6).
@@ -32,9 +39,10 @@
 
 # Entity-relationship diagram — as-built (P-DIAG.2)
 
-The entire schema at alembic head **0037**: **47 tables** (0035
-creates `member_credentials`; 0033/0034/0036/0037 alter existing
-tables and create none), drawn as
+The entire schema at alembic head **0040** (on this tree — 0039 is
+the in-flight !79 claim): **47 tables** (0035 creates
+`member_credentials`; 0033/0034/0036/0037/0040 alter existing tables
+and create none; 0038 adds indexes only), drawn as
 seven subject-area `erDiagram`s (one diagram would not render readably;
 the split follows the module boundaries in the §3 traceability table).
 An entity appearing in more than one diagram (e.g. `members`,
@@ -312,9 +320,14 @@ erDiagram
         uuid tenant_id FK "tenant spine (0020)"
         uuid from_member_id FK "-> members.id; CHECK <> to_member_id (0020)"
         uuid to_member_id FK "-> members.id (0020)"
-        uuid out_transaction_id FK "-> transactions.id (0020)"
-        uuid in_transaction_id FK "-> transactions.id (0020)"
-        uuid created_by FK "nullable -> users.id (0020)"
+        uuid out_transaction_id FK "-> transactions.id; nullable since 0040, ck_share_transfers_txns_iff_posted (0020/0040)"
+        uuid in_transaction_id FK "-> transactions.id; nullable since 0040, ck_share_transfers_txns_iff_posted (0020/0040)"
+        uuid created_by FK "nullable -> users.id (0020); the maker"
+        text status "pending|posted|rejected CHECK; write-once + status-machine trigger; register index (0040)"
+        uuid approved_by FK "nullable -> users.id; the checker; ck_share_transfers_sod: approved_by <> created_by (0040)"
+        timestamptz decided_at "one-shot decision fill (0040)"
+        numeric from_balance_at_request "approval snapshot; pending rows must carry it (0040)"
+        int version "optimistic lock for the rejection path (0040)"
     }
     member_exits {
         uuid id PK
@@ -345,6 +358,7 @@ erDiagram
     transactions ||--o{ share_transfers : "share_transfers.out_transaction_id (0020)"
     transactions ||--o{ share_transfers : "share_transfers.in_transaction_id (0020)"
     users |o--o{ share_transfers : "share_transfers.created_by, nullable (0020)"
+    users |o--o{ share_transfers : "share_transfers.approved_by, nullable, SoD CHECK (0040)"
     members ||--o{ member_exits : "member_exits.member_id (0001)"
     users |o--o{ member_exits : "member_exits.requested_by, nullable (0010)"
     transactions |o--o{ member_exits : "member_exits.settlement_transaction_id, nullable (0010)"
@@ -615,7 +629,7 @@ Both directions of the table↔migration mapping are machine-checked by
 | `dividend_declarations` | 0020 (incl. write-once trigger) | — | `application/dividends.py` |
 | `dividend_declaration_votes` | 0020 | — | `application/dividends.py` |
 | `dividend_distributions` | 0020 | 0022 (`disposition`) | `application/dividends.py` |
-| `share_transfers` | 0020 | — | `application/dividends.py` |
+| `share_transfers` | 0020 | 0040 (maker-checker columns: `status`/`approved_by`/`decided_at`/`from_balance_at_request`/`version`/`updated_at`; transaction FKs go nullable with `ck_share_transfers_txns_iff_posted`; `ck_share_transfers_sod` + pending-snapshot CHECKs; write-once/status-machine trigger; register + approved_by indexes) | `application/dividends.py` |
 | `exports` | 0013 | 0020 (report CHECK widened), 0023 (report CHECK widened for the P13.10 registry) | `application/exports.py` |
 | `export_artifacts` | 0013 | — | `application/exports.py` |
 | `outbox_events` | 0001 | 0003 (`last_error`), 0024 (`idx_outbox_dispatched_purge` + due/purgeable tenant-discovery `SECURITY DEFINER` fns — P13.17e) | `application/outbox.py` (writer), `infrastructure/outbox_worker.py` (dispatcher + retention purge) |
