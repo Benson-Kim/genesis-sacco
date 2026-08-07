@@ -70,6 +70,7 @@ const DORMANT_MEMBER: Member = {
   status: "dormant",
   version: 4,
   branch_id: null,
+  dividend_payout: null,
 };
 
 const RUN_REPORT: DormancyRun = {

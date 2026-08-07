@@ -65,6 +65,7 @@ const MEMBER_OUT = {
   status: "active",
   version: 1,
   branch_id: null,
+  dividend_payout: null,
 };
 
 // DETAIL read (#31 batch 3): the drawer's financial summary renders

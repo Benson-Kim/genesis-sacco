@@ -159,6 +159,41 @@ export const dashboardChartsSchema = z.object({
     portfolio: portfolioChartSchema.nullish(),
 });
 
+/**
+ * PER-KPI TREND SERIES (#31 batch 8, ledger (k)): server-computed
+ * month-end points, capped at 12, from posting-history / audit-fact
+ * truth inside the same REPEATABLE READ snapshot. The client consumes
+ * the series VERBATIM: pct is share-of-window-peak geometry computed
+ * SERVER-side (Decimal) — no client summing, interpolation or derived
+ * deltas exist anywhere (P15 blocker (a)); ratio_pct/active are the
+ * accessible figures of record and are never re-scaled. Each series
+ * follows its KPI card's parent grant (par30 <- loan_book:view,
+ * members <- members:view) and is OMITTED when ungranted — an absent
+ * series mounts NOTHING (structural withholding, gate 1.6).
+ */
+export const par30TrendPointSchema = z.object({
+    /** "YYYY-MM" month key — rendered verbatim if surfaced. */
+    month: z.string(),
+    /** str(Decimal) ratio recomputed from posting-history truth at
+     * the month-end cutoff (never the mutable snapshot columns) — a
+     * STRING end-to-end; a numeric value is a contract violation. */
+    ratio_pct: z.string(),
+    pct: pctIntSchema,
+});
+
+export const membersTrendPointSchema = z.object({
+    month: z.string(),
+    /** Count reconstructed from the immutable member.status
+     * transition facts at the cutoff. */
+    active: z.number().int(),
+    pct: pctIntSchema,
+});
+
+export const kpiTrendsSchema = z.object({
+    par30: z.array(par30TrendPointSchema).nullish(),
+    members: z.array(membersTrendPointSchema).nullish(),
+});
+
 export const dashboardSummarySchema = z.object({
     /** datetime.isoformat() (api/dashboard.py summary.as_of) — feeds
      * fmtDateTime in the header: garbage is REJECTED, never
@@ -171,6 +206,7 @@ export const dashboardSummarySchema = z.object({
     monthly_flows: z.array(monthlyFlowSchema).nullish(),
     pipeline: z.array(pipelineStageSchema).nullish(),
     charts: dashboardChartsSchema.nullish(),
+    kpi_trends: kpiTrendsSchema.nullish(),
 });
 
 export type DashboardSummary = z.infer<typeof dashboardSummarySchema>;
@@ -180,4 +216,5 @@ export type ClassificationSlice = z.infer<typeof classificationSliceSchema>;
 export type DashboardCharts = z.infer<typeof dashboardChartsSchema>;
 export type FlowsChart = z.infer<typeof flowsChartSchema>;
 export type PortfolioChart = z.infer<typeof portfolioChartSchema>;
+export type KpiTrends = z.infer<typeof kpiTrendsSchema>;
 

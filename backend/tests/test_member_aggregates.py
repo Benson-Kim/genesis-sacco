@@ -295,7 +295,14 @@ def test_member_list_stays_flat_without_aggregates() -> None:
         # parameterless response fails here).
         for item in items:
             assert sorted(item) == [
+                # branch_id (batch 7, ledger (j).2) and
+                # dividend_payout (batch 8, ledger (c)) joined the
+                # flat contract with authorized expands —
+                # nullable-never-optional, so both keys are ALWAYS
+                # present; exactness kept: TEN keys, no aggregates
+                # leak.
                 "branch_id",
+                "dividend_payout",
                 "email",
                 "id",
                 "member_no",
