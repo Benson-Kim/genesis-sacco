@@ -19,16 +19,31 @@ Permission gates (P4 matrix, decided and documented):
     precedent), and the decision needs the configured quorum (P9
     machinery).
   * view / list — transactions x VIEW.
-  * share transfer — members x APPROVE: it moves member equity, the
-    P12 settlement-posting precedent (deliberately not members:edit,
-    which covers non-money lifecycle changes).
+  * share transfer request / approval / rejection — members x
+    APPROVE: it moves member equity, the P12 settlement-posting
+    precedent (deliberately not members:edit, which covers non-money
+    lifecycle changes). TWO-PHASE maker-checker since issue #31
+    ledger (l) (MR !83, the !77 human-review HIGH finding): the
+    request creates a PENDING transfer bound to a persisted snapshot;
+    a DISTINCT, non-assurance checker approves or rejects (server-side
+    SoD + the 0040 DB CHECK). Same-permission different-principal is
+    the house posture (the P12/0031 precedent: the P4 matrix grants
+    overlapping role permissions, so separation is per USER,
+    server-side).
+  * share-transfer register / by-id read — members x VIEW (issue #31
+    ledger (m); the house read-split: corrections registers sit under
+    corrections:view while their mutations need create/approve).
+    Least disclosure: bare UUIDs and verbatim decimal strings — the
+    request-time balance snapshot is deliberately NOT serialised.
 
 Money parameters NEVER travel in request bodies (v1.1 rule 1): rates
 and the financial-year period are resolved server-side from tenant
 configuration and the persisted approval snapshot; extra="forbid"
 turns a caller-supplied rate, period or total into a 422. The share
 transfer amount is the operation's subject (like a deposit amount),
-bounded and 2dp-validated at the contract.
+bounded and 2dp-validated at the contract; the approval and rejection
+bodies carry NO money at all (figures derive from the persisted
+pending row).
 """
 
 from __future__ import annotations
@@ -55,11 +70,13 @@ router = APIRouter(tags=["dividends"])
 _txn_view = RequirePermission(Module.TRANSACTIONS, Action.VIEW)
 _txn_edit = RequirePermission(Module.TRANSACTIONS, Action.EDIT)
 _txn_approve = RequirePermission(Module.TRANSACTIONS, Action.APPROVE)
+_members_view = RequirePermission(Module.MEMBERS, Action.VIEW)
 _members_approve = RequirePermission(Module.MEMBERS, Action.APPROVE)
 
 TxnViewCtx = Annotated[AuthContext, Depends(_txn_view)]
 TxnEditCtx = Annotated[AuthContext, Depends(_txn_edit)]
 TxnApproveCtx = Annotated[AuthContext, Depends(_txn_approve)]
+MembersViewCtx = Annotated[AuthContext, Depends(_members_view)]
 MembersApproveCtx = Annotated[AuthContext, Depends(_members_approve)]
 
 
@@ -102,6 +119,23 @@ class ShareTransferBody(BaseModel):
 
     to_member_id: uuid.UUID
     amount: Decimal = Field(gt=0, le=1_000_000_000, decimal_places=2)
+
+
+class ShareTransferApproveBody(BaseModel):
+    """NO money fields, ever (v1.1 rule 1): every figure derives from
+    the persisted pending transfer; extra="forbid" -> 422."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ShareTransferRejectBody(BaseModel):
+    """Version-pinned rejection with the MANDATORY checker rationale
+    (the !52 F2 posture); workflow metadata only, never money."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class DeclarationOut(BaseModel):
@@ -160,12 +194,61 @@ class DistributionRunOut(BaseModel):
 
 
 class ShareTransferOut(BaseModel):
+    """The APPROVAL result — the money actually moved (phase 2)."""
+
     transfer_id: str
     out_txn_ref: str
     in_txn_ref: str
     amount: str
     from_balance_after: str
     to_balance_after: str
+
+
+class ShareTransferRecordOut(BaseModel):
+    """The workflow record (issue #31 (l)/(m)): the register row and
+    the request/rejection responses. Least disclosure: bare UUIDs (the
+    !66/!70 precedent — resolving them stays behind the entitled
+    modules), the amount as the verbatim decimal string, and NO
+    request-time balance snapshot (the approval re-verifies it
+    server-side; the audit rows carry the exact figures). Maker and
+    checker attribution are nullable-never-optional server truth: a
+    NULL (pre-0040 history) serialises as an honest null, never an
+    invented principal."""
+
+    id: str
+    from_member_id: str
+    to_member_id: str
+    amount: str
+    status: str
+    out_transaction_id: str | None
+    in_transaction_id: str | None
+    created_by: str | None
+    approved_by: str | None
+    decided_at: str | None
+    version: int
+    created_at: str
+
+
+class ShareTransferListOut(BaseModel):
+    items: list[ShareTransferRecordOut]
+    next_cursor: str | None
+
+
+def _transfer_record_out(record: dividends_service.ShareTransferRecord) -> ShareTransferRecordOut:
+    return ShareTransferRecordOut(
+        id=str(record.id),
+        from_member_id=str(record.from_member_id),
+        to_member_id=str(record.to_member_id),
+        amount=str(record.amount),
+        status=record.status.value,
+        out_transaction_id=str(record.out_transaction_id) if record.out_transaction_id else None,
+        in_transaction_id=str(record.in_transaction_id) if record.in_transaction_id else None,
+        created_by=str(record.created_by) if record.created_by else None,
+        approved_by=str(record.approved_by) if record.approved_by else None,
+        decided_at=record.decided_at.isoformat() if record.decided_at else None,
+        version=record.version,
+        created_at=record.created_at.isoformat(),
+    )
 
 
 def _declaration_out(record: dividends_service.DeclarationRecord) -> DeclarationOut:
@@ -287,19 +370,67 @@ async def distribute(
 
 
 @router.post("/members/{member_id}/share-transfers", status_code=201)
-async def transfer_shares(
+async def request_share_transfer(
     member_id: uuid.UUID, body: ShareTransferBody, ctx: MembersApproveCtx
-) -> ShareTransferOut:
-    """Transfer share capital to an active member (the exit path)."""
+) -> ShareTransferRecordOut:
+    """MAKER phase (issue #31 (l)): create a PENDING transfer bound to
+    the persisted approval snapshot — NO money moves until a distinct
+    checker approves."""
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
-        result = await dividends_service.transfer_shares(
+        record = await dividends_service.request_share_transfer(
             session,
             ctx.tenant_id,
             ctx.user_id,
             member_id,
             to_member_id=body.to_member_id,
             amount=body.amount,
+        )
+    return _transfer_record_out(record)
+
+
+@router.get("/share-transfers")
+async def list_share_transfers(
+    ctx: MembersViewCtx,
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> ShareTransferListOut:
+    """The share-transfer history register (issue #31 ledger (m)):
+    keyset, PENDING FIRST then newest first — the checker's job order
+    (the 0038 band pattern). Served under members:view (the house
+    read-split); explicit tenant predicate doubling RLS; bound
+    parameters only."""
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        page = await dividends_service.list_share_transfers(
+            session, ctx.tenant_id, cursor=cursor, limit=limit
+        )
+    return ShareTransferListOut(
+        items=[_transfer_record_out(record) for record in page.items],
+        next_cursor=page.next_cursor,
+    )
+
+
+@router.get("/share-transfers/{transfer_id}")
+async def get_share_transfer(transfer_id: uuid.UUID, ctx: MembersViewCtx) -> ShareTransferRecordOut:
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        record = await dividends_service.get_share_transfer(session, ctx.tenant_id, transfer_id)
+    return _transfer_record_out(record)
+
+
+@router.post("/share-transfers/{transfer_id}/approval", status_code=201)
+async def approve_share_transfer(
+    transfer_id: uuid.UUID, body: ShareTransferApproveBody, ctx: MembersApproveCtx
+) -> ShareTransferOut:
+    """CHECKER phase (issue #31 (l)): a DISTINCT, non-assurance
+    principal re-verifies the snapshot under the full lock set (409 on
+    drift, posting nothing), then posts BOTH ledger legs, updates both
+    balances and notifies BOTH members via the outbox — atomically."""
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        result = await dividends_service.approve_share_transfer(
+            session, ctx.tenant_id, ctx.user_id, transfer_id
         )
     return ShareTransferOut(
         transfer_id=str(result.transfer_id),
@@ -309,3 +440,23 @@ async def transfer_shares(
         from_balance_after=str(result.from_balance_after),
         to_balance_after=str(result.to_balance_after),
     )
+
+
+@router.post("/share-transfers/{transfer_id}/rejection")
+async def reject_share_transfer(
+    transfer_id: uuid.UUID, body: ShareTransferRejectBody, ctx: MembersApproveCtx
+) -> ShareTransferRecordOut:
+    """Reject a pending transfer (checker decision, optimistic-locked)
+    — the checker's rationale is REQUIRED (!52 F2) and recorded in the
+    audit row, never echoed."""
+    factory = get_sessionmaker(get_settings().database_url)
+    async with tenant_session(factory, ctx.tenant_id) as session:
+        record = await dividends_service.reject_share_transfer(
+            session,
+            ctx.tenant_id,
+            ctx.user_id,
+            transfer_id,
+            version=body.version,
+            reason=body.reason,
+        )
+    return _transfer_record_out(record)

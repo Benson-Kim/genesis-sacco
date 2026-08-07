@@ -40,15 +40,29 @@ Workflow (mirrors the P12 exit machinery, reused not forked):
      drifted snapshots; refused once any claim exists (voiding a
      partially distributed declaration would let a re-declaration pay
      the same year twice).
-  5. transfer_shares — share transfer at exit: BOTH member rows locked
-     FOR UPDATE in id order (two-member operations use the global
-     member-id total order, so opposing transfers can never deadlock —
-     failure mode 7), then both share accounts in the same order (the
-     member -> accounts edge of the P12 chain; no new lock-graph
-     edges). The amount is re-verified under the lock; the transferee
-     must be strictly ACTIVE (checked under the lock, not by a
-     pre-check); postings + both balance updates + the transfer row +
-     audit + outbox commit in ONE transaction.
+  5. share transfers — TWO-PHASE maker-checker since issue #31
+     ledger (l) (MR !83; the !77 human-review HIGH finding, remediated
+     with the issue-#24/0031 repayment-adjustment pattern): the
+     MAKER's request validates under the FULL lock set (BOTH member
+     rows FOR UPDATE in global member-id order — so opposing transfers
+     can never deadlock, failure mode 7 — then both share accounts in
+     the same order, the member -> accounts edge of the P12 chain) and
+     INSERTs a PENDING share_transfers row bound to the persisted
+     approval snapshot (from_balance_at_request, v1.1 rule 3); NO
+     money moves. A DISTINCT, non-assurance CHECKER approves
+     (server-side SoD + the 0040 DB CHECK; the shared
+     application/sod.py guard): transfer row FOR UPDATE FIRST (the
+     workflow anchor, the 0031 anchor-first shape), full lock set
+     retaken, EVERY snapshot component re-verified (both members
+     strictly ACTIVE, transferor balance identical) — 409 on drift
+     posting NOTHING — then the ST- postings, both balance updates,
+     the one-shot decision fill, the audit row and the outbox events
+     (operator event + member notices to BOTH members, the P13.13
+     detection-control precedent) commit in ONE transaction. Rejection
+     is a version-pinned checker decision with a mandatory rationale
+     (the !52 F2 posture) locking the transfer row alone. The
+     ledger-(m) register read walks the 0040 pending-first band index
+     (the 0038 keyset pattern).
 
 Population rules (failure mode 5 and issue #19, all falsifiable):
 active, arrears AND dormant members are scanned (allow-list — the
@@ -126,8 +140,14 @@ from genesis.application.ledger import (
     post_unclaimed_dividend,
 )
 from genesis.application.outbox import enqueue_event
-from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
+from genesis.application.pagination import (
+    build_band_register_cursor,
+    build_created_id_cursor,
+    parse_band_register_cursor,
+    parse_created_id_cursor,
+)
 from genesis.application.period_balances import average_daily_balance
+from genesis.application.sod import require_distinct_non_assurance_checker
 from genesis.application.tenant_settings import committee_quorum
 from genesis.application.transactions import _lock_account, _set_balance
 from genesis.domain.committee import Decision, Vote, decide
@@ -150,18 +170,27 @@ __all__ = [
     "DividendConfig",
     "DividendVoteTally",
     "MemberEntitlement",
+    "ShareTransferPage",
+    "ShareTransferRecord",
     "ShareTransferResult",
+    "ShareTransferStatus",
+    "approve_share_transfer",
     "cast_dividend_vote",
     "compute_declaration_totals",
     "compute_member_entitlement",
     "declare_dividend",
     "distribute_dividend",
     "get_declaration",
+    "get_share_transfer",
     "list_declarations",
+    "list_share_transfers",
     "members_scan_sql",
     "parse_dividend_config",
+    "reject_share_transfer",
+    "request_share_transfer",
     "resolve_dividend_config",
-    "transfer_shares",
+    "share_transfer_transition",
+    "share_transfers_register_sql",
     "unclaimed_scan_sql",
     "void_declaration",
 ]
@@ -1581,12 +1610,94 @@ async def distribute_dividend(
 
 
 # ---------------------------------------------------------------------------
-# Share transfer at exit
+# Share transfers — TWO-PHASE maker-checker workflow (issue #31 ledger
+# (l), MR !83: the !77 human-review HIGH finding, remediated with the
+# issue-#24/0031 repayment-adjustment pattern) + the ledger-(m) keyset
+# history register (the 0038 band pattern, served by the 0040 index).
 # ---------------------------------------------------------------------------
+
+
+class ShareTransferStatus(StrEnum):
+    """The 0040 transfer workflow machine (issue #31 (l))."""
+
+    PENDING = "pending"
+    POSTED = "posted"
+    REJECTED = "rejected"
+
+
+_TRANSFER_ALLOWED: dict[ShareTransferStatus, frozenset[ShareTransferStatus]] = {
+    ShareTransferStatus.PENDING: frozenset(
+        {ShareTransferStatus.POSTED, ShareTransferStatus.REJECTED}
+    ),
+    ShareTransferStatus.POSTED: frozenset(),
+    ShareTransferStatus.REJECTED: frozenset(),
+}
+
+
+def share_transfer_transition(current: ShareTransferStatus, target: ShareTransferStatus) -> None:
+    """THE single gatekeeper for transfer status moves (gate 1.4).
+
+    The only writers are approve/reject below; the 0040 write-once
+    trigger enforces the same machine at the database, so a terminal
+    row can never move again even via direct SQL. Illegal moves raise.
+    """
+    if target not in _TRANSFER_ALLOWED[current]:
+        raise ConflictError(
+            f"share transfer cannot move from '{current.value}' to '{target.value}'"
+        )
+
+
+@dataclass(frozen=True)
+class ShareTransferRecord:
+    id: uuid.UUID
+    from_member_id: uuid.UUID
+    to_member_id: uuid.UUID
+    amount: Decimal
+    status: ShareTransferStatus
+    out_transaction_id: uuid.UUID | None
+    in_transaction_id: uuid.UUID | None
+    created_by: uuid.UUID | None
+    approved_by: uuid.UUID | None
+    decided_at: datetime | None
+    version: int
+    created_at: datetime
+    #: The persisted approval snapshot (v1.1 rule 3) — INTERNAL to the
+    #: workflow: the API read models deliberately do NOT serialise it
+    #: (least disclosure, rule 7 — the approval re-verifies it
+    #: server-side; the audit rows carry the exact figures). NULL only
+    #: on pre-0040 single-phase history.
+    from_balance_at_request: Decimal | None
+
+
+_TRANSFER_COLS = (
+    "id, from_member_id, to_member_id, amount, status, "
+    "out_transaction_id, in_transaction_id, created_by, approved_by, "
+    "decided_at, version, created_at, from_balance_at_request"
+)
+
+
+def _row_to_transfer(row: Any) -> ShareTransferRecord:
+    return ShareTransferRecord(
+        id=uuid.UUID(str(row[0])),
+        from_member_id=uuid.UUID(str(row[1])),
+        to_member_id=uuid.UUID(str(row[2])),
+        amount=Decimal(str(row[3])),
+        status=ShareTransferStatus(str(row[4])),
+        out_transaction_id=uuid.UUID(str(row[5])) if row[5] is not None else None,
+        in_transaction_id=uuid.UUID(str(row[6])) if row[6] is not None else None,
+        created_by=uuid.UUID(str(row[7])) if row[7] is not None else None,
+        approved_by=uuid.UUID(str(row[8])) if row[8] is not None else None,
+        decided_at=row[9],
+        version=int(row[10]),
+        created_at=row[11],
+        from_balance_at_request=Decimal(str(row[12])) if row[12] is not None else None,
+    )
 
 
 @dataclass(frozen=True)
 class ShareTransferResult:
+    """The APPROVAL result — the money actually moved (phase 2)."""
+
     transfer_id: uuid.UUID
     out_txn_ref: str
     in_txn_ref: str
@@ -1613,54 +1724,46 @@ async def _lock_member_status(
     return str(row[0])
 
 
-async def transfer_shares(
+@dataclass(frozen=True)
+class _TransferLockContext:
+    from_account_id: uuid.UUID
+    from_balance: Decimal
+    to_account_id: uuid.UUID
+    to_balance: Decimal
+
+
+async def _lock_transfer_chain(
     session: AsyncSession,
     tenant_id: uuid.UUID,
-    actor_id: uuid.UUID | None,
     from_member_id: uuid.UUID,
-    *,
     to_member_id: uuid.UUID,
-    amount: Decimal,
-) -> ShareTransferResult:
-    """Transfer share capital between members atomically (P13.11 §C).
+) -> _TransferLockContext:
+    """The FULL transfer lock set, shared VERBATIM by request and
+    approval so the two phases can never diverge on the rule.
 
-    Lock ordering (documented against the P12 settlement chain,
-    member -> accounts -> loans): BOTH member rows FOR UPDATE in
-    member-id order — two-member operations use the global id total
-    order, so opposing transfers (A->B and B->A) serialise instead of
-    deadlocking (failure mode 7) — then both share accounts FOR UPDATE
-    in the same member order (the existing member -> account edge; no
-    new lock-graph edges). Status checks and the amount check run
-    UNDER those locks, never as pre-checks:
+    Lock ordering (docs/diagrams/lock-order.md; the P12 settlement
+    chain prefix): BOTH member rows FOR UPDATE in global member-id
+    order — two-member operations use the id total order, so opposing
+    transfers (A->B racing B->A) serialise instead of deadlocking
+    (failure mode 7) — then both share accounts FOR UPDATE in the same
+    member order (the existing member -> account edge; no new edges
+    below the workflow anchor). Status checks run UNDER those locks,
+    never as pre-checks:
 
       * transferor must be strictly ACTIVE (the P11 withdrawal rule:
         an arrears member may not move equity out from under their
         debt; exited members cannot transact),
       * transferee must be strictly ACTIVE (dormant/exited/arrears
-        refused — the documented allow-list),
-      * amount must not exceed the transferor's share balance
-        (re-verified under the lock; least-disclosure rejection).
-
-    The OUT and IN postings (P7 contract, ST- refs via the advisory-
-    lock generator), both balance updates, the share_transfers row,
-    the audit row and the outbox event commit in ONE transaction — an
-    abort at any point leaves zero partial state (failure mode 9).
-    A concurrent exit settlement serialises on the member row lock it
-    already takes first; an approved exit snapshot that this transfer
-    invalidates is refused by the P12 drift re-verification (409).
+        refused — the documented allow-list, owned by the P13.13
+        member_may capability map).
     """
-    amount = to_cents(amount)
-    if amount <= ZERO:
-        raise InvalidInputError("transfer amount must be positive")
-    if from_member_id == to_member_id:
-        raise InvalidInputError("cannot transfer shares to the same member")
     statuses: dict[uuid.UUID, str] = {}
     for member_id in sorted((from_member_id, to_member_id)):
         statuses[member_id] = await _lock_member_status(session, tenant_id, member_id)
     # Code-owned capability map (P13.13 FM2): both transfer sides are
     # strictly active-only, so arrears/dormant/exited (and any future
     # status) are refused by construction — the !30 strictly-active
-    # rule, now owned by the single domain gatekeeper.
+    # rule, owned by the single domain gatekeeper.
     if not member_may(MemberStatus(statuses[from_member_id]), MoneyOperation.SHARE_TRANSFER_OUT):
         raise ConflictError(
             f"member {from_member_id} is '{statuses[from_member_id]}': "
@@ -1671,45 +1774,63 @@ async def transfer_shares(
             f"member {to_member_id} is '{statuses[to_member_id]}': "
             "shares may only be transferred to an active member"
         )
-    # Share accounts in the same member-id order (consistent total
-    # order; the member -> account edge of the P12 chain).
     accounts: dict[uuid.UUID, tuple[uuid.UUID, Decimal]] = {}
     for member_id in sorted((from_member_id, to_member_id)):
         accounts[member_id] = await _lock_account(
             session, tenant_id, kind="share", member_id=member_id
         )
-    from_account_id, from_balance = accounts[from_member_id]
-    to_account_id, to_balance = accounts[to_member_id]
-    if amount > from_balance:
+    return _TransferLockContext(
+        from_account_id=accounts[from_member_id][0],
+        from_balance=accounts[from_member_id][1],
+        to_account_id=accounts[to_member_id][0],
+        to_balance=accounts[to_member_id][1],
+    )
+
+
+async def request_share_transfer(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    from_member_id: uuid.UUID,
+    *,
+    to_member_id: uuid.UUID,
+    amount: Decimal,
+) -> ShareTransferRecord:
+    """Phase 1 — the MAKER requests a transfer (issue #31 (l)).
+
+    Creates a PENDING share_transfers row capturing the persisted
+    approval SNAPSHOT (the transferor's share balance at request —
+    v1.1 rule 3) under the FULL lock set; NOTHING posts here. The
+    ST- postings, both balance updates and the member notices happen
+    only in approve_share_transfer, executed by a DISTINCT checker.
+
+    Self-transfer is refused here AND unrepresentable at the database
+    (the 0020 CHECK); the amount is re-verified under the transferor's
+    account row lock (least-disclosure rejection — no balances echoed;
+    the audit row carries the exact figures for staff entitled to
+    them).
+    """
+    amount = to_cents(amount)
+    if amount <= ZERO:
+        raise InvalidInputError("transfer amount must be positive")
+    if from_member_id == to_member_id:
+        raise InvalidInputError("cannot transfer shares to the same member")
+    ctx = await _lock_transfer_chain(session, tenant_id, from_member_id, to_member_id)
+    if amount > ctx.from_balance:
         # Least disclosure (rule 7): no balances echoed; the audit rows
-        # of successful transfers carry the exact figures.
+        # carry the exact figures.
         raise ConflictError(
             "insufficient share balance: the requested amount exceeds the "
             "transferable share capital"
         )
-    out_posting, in_posting = await post_share_transfer(
-        session,
-        tenant_id,
-        from_member_id=from_member_id,
-        to_member_id=to_member_id,
-        amount=amount,
-        actor_id=actor_id,
-    )
-    from_after = to_cents(from_balance - amount)
-    to_after = to_cents(to_balance + amount)
-    await _set_balance(
-        session, tenant_id, kind="share", account_id=from_account_id, balance=from_after
-    )
-    await _set_balance(session, tenant_id, kind="share", account_id=to_account_id, balance=to_after)
     transfer_id = uuid.uuid4()
     await session.execute(
         text(
             "INSERT INTO share_transfers "
             "(id, tenant_id, from_member_id, to_member_id, amount, "
-            " out_transaction_id, in_transaction_id, created_by) "
+            " status, created_by, from_balance_at_request) "
             "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), CAST(:f AS uuid), "
-            "CAST(:t AS uuid), :amount, CAST(:out_txn AS uuid), "
-            "CAST(:in_txn AS uuid), CAST(:actor AS uuid))"
+            "CAST(:t AS uuid), :amount, :status, CAST(:actor AS uuid), :snap)"
         ),
         {
             "id": str(transfer_id),
@@ -1717,35 +1838,392 @@ async def transfer_shares(
             "f": str(from_member_id),
             "t": str(to_member_id),
             "amount": str(amount),
-            "out_txn": str(out_posting.txn_id),
-            "in_txn": str(in_posting.txn_id),
-            "actor": str(actor_id) if actor_id else None,
+            "status": ShareTransferStatus.PENDING.value,
+            "actor": str(actor_id),
+            "snap": str(ctx.from_balance),
         },
     )
     await record_audit(
         session,
         tenant_id,
         actor_id,
-        action="share_transfer.post",
+        action="share_transfer.requested",
         entity="share_transfers",
         entity_id=str(transfer_id),
         after={
             "from_member_id": str(from_member_id),
             "to_member_id": str(to_member_id),
             "amount": str(amount),
-            "from_balance_before": str(from_balance),
+            "status": ShareTransferStatus.PENDING.value,
+            "from_balance_at_request": str(ctx.from_balance),
+        },
+    )
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="share_transfer.requested",
+        payload={
+            "transfer_id": str(transfer_id),
+            "from_member_id": str(from_member_id),
+            "to_member_id": str(to_member_id),
+            "amount": str(amount),
+        },
+    )
+    return await get_share_transfer(session, tenant_id, transfer_id)
+
+
+async def approve_share_transfer(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    transfer_id: uuid.UUID,
+) -> ShareTransferResult:
+    """Phase 2 — a DISTINCT CHECKER approves and executes, atomically
+    (issue #31 (l); gates 1.4, 1.5).
+
+    Snapshot-bind-reverify (v1.1 rule 3, the P12/0031 pattern —
+    sequence-snapshot-bind-reverify.md): lock the pending transfer row
+    FOR UPDATE (the workflow ANCHOR — the 0031 anchor-first shape;
+    nothing anywhere acquires a share_transfers row while holding
+    member/account locks, so the anchor sits above the member tier
+    acyclically) -> status gatekeeper + segregation-of-duties checks
+    (maker <> checker, server-side AND the 0040 DB CHECK behind it;
+    assurance roles excluded — the shared application/sod.py guard) ->
+    retake the FULL lock set (shared verbatim with the request) ->
+    re-verify EVERY snapshot component (both members strictly ACTIVE,
+    transferor balance IDENTICAL to the snapshot) -> 409 on drift,
+    posting NOTHING -> only then the ST-OUT/ST-IN postings (P7
+    contract, advisory-lock refs), both balance updates, the one-shot
+    status/approver/decided_at/transaction fill, the in-transaction
+    audit row, and the outbox events — the existing operator event
+    (ledger.share_transfer_posted, enqueued by post_share_transfer)
+    plus a member NOTICE to EACH of the two members (issue #31 (l)(ii):
+    the P13.13 dormancy-reactivation precedent records member
+    notification as the insider-fraud DETECTION control — the victim
+    of a colluding maker/checker pair sees their equity move). ONE
+    transaction; an abort at any point leaves zero partial state
+    (kill-switch tested).
+    """
+    ts = datetime.now(UTC)
+    row = (
+        await session.execute(
+            text(
+                f"SELECT {_TRANSFER_COLS} FROM share_transfers "  # noqa: S608
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
+            ),
+            {"id": str(transfer_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"share transfer {transfer_id} not found")
+    record = _row_to_transfer(row)
+    share_transfer_transition(record.status, ShareTransferStatus.POSTED)
+    if record.created_by is None or record.from_balance_at_request is None:
+        # Fail closed: only reachable via manual SQL — every pending
+        # row the request path writes carries both (the 0040
+        # pending-snapshot CHECK stands behind the snapshot half).
+        raise ConflictError(
+            f"share transfer {transfer_id} carries no maker attribution or "
+            "snapshot and cannot be checked"
+        )
+    await require_distinct_non_assurance_checker(
+        session,
+        tenant_id,
+        actor_id,
+        record.created_by,
+        subject="a share transfer",
+        subject_plural="share transfers",
+    )
+    ctx = await _lock_transfer_chain(session, tenant_id, record.from_member_id, record.to_member_id)
+    # Component-by-component re-verification against the persisted
+    # snapshot (never "the current state"): any transferor-balance
+    # drift since the request — a deposit, a dividend, another transfer
+    # — is a 409 and NOTHING posts; reject the stale request and raise
+    # a fresh one. (Both member statuses were re-verified strictly
+    # ACTIVE under the locks inside _lock_transfer_chain.)
+    if ctx.from_balance != record.from_balance_at_request:
+        raise ConflictError(
+            f"share transfer {transfer_id} snapshot has drifted since request "
+            "(transferor balance); reject it and request afresh"
+        )
+    out_posting, in_posting = await post_share_transfer(
+        session,
+        tenant_id,
+        from_member_id=record.from_member_id,
+        to_member_id=record.to_member_id,
+        amount=record.amount,
+        actor_id=actor_id,
+    )
+    from_after = to_cents(ctx.from_balance - record.amount)
+    to_after = to_cents(ctx.to_balance + record.amount)
+    await _set_balance(
+        session, tenant_id, kind="share", account_id=ctx.from_account_id, balance=from_after
+    )
+    await _set_balance(
+        session, tenant_id, kind="share", account_id=ctx.to_account_id, balance=to_after
+    )
+    # The decision write — the ONLY post-insert mutation the 0040
+    # write-once trigger permits: the pending -> posted transition plus
+    # the one-shot NULL -> value fills (approved_by, decided_at, both
+    # transaction ids). Every pinned column stays untouched; the
+    # ck_share_transfers_sod CHECK re-verifies maker <> checker at the
+    # database.
+    decided = cast(
+        CursorResult[Any],
+        await session.execute(
+            text(
+                "UPDATE share_transfers "
+                "SET status = :st, approved_by = CAST(:chk AS uuid), decided_at = :ts, "
+                "out_transaction_id = CAST(:out_txn AS uuid), "
+                "in_transaction_id = CAST(:in_txn AS uuid), "
+                "version = version + 1, updated_at = :ts "
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {
+                "st": ShareTransferStatus.POSTED.value,
+                "chk": str(actor_id),
+                "ts": ts,
+                "out_txn": str(out_posting.txn_id),
+                "in_txn": str(in_posting.txn_id),
+                "id": str(transfer_id),
+                "tid": str(tenant_id),
+            },
+        ),
+    )
+    if decided.rowcount != 1:  # pragma: no cover - unreachable under the row lock
+        raise ConflictError(f"share transfer {transfer_id} vanished mid-transaction")
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="share_transfer.posted",
+        entity="share_transfers",
+        entity_id=str(transfer_id),
+        before={"status": ShareTransferStatus.PENDING.value},
+        after={
+            "status": ShareTransferStatus.POSTED.value,
+            "from_member_id": str(record.from_member_id),
+            "to_member_id": str(record.to_member_id),
+            "amount": str(record.amount),
+            "maker_id": str(record.created_by),
+            "approved_by": str(actor_id),
+            "from_balance_before": str(ctx.from_balance),
             "from_balance_after": str(from_after),
-            "to_balance_before": str(to_balance),
+            "to_balance_before": str(ctx.to_balance),
             "to_balance_after": str(to_after),
             "out_txn_ref": out_posting.txn_ref,
             "in_txn_ref": in_posting.txn_ref,
         },
     )
+    # Member NOTICES to BOTH members (issue #31 (l)(ii) — the P13.13
+    # detection control; the guarantee.consented notify_member_id
+    # shape). Ids and the amount only — never names (gate 1.6). ONE
+    # event per member so the dispatcher can address each recipient;
+    # removing either enqueue fails the outbox-count test (FM11).
+    for notify_member_id, role, counterparty in (
+        (record.from_member_id, "from", record.to_member_id),
+        (record.to_member_id, "to", record.from_member_id),
+    ):
+        await enqueue_event(
+            session,
+            tenant_id,
+            event_type="share_transfer.member_notice",
+            payload={
+                "transfer_id": str(transfer_id),
+                "notify_member_id": str(notify_member_id),
+                "role": role,
+                "counterparty_member_id": str(counterparty),
+                "amount": str(record.amount),
+                "out_txn_ref": out_posting.txn_ref,
+                "in_txn_ref": in_posting.txn_ref,
+            },
+        )
     return ShareTransferResult(
         transfer_id=transfer_id,
         out_txn_ref=out_posting.txn_ref,
         in_txn_ref=in_posting.txn_ref,
-        amount=amount,
+        amount=record.amount,
         from_balance_after=from_after,
         to_balance_after=to_after,
     )
+
+
+async def reject_share_transfer(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    transfer_id: uuid.UUID,
+    *,
+    version: int,
+    reason: str,
+) -> ShareTransferRecord:
+    """Reject a pending transfer — optimistic-locked (issue #31 (l);
+    the 0031 reject shape).
+
+    Locks the transfer row ALONE (a single-node locker — the DECL/WOFF
+    void pattern; no money lock is taken because nothing posts). The
+    rejection is a CHECKER decision: the maker cannot decide their own
+    request (server-side SoD + the 0040 DB CHECK; a maker withdrawing
+    a mistaken request asks a checker to reject it) and assurance
+    roles are excluded (the !47 B2 principle). The rejected row is
+    terminal, write-once workflow history (0040 trigger).
+
+    The checker's rejection RATIONALE is required (the !52 F2 posture:
+    the four-eyes record must show WHY). It is workflow metadata —
+    never a money parameter — and lands in the audit ``after``
+    payload; the outbox payload stays ids-only and no error envelope
+    ever echoes it (rule 7).
+    """
+    if not reason.strip():
+        # Defence in depth beneath the boundary validation (the
+        # Pydantic body already enforces min_length=1).
+        raise InvalidInputError("a rejection reason is required")
+    ts = datetime.now(UTC)
+    row = (
+        await session.execute(
+            text(
+                "SELECT status, created_by, version FROM share_transfers "
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) FOR UPDATE"
+            ),
+            {"id": str(transfer_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"share transfer {transfer_id} not found")
+    current = ShareTransferStatus(str(row[0]))
+    maker_id = uuid.UUID(str(row[1])) if row[1] is not None else None
+    share_transfer_transition(current, ShareTransferStatus.REJECTED)
+    if maker_id is None:
+        # Fail closed: only reachable via manual SQL (see approve).
+        raise ConflictError(
+            f"share transfer {transfer_id} carries no maker attribution and cannot be checked"
+        )
+    await require_distinct_non_assurance_checker(
+        session,
+        tenant_id,
+        actor_id,
+        maker_id,
+        subject="a share transfer",
+        subject_plural="share transfers",
+    )
+    result = cast(
+        CursorResult[Any],
+        await session.execute(
+            text(
+                "UPDATE share_transfers "
+                "SET status = :st, approved_by = CAST(:chk AS uuid), decided_at = :ts, "
+                "version = version + 1, updated_at = :ts "
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
+                "AND version = :ver"
+            ),
+            {
+                "st": ShareTransferStatus.REJECTED.value,
+                "chk": str(actor_id),
+                "ts": ts,
+                "id": str(transfer_id),
+                "tid": str(tenant_id),
+                "ver": version,
+            },
+        ),
+    )
+    if result.rowcount != 1:
+        raise ConflictError(f"stale version {version} for share transfer {transfer_id}")
+    await record_audit(
+        session,
+        tenant_id,
+        actor_id,
+        action="share_transfer.rejected",
+        entity="share_transfers",
+        entity_id=str(transfer_id),
+        before={"status": current.value},
+        after={
+            "status": ShareTransferStatus.REJECTED.value,
+            "approved_by": str(actor_id),
+            # !52 F2: the checker's rationale, on the record.
+            "reason": reason,
+        },
+    )
+    await enqueue_event(
+        session,
+        tenant_id,
+        event_type="share_transfer.rejected",
+        payload={"transfer_id": str(transfer_id)},
+    )
+    return await get_share_transfer(session, tenant_id, transfer_id)
+
+
+async def get_share_transfer(
+    session: AsyncSession, tenant_id: uuid.UUID, transfer_id: uuid.UUID
+) -> ShareTransferRecord:
+    """One transfer by id; explicit tenant predicate on top of RLS."""
+    row = (
+        await session.execute(
+            text(
+                f"SELECT {_TRANSFER_COLS} FROM share_transfers "  # noqa: S608
+                "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"id": str(transfer_id), "tid": str(tenant_id)},
+        )
+    ).first()
+    if row is None:
+        raise NotFoundError(f"share transfer {transfer_id} not found")
+    return _row_to_transfer(row)
+
+
+def share_transfers_register_sql(*, with_cursor: bool) -> str:
+    """The share-transfer history register (issue #31 ledger (m)).
+
+    ORDER BY (status = 'pending') DESC, created_at DESC, id DESC — the
+    checker's job order: PENDING FIRST, newest first inside each band;
+    terminal history behind (the 0038 register pattern, incl. its
+    accepted property: a row whose band changes mid-pagination may
+    surface twice across a paging session — duplicated, never missed).
+    Uniform-DESC keyset row comparison, served by
+    idx_share_transfers_register (0040, shipped with this query — gate
+    1.3; EXPLAIN-asserted, falsifiable by dropping it). Static
+    fragments chosen in code; every value is a bound parameter (v1.1
+    rule 6); explicit tenant predicate on top of forced RLS (rule 4).
+    """
+    cursor = (
+        "AND ((status = 'pending'), created_at, id) "
+        "< (CAST(:c_flag AS boolean), CAST(:c_ts AS timestamptz), CAST(:c_id AS uuid)) "
+    )
+    return (
+        f"SELECT {_TRANSFER_COLS} FROM share_transfers "  # noqa: S608
+        "WHERE tenant_id = CAST(:tid AS uuid) "
+        f"{cursor if with_cursor else ''}"
+        "ORDER BY (status = 'pending') DESC, created_at DESC, id DESC "
+        "LIMIT :limit"
+    )
+
+
+@dataclass(frozen=True)
+class ShareTransferPage:
+    items: list[ShareTransferRecord]
+    next_cursor: str | None
+
+
+async def list_share_transfers(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    cursor: str | None,
+    limit: int,
+) -> ShareTransferPage:
+    """Keyset transfer register, pending-first (issue #31 ledger (m))."""
+    params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
+    if cursor is not None:
+        c_flag, c_ts, c_id = parse_band_register_cursor(cursor, entity="share transfer register")
+        params["c_flag"] = c_flag
+        params["c_ts"] = c_ts
+        params["c_id"] = c_id
+    stmt = text(share_transfers_register_sql(with_cursor=cursor is not None))
+    rows = (await session.execute(stmt, params)).all()
+    items = [_row_to_transfer(r) for r in rows[:limit]]
+    next_cursor = None
+    if len(rows) > limit and items:
+        last = items[-1]
+        next_cursor = build_band_register_cursor(
+            last.status is ShareTransferStatus.PENDING, last.created_at, last.id
+        )
+    return ShareTransferPage(items=items, next_cursor=next_cursor)

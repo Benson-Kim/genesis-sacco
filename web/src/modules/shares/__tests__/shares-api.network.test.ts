@@ -4,19 +4,25 @@
  * Network-layer proofs for the share-transfers API layer through the
  * REAL generated client + middleware (node environment: real Request/
  * Response/Headers; fetch stubbed at the network boundary), mirroring
- * the corrections/recovery reference harnesses (issue #31 batch 6,
- * ledger (e)):
+ * the corrections/recovery reference harnesses (issue #31 batch 10,
+ * ledger (l)/(m)):
  * - Bearer/tenant/Idempotency-Key travel as HEADERS; nothing secret
- *   ever enters a URL; the transferring member rides the PATH, the
- *   transferee and the amount ride the BODY — key-exact.
+ *   ever enters a URL; ids ride the PATH; the transferee and the
+ *   amount ride the request BODY — key-exact.
+ * - APPROVAL body is EMPTY by contract (v1.1 rule 3: the checker
+ *   approves the PERSISTED snapshot — smuggle anything in and the
+ *   key-exact assertion fails); REJECTION pins {version, reason}
+ *   exactly.
+ * - The register GET carries cursor/limit as QUERY only; the opaque
+ *   cursor echoes back verbatim.
  * - MONEY (blocker (a)): the amount travels as the typed decimal
  *   STRING verbatim; every response figure is asserted by the Zod
  *   boundary (numbers REJECTED, wrong scale REJECTED); extra keys
- *   are STRIPPED; a missing key REFUSES (nullable-free contract —
- *   every ShareTransferOut key is required).
- * - A 409 (balance shortfall under the row locks) surfaces as a typed
- *   ApiError from ONE request; a 422 surfaces CANONICAL field keys
- *   (W56-5).
+ *   are STRIPPED; a missing key REFUSES; the record's nullable legs
+ *   accept null and NOTHING else off-shape.
+ * - A 409 (snapshot drift / balance shortfall under the locks)
+ *   surfaces as a typed ApiError from ONE request; a 422 surfaces
+ *   CANONICAL field keys (W56-5).
  */
 
 // Module scope (two global-script suites would collide under tsc).
@@ -26,11 +32,13 @@ type FetchCall = { url: string; method: string; headers: Headers; body: string |
 
 const TENANT = "22222222-2222-2222-2222-222222222222";
 const USER_ID = "55555555-5555-5555-5555-555555555555";
+const MAKER_ID = "88888888-8888-8888-8888-888888888888";
 const FROM_ID = "11111111-1111-1111-1111-111111111111";
-const TO_ID = "33333333-3333-3333-3333-333333333333";
+const TO_ID = "33333333-3333-3333-3333-444444444444";
+const TRANSFER_ID = "aaaabbbb-1111-2222-3333-444444444444";
 
 const calls: FetchCall[] = [];
-let transferStatus = 201;
+let mutationStatus = 201;
 
 function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -41,8 +49,23 @@ function jwt(sub: string, expInSeconds: number): string {
   return `${b64url({ alg: "HS256" })}.${b64url({ sub, exp })}.sig`;
 }
 
-const transferOut = {
-  transfer_id: "aaaabbbb-1111-2222-3333-444444444444",
+const recordOut = {
+  id: TRANSFER_ID,
+  from_member_id: FROM_ID,
+  to_member_id: TO_ID,
+  amount: "5000.10",
+  status: "pending",
+  out_transaction_id: null,
+  in_transaction_id: null,
+  created_by: MAKER_ID,
+  approved_by: null,
+  decided_at: null,
+  version: 1,
+  created_at: "2026-08-07T09:00:00Z",
+};
+
+const approveOut = {
+  transfer_id: TRANSFER_ID,
   out_txn_ref: "ST-OUT-000123",
   in_txn_ref: "ST-IN-000123",
   amount: "5000.10",
@@ -66,10 +89,10 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
     return json(401, { category: "unauthenticated", correlation_id: "corr-a" });
   }
   if (path === `/members/${FROM_ID}/share-transfers` && request.method === "POST") {
-    if (transferStatus === 409) {
+    if (mutationStatus === 409) {
       return json(409, { category: "conflict", correlation_id: "corr-shortfall" });
     }
-    if (transferStatus === 422) {
+    if (mutationStatus === 422) {
       // FastAPI validation body — the loc head is stripped to the
       // CANONICAL field key by toApiError (W56-5).
       return json(422, {
@@ -78,7 +101,31 @@ async function fetchStub(input: Request | string | URL, init?: RequestInit): Pro
     }
     // An internal lock note smuggled onto the response is STRIPPED at
     // the Zod boundary — it can never reach a screen.
-    return json(201, { ...transferOut, internal_lock_note: "ROW-LOCK-SECRET" });
+    return json(201, { ...recordOut, internal_lock_note: "ROW-LOCK-SECRET" });
+  }
+  if (path === "/share-transfers" && request.method === "GET") {
+    return json(200, { items: [recordOut], next_cursor: "opaque-cursor-1" });
+  }
+  if (path === `/share-transfers/${TRANSFER_ID}` && request.method === "GET") {
+    return json(200, recordOut);
+  }
+  if (path === `/share-transfers/${TRANSFER_ID}/approval` && request.method === "POST") {
+    if (mutationStatus === 409) {
+      return json(409, { category: "conflict", correlation_id: "corr-drift" });
+    }
+    return json(201, approveOut);
+  }
+  if (path === `/share-transfers/${TRANSFER_ID}/rejection` && request.method === "POST") {
+    if (mutationStatus === 409) {
+      return json(409, { category: "conflict", correlation_id: "corr-stale" });
+    }
+    return json(200, {
+      ...recordOut,
+      status: "rejected",
+      approved_by: USER_ID,
+      decided_at: "2026-08-07T10:00:00Z",
+      version: 2,
+    });
   }
   return json(404, { category: "not_found", correlation_id: "corr-n" });
 }
@@ -120,7 +167,7 @@ const REFRESH_VALUE = "per-tab-refresh-value";
 
 beforeEach(() => {
   calls.length = 0;
-  transferStatus = 201;
+  mutationStatus = 201;
   session.clearSession();
   session.setSession({ accessToken: jwt(USER_ID, 900), refreshToken: REFRESH_VALUE });
 });
@@ -129,18 +176,17 @@ afterEach(() => {
   session.clearSession();
 });
 
-test("POST /members/{id}/share-transfers: the transferring member rides the PATH; the body is EXACTLY {to_member_id, amount} with the typed decimal STRING verbatim; secrets ride as HEADERS; extra response keys are STRIPPED", async () => {
-  const result = await sharesApi.transferShares(FROM_ID, TO_ID, "5000.10", "key-transfer-1");
+test("MAKER request: the transferring member rides the PATH; the body is EXACTLY {to_member_id, amount} with the typed decimal STRING verbatim; secrets ride as HEADERS; extra response keys are STRIPPED; the PENDING record parses with honest nulls", async () => {
+  const record = await sharesApi.requestShareTransfer(FROM_ID, TO_ID, "5000.10", "key-req-1");
   expect(calls).toHaveLength(1);
   const call = calls[0]!;
   expect(call.method).toBe("POST");
   const url = new URL(call.url);
   expect(url.pathname).toBe(`/members/${FROM_ID}/share-transfers`);
-  // No query parameter exists on this contract at all.
   expect(url.search).toBe("");
   expect(call.headers.get("authorization")).toMatch(/^Bearer /);
   expect(call.headers.get("x-tenant-id")).toBe(TENANT);
-  expect(call.headers.get("idempotency-key")).toBe("key-transfer-1");
+  expect(call.headers.get("idempotency-key")).toBe("key-req-1");
   expect(call.url).not.toContain(REFRESH_VALUE);
 
   // KEY-EXACT body (falsifiable: smuggle a rate, date or version into
@@ -151,20 +197,73 @@ test("POST /members/{id}/share-transfers: the transferring member rides the PATH
   expect(body["to_member_id"]).toBe(TO_ID);
   expect(body["amount"]).toBe("5000.10");
 
-  // The SERVER's figures verbatim; the smuggled internal field never
-  // parses through the boundary.
-  expect(result.amount).toBe("5000.10");
-  expect(result.from_balance_after).toBe("15000.25");
-  expect(result.to_balance_after).toBe("20000.35");
-  expect(result.out_txn_ref).toBe("ST-OUT-000123");
-  expect(result.in_txn_ref).toBe("ST-IN-000123");
-  expect("internal_lock_note" in result).toBe(false);
+  // The PENDING workflow record: server truth verbatim, honest nulls,
+  // the smuggled internal field never parses through the boundary.
+  expect(record.status).toBe("pending");
+  expect(record.amount).toBe("5000.10");
+  expect(record.out_transaction_id).toBeNull();
+  expect(record.approved_by).toBeNull();
+  expect(record.version).toBe(1);
+  expect("internal_lock_note" in record).toBe(false);
 });
 
-test("a 409 (balance shortfall under the row locks) surfaces as ONE typed ApiError from ONE request — never a silent success, never a retry", async () => {
-  transferStatus = 409;
+test("register GET: cursor/limit ride the QUERY only (opaque cursor echoed verbatim); rows parse; next_cursor surfaces for the keyset walk", async () => {
+  const first = await sharesApi.fetchShareTransfersPage(null);
+  const withCursor = await sharesApi.fetchShareTransfersPage("opaque-cursor-1");
+  expect(calls).toHaveLength(2);
+  const firstUrl = new URL(calls[0]!.url);
+  expect(firstUrl.pathname).toBe("/share-transfers");
+  expect(firstUrl.searchParams.get("cursor")).toBeNull();
+  expect(firstUrl.searchParams.get("limit")).toBe(String(sharesApi.REGISTER_PAGE_SIZE));
+  const secondUrl = new URL(calls[1]!.url);
+  expect(secondUrl.searchParams.get("cursor")).toBe("opaque-cursor-1");
+  expect(first.items).toHaveLength(1);
+  expect(first.items[0]?.id).toBe(TRANSFER_ID);
+  expect(first.nextCursor).toBe("opaque-cursor-1");
+  expect(withCursor.nextCursor).toBe("opaque-cursor-1");
+});
+
+test("CHECKER approval: the wire body is EMPTY by contract (v1.1 rule 3 — key-exact {}); the id rides the PATH; the result parses with the server's figures verbatim", async () => {
+  const result = await sharesApi.approveShareTransfer(TRANSFER_ID, "key-approve-1");
+  expect(calls).toHaveLength(1);
+  const call = calls[0]!;
+  expect(call.method).toBe("POST");
+  expect(new URL(call.url).pathname).toBe(`/share-transfers/${TRANSFER_ID}/approval`);
+  expect(call.headers.get("idempotency-key")).toBe("key-approve-1");
+  // EMPTY body — falsifiable: smuggle any figure/version into the API
+  // layer and this fails.
+  expect(JSON.parse(call.body ?? "null")).toEqual({});
+  expect(result.out_txn_ref).toBe("ST-OUT-000123");
+  expect(result.from_balance_after).toBe("15000.25");
+  expect(result.to_balance_after).toBe("20000.35");
+});
+
+test("CHECKER rejection: the body is EXACTLY {version, reason} (version pinned on the wire; the rationale mandatory); the rejected record parses", async () => {
+  const record = await sharesApi.rejectShareTransfer(
+    TRANSFER_ID,
+    1,
+    "Amount keyed against the wrong member.",
+    "key-reject-1",
+  );
+  expect(calls).toHaveLength(1);
+  const call = calls[0]!;
+  expect(new URL(call.url).pathname).toBe(`/share-transfers/${TRANSFER_ID}/rejection`);
+  const body = JSON.parse(call.body ?? "{}") as Record<string, unknown>;
+  expect(Object.keys(body).sort()).toEqual(["reason", "version"]);
+  expect(body["version"]).toBe(1);
+  expect(body["reason"]).toBe("Amount keyed against the wrong member.");
+  expect(record.status).toBe("rejected");
+  expect(record.approved_by).toBe(USER_ID);
+  expect(record.version).toBe(2);
+});
+
+test("by-id GET parses the record; a 409 on approval (snapshot drift under the full lock set) surfaces as ONE typed ApiError from ONE request — never a silent success, never a retry", async () => {
+  const record = await sharesApi.fetchShareTransfer(TRANSFER_ID);
+  expect(record.id).toBe(TRANSFER_ID);
+
+  mutationStatus = 409;
   const thrown = await sharesApi
-    .transferShares(FROM_ID, TO_ID, "5000.10", "key-transfer-409")
+    .approveShareTransfer(TRANSFER_ID, "key-approve-409")
     .catch((error: unknown) => error);
   expect(thrown).toBeInstanceOf(ApiError);
   const apiError = thrown as InstanceType<typeof ApiError>;
@@ -173,10 +272,10 @@ test("a 409 (balance shortfall under the row locks) surfaces as ONE typed ApiErr
   expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
 });
 
-test("a 422 surfaces field-level messages as ONE typed ApiError with CANONICAL field keys (W56-5)", async () => {
-  transferStatus = 422;
+test("a 422 on the request surfaces field-level messages as ONE typed ApiError with CANONICAL field keys (W56-5)", async () => {
+  mutationStatus = 422;
   const thrown = await sharesApi
-    .transferShares(FROM_ID, TO_ID, "5000.10", "key-transfer-422")
+    .requestShareTransfer(FROM_ID, TO_ID, "5000.10", "key-req-422")
     .catch((error: unknown) => error);
   expect(thrown).toBeInstanceOf(ApiError);
   const apiError = thrown as InstanceType<typeof ApiError>;
@@ -188,17 +287,67 @@ test("a 422 surfaces field-level messages as ONE typed ApiError with CANONICAL f
   expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
 });
 
-test("accept/reject matrix (hand-computed oracles): every ShareTransferOut money figure asserts the canonical str(Decimal) two-place shape — numbers, wrong scale, grouping and negatives REJECT; every key is REQUIRED (key exactness)", () => {
+test("accept/reject matrix (hand-computed oracles): the workflow record — money shape, status vocabulary, nullable-never-optional legs, key exactness", () => {
+  const parse = (record: Record<string, unknown>) =>
+    sharesSchemas.shareTransferRecordSchema.safeParse(record).success;
   const withField = (field: string, value: unknown) =>
-    sharesSchemas.shareTransferResultSchema.safeParse({ ...transferOut, [field]: value }).success;
+    parse({ ...recordOut, [field]: value });
 
-  // Canonical shapes ACCEPTED — exactly the backend str(Decimal)
-  // serialisation; "0.00" is the legitimate emptied-transferor value.
+  // Canonical accepted shapes.
+  expect(parse(recordOut)).toBe(true);
+  expect(withField("status", "posted")).toBe(true);
+  expect(withField("status", "rejected")).toBe(true);
+  expect(withField("amount", "0.01")).toBe(true);
+
+  // Money garbage REJECTED — a number can never enter.
+  for (const value of [5000.1, 5000, "5000.1", "5000.100", "5,000.10", "-1.00", "1e5", ""]) {
+    expect(withField("amount", value)).toBe(false);
+  }
+  // Off-vocabulary status REJECTED (the 0040 CHECK vocabulary is the
+  // contract).
+  for (const value of ["PENDING", "approved", "void", "", 1, null]) {
+    expect(withField("status", value)).toBe(false);
+  }
+  // Version: positive integer only.
+  for (const value of [0, -1, 1.5, "1", null]) {
+    expect(withField("version", value)).toBe(false);
+  }
+
+  // Nullable-never-optional legs: null ACCEPTED (honest history),
+  // any other off-shape value REJECTED.
+  for (const field of [
+    "out_transaction_id",
+    "in_transaction_id",
+    "created_by",
+    "approved_by",
+    "decided_at",
+  ]) {
+    expect(withField(field, null)).toBe(true);
+    expect(withField(field, 7)).toBe(false);
+  }
+  // Non-nullable keys refuse null.
+  for (const field of ["id", "from_member_id", "to_member_id", "amount", "status", "created_at"]) {
+    expect(withField(field, null)).toBe(false);
+  }
+
+  // KEY EXACTNESS: every key is REQUIRED — dropping any one is
+  // contract drift and refuses to parse (falsifiable: soften a key to
+  // .optional() and this leg fails).
+  for (const key of Object.keys(recordOut)) {
+    const missing: Record<string, unknown> = { ...recordOut };
+    delete missing[key];
+    expect(parse(missing)).toBe(false);
+  }
+});
+
+test("accept/reject matrix: every ShareTransferOut money figure asserts the canonical str(Decimal) two-place shape; every key REQUIRED; no nullable leg exists", () => {
+  const withField = (field: string, value: unknown) =>
+    sharesSchemas.shareTransferResultSchema.safeParse({ ...approveOut, [field]: value }).success;
+
   expect(withField("amount", "5000.10")).toBe(true);
   expect(withField("from_balance_after", "0.00")).toBe(true);
   expect(withField("to_balance_after", "1000000000.00")).toBe(true);
 
-  // Garbage REJECTED on every money field — a number can never enter.
   const moneyFields = ["amount", "from_balance_after", "to_balance_after"];
   const garbage = [5000.1, 5000, "5000.1", "5000.100", "5,000.10", "-1.00", "1e5", "NaN", ""];
   for (const field of moneyFields) {
@@ -207,23 +356,19 @@ test("accept/reject matrix (hand-computed oracles): every ShareTransferOut money
     }
   }
 
-  // KEY EXACTNESS: every ShareTransferOut key is REQUIRED — dropping
-  // any one is contract drift and refuses to parse (falsifiable:
-  // soften a key to .optional() and this leg fails).
   const parse = (record: Record<string, unknown>) =>
     sharesSchemas.shareTransferResultSchema.safeParse(record).success;
-  for (const key of Object.keys(transferOut)) {
-    const missing: Record<string, unknown> = { ...transferOut };
+  for (const key of Object.keys(approveOut)) {
+    const missing: Record<string, unknown> = { ...approveOut };
     delete missing[key];
     expect(parse(missing)).toBe(false);
   }
-  // No nullable leg exists on this contract: null refuses everywhere.
-  for (const key of Object.keys(transferOut)) {
+  for (const key of Object.keys(approveOut)) {
     expect(withField(key, null)).toBe(false);
   }
 });
 
-test("entry pre-validation matrix (hand-computed oracles): UUID shape, amount shape (no leading zeros, ≤2dp, > 0) and the self-transfer refusal — the layer above never even constructs a wire call from garbage", () => {
+test("entry pre-validation matrix (hand-computed oracles): UUID shape, amount shape (no leading zeros, ≤2dp, > 0), the self-transfer refusal and the mandatory rejection rationale — the layer above never even constructs a wire call from garbage", () => {
   const parse = (entry: { from_member_id: string; to_member_id: string; amount: string }) =>
     sharesSchemas.transferEntrySchema.safeParse(entry).success;
 
@@ -242,4 +387,11 @@ test("entry pre-validation matrix (hand-computed oracles): UUID shape, amount sh
     false,
   );
   expect(parse({ from_member_id: FROM_ID, to_member_id: "nope", amount: "5000.10" })).toBe(false);
+
+  // The checker's rationale: required, bounded (!52 F2).
+  expect(sharesSchemas.rejectReasonEntrySchema.safeParse({ reason: "why" }).success).toBe(true);
+  expect(sharesSchemas.rejectReasonEntrySchema.safeParse({ reason: "" }).success).toBe(false);
+  expect(
+    sharesSchemas.rejectReasonEntrySchema.safeParse({ reason: "x".repeat(501) }).success,
+  ).toBe(false);
 });
