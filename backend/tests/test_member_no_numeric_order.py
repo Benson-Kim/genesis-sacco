@@ -55,6 +55,7 @@ from genesis.application.members import (
     MEMBER_LIST_SQL,
     _member_list_clauses,
 )
+from genesis.application.pagination import encode_cursor
 from genesis.domain.lending import LoanStatus
 from genesis.infrastructure.tenancy import tenant_session
 
@@ -132,12 +133,24 @@ def test_cursor_gp9999_yields_exactly_the_five_digit_successors() -> None:
     stays) yields exactly [GP-10001]."""
 
     async def run() -> None:
-        _, branch_id, token = await _seed_boundary_tenant()
+        tid, branch_id, token = await _seed_boundary_tenant()
         headers = {"authorization": f"Bearer {token}"}
         async with api_client() as client:
-            for path in ("/members", f"/branches/{branch_id}/members"):
+            # #31 batch 13: raw cursors are no longer accepted on the
+            # wire — mint the SAME boundary positions through the
+            # opaque codec (per-endpoint scope). The plaintext keyset
+            # and the oracles below are unchanged.
+            for path, scope in (
+                ("/members", "members.list"),
+                (f"/branches/{branch_id}/members", "branches.members"),
+            ):
                 res = await client.get(
-                    path, params={"cursor": "GP-9999", "limit": 100}, headers=headers
+                    path,
+                    params={
+                        "cursor": encode_cursor("GP-9999", tenant_id=tid, endpoint=scope),
+                        "limit": 100,
+                    },
+                    headers=headers,
                 )
                 assert res.status_code == 200, res.text
                 assert [m["member_no"] for m in res.json()["items"]] == [
@@ -145,7 +158,12 @@ def test_cursor_gp9999_yields_exactly_the_five_digit_successors() -> None:
                     "GP-10001",
                 ], path
                 res = await client.get(
-                    path, params={"cursor": "GP-10000", "limit": 100}, headers=headers
+                    path,
+                    params={
+                        "cursor": encode_cursor("GP-10000", tenant_id=tid, endpoint=scope),
+                        "limit": 100,
+                    },
+                    headers=headers,
                 )
                 assert res.status_code == 200, res.text
                 assert [m["member_no"] for m in res.json()["items"]] == ["GP-10001"], path
