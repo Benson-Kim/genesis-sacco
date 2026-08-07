@@ -165,8 +165,11 @@ describe("KPI sparklines — verbatim server series, never derived", () => {
   });
 
   it("per-grant STRUCTURAL withholding: an omitted series mounts NOTHING — no sparkline, no absence copy claiming data exists", async () => {
+    // Wire reality (response_model_exclude_none + the backend
+    // per-role grant suite): the ungranted series KEY IS ABSENT —
+    // the server omits it, never null/[]. The fixture mirrors that.
     mockGet.mockResolvedValue({
-      data: { ...SUMMARY, kpi_trends: { par30: KPI_TRENDS.par30, members: null } },
+      data: { ...SUMMARY, kpi_trends: { par30: KPI_TRENDS.par30 } },
       error: undefined,
       response: res(200),
     });
