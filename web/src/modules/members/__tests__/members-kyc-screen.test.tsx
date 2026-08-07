@@ -103,6 +103,7 @@ const MEMBER = {
   status: "active" as const,
   version: 1,
   branch_id: null,
+  dividend_payout: null,
 };
 
 // DELIBERATELY NON-ADDITIVE aggregate fixture (#31 batch 3): no figure
@@ -656,4 +657,61 @@ test("query-path 401 tears the session down", async () => {
   mountScreen();
   await openKycDrawer(user);
   await waitFor(() => expect(hasSession()).toBe(false), { timeout: 4000 });
+});
+
+// ---------------------------------------------------------------------------
+// Dividend payout PREFERENCE (#31 ledger (c)) — verbatim vocabulary
+// token, honest "not set" affordance, never an invented default.
+// ---------------------------------------------------------------------------
+
+test("dividend payout: NULL renders the honest NOT-SET affordance in the drawer — a preference is never invented", async () => {
+  // The default fixture carries dividend_payout: null (the honest
+  // server state for a member who never chose).
+  const user = userEvent.setup();
+  mountScreen();
+  const dialog = await openKycDrawer(user);
+
+  await within(dialog).findByText("Dividend payout");
+  expect(
+    within(dialog).getByText("— (not set; the member edit records it)"),
+  ).toBeInTheDocument();
+});
+
+test("dividend payout: a SET preference renders the server's vocabulary token VERBATIM in the drawer (never re-labelled)", async () => {
+  mockedMembers.fetchMemberDetail.mockResolvedValue({
+    ...MEMBER_DETAIL,
+    dividend_payout: "share_capital",
+  });
+  const user = userEvent.setup();
+  mountScreen();
+  const dialog = await openKycDrawer(user);
+
+  await within(dialog).findByText("Dividend payout");
+  // Byte-identical token in the PREFERENCE row — "share_capital",
+  // never re-labelled "Share capital". (The drawer's Financial
+  // summary legitimately carries a "Share capital" FIGURE label — a
+  // different fact — so the negative assertion is scoped to the
+  // preference row, not the whole dialog.)
+  const preferenceRow = within(dialog).getByText("Preference")
+    .parentElement as HTMLElement;
+  expect(within(preferenceRow).getByText("share_capital")).toBeInTheDocument();
+  expect(within(preferenceRow).queryByText("Share capital")).toBeNull();
+});
+
+test("dividend payout: the wizard's membership step renders the member record's stored preference VERBATIM with the honest not-set fallback", async () => {
+  const user = userEvent.setup();
+  const dialog = await openWizard(user);
+
+  fillPersonDetails(dialog);
+  await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+
+  // MEMBER.dividend_payout is null — the honest affordance, plus the
+  // updated no-contract note that no longer claims (c) is missing.
+  expect(
+    await within(dialog).findByText("Dividend payout preference"),
+  ).toBeInTheDocument();
+  expect(
+    within(dialog).getByText("Not set (recorded on the member record when chosen)"),
+  ).toBeInTheDocument();
+  expect(within(dialog).queryByText(/dividend payout\s+preference\) have NO backend contract/)).toBeNull();
 });

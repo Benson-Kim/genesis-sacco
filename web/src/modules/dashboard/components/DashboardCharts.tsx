@@ -49,7 +49,8 @@ function classToken(classification: string): string {
 export function Sparkline({
     values,
     stroke,
-}: Readonly<{ values: readonly number[]; stroke: "gold" | "navy" }>) {
+    testId,
+}: Readonly<{ values: readonly number[]; stroke: "gold" | "navy"; testId?: string }>) {
     if (values.length < 2) return null;
     const last = values.length - 1;
     const points = values.map((v, i) => `${(i * 100) / last},${100 - v}`).join(" ");
@@ -59,7 +60,7 @@ export function Sparkline({
             preserveAspectRatio="none"
             className={styles.sparkline}
             aria-hidden="true"
-            data-testid={`sparkline-${stroke}`}
+            data-testid={testId ?? `sparkline-${stroke}`}
         >
             <polyline
                 points={points}

@@ -42,14 +42,48 @@ function kes(value: string | undefined): string {
     return value === undefined ? "—" : fmtKes(value);
 }
 
+/**
+ * Per-KPI trend sparkline (#31 batch 8, ledger (k)): the SERVER's
+ * share-of-window-peak geometry consumed VERBATIM — the polyline maps
+ * the pct integers 1:1; no client summing, interpolation or derived
+ * deltas exist here (P15 blocker (a)).
+ * - series === null/undefined is PER-GRANT STRUCTURAL WITHHOLDING
+ *   (the KPI's parent grant is missing or the slice predates the
+ *   expand): NOTHING mounts — no affordance ever claims data exists.
+ * - A granted but SHORT series (a young tenant; the server caps at 12
+ *   points and never pads) renders the honest absence copy instead of
+ *   a degenerate line.
+ */
+function KpiTrendSparkline({
+    series,
+    stroke,
+    testId,
+    caption,
+}: Readonly<{
+    series: readonly { pct: number }[] | null | undefined;
+    stroke: "gold" | "navy";
+    testId: string;
+    caption: string;
+}>) {
+    if (series === null || series === undefined) return null;
+    if (series.length < 2) {
+        return <div className={charts.sparkCaption}>Not enough monthly history to chart.</div>;
+    }
+    return (
+        <>
+            <Sparkline values={series.map((p) => p.pct)} stroke={stroke} testId={testId} />
+            <div className={charts.sparkCaption}>{caption}</div>
+        </>
+    );
+}
+
 function StatCards({ summary }: Readonly<{ summary: DashboardSummary }>) {
     // KPI sparklines (issue #32): SERVER-normalized series from the
     // charts slice — mapped to plain integer arrays here, no money
-    // value is ever read. HONEST labelling: only the two series the
-    // contract actually carries (monthly deposit / disbursement flows)
-    // get a sparkline, on the cards they truly describe; the PAR-30
-    // and member cards carry none (no honest per-KPI series exists on
-    // the contract — recorded on #31's ledger, never faked).
+    // value is ever read. HONEST labelling: the deposit/disbursement
+    // flow series render on the cards they truly describe; the PAR-30
+    // and member cards consume the #31 batch-8 ledger-(k) kpi_trends
+    // slice (posting-history / status-fact truth) VERBATIM.
     const flowSeries = summary.charts?.flows ?? null;
     const depositTrend = flowSeries?.months.map((m) => m.deposits_pct) ?? null;
     const disbursementTrend = flowSeries?.months.map((m) => m.disbursements_pct) ?? null;
@@ -59,6 +93,12 @@ function StatCards({ summary }: Readonly<{ summary: DashboardSummary }>) {
                 <Stat
                     label="Active members"
                     value={summary.members ? String(summary.members.active_members) : "—"}
+                />
+                <KpiTrendSparkline
+                    series={summary.kpi_trends?.members}
+                    stroke="navy"
+                    testId="sparkline-members"
+                    caption="active members, month-end"
                 />
             </Card>
             <Card>
@@ -83,6 +123,12 @@ function StatCards({ summary }: Readonly<{ summary: DashboardSummary }>) {
                 <Stat
                     label="PAR-30"
                     value={summary.loan_book ? `${summary.loan_book.par30_ratio_pct}%` : "—"}
+                />
+                <KpiTrendSparkline
+                    series={summary.kpi_trends?.par30}
+                    stroke="gold"
+                    testId="sparkline-par30"
+                    caption="PAR-30 ratio, month-end"
                 />
             </Card>
         </>

@@ -125,6 +125,7 @@ const DORMANT_MEMBER_OUT = {
   status: "dormant",
   version: 4,
   branch_id: null,
+  dividend_payout: null,
 };
 
 const DORMANCY_RUN_OUT = {

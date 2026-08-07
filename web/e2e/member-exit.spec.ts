@@ -94,6 +94,7 @@ const MEMBER_OUT = {
   status: "active",
   version: 3,
   branch_id: null,
+  dividend_payout: null,
 };
 
 interface ApiState {

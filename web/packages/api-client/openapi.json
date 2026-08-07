@@ -1453,6 +1453,16 @@
               }
             ]
           },
+          "kpi_trends": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KpiTrendsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "loan_book": {
             "anyOf": [
               {
@@ -3112,6 +3122,41 @@
         "title": "InterestRunOut",
         "type": "object"
       },
+      "KpiTrendsOut": {
+        "description": "Per-KPI trend series (#31 batch 8, ledger (k)); each series\nfollows its KPI card's parent grant (par30 <- loan_book:view,\nmembers <- members:view) and is omitted when ungranted.",
+        "properties": {
+          "members": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MembersTrendPointOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Members"
+          },
+          "par30": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Par30TrendPointOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Par30"
+          }
+        },
+        "title": "KpiTrendsOut",
+        "type": "object"
+      },
       "LedgerLegOut": {
         "description": "One DR or CR leg of a posting (#31 ledger (g), audit #30 A3).\n\nVerbatim ledger_entries facts: the chart-of-accounts key, the side\nand the leg amount as a canonical decimal string \u2014 one row per leg,\nNOTHING derived (no netting, no totals; the 0004/0014 constraint\ntrigger proved balance at commit time). Least disclosure (gate\n1.6): no member, actor or channel rides on a leg row \u2014 those live\non the transaction the caller already holds.",
         "properties": {
@@ -3350,7 +3395,21 @@
         "type": "object"
       },
       "MemberCreateBody": {
+        "additionalProperties": false,
+        "description": "extra=\"forbid\" (gate 1.6): unknown fields are a 422, never\nsilently dropped. dividend_payout (#31 ledger (c)) is typed as a\nbounded STRING, deliberately not the enum: the service resolves it\nagainst the CODE-OWNED vocabulary and an unknown value surfaces as\nthe sanitized 422 category ONLY \u2014 a pydantic enum here would echo\nthe permitted values in FastAPI's structural 422 (least\ndisclosure). Stored PREFERENCE only; nothing routes money by it\n(batch-8 fence).",
         "properties": {
+          "dividend_payout": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dividend Payout"
+          },
           "email": {
             "anyOf": [
               {
@@ -3409,6 +3468,17 @@
             ],
             "title": "Branch Id"
           },
+          "dividend_payout": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dividend Payout"
+          },
           "email": {
             "anyOf": [
               {
@@ -3466,6 +3536,7 @@
           "status",
           "version",
           "branch_id",
+          "dividend_payout",
           "aggregates"
         ],
         "title": "MemberDetailOut",
@@ -3541,6 +3612,17 @@
             ],
             "title": "Branch Id"
           },
+          "dividend_payout": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dividend Payout"
+          },
           "email": {
             "anyOf": [
               {
@@ -3597,7 +3679,8 @@
           "email",
           "status",
           "version",
-          "branch_id"
+          "branch_id",
+          "dividend_payout"
         ],
         "title": "MemberOut",
         "type": "object"
@@ -3664,7 +3747,21 @@
         "type": "object"
       },
       "MemberUpdateBody": {
+        "additionalProperties": false,
+        "description": "Versioned optimistic-lock edit body (stale = 409); extra=\"forbid\"\nand the dividend_payout string posture per MemberCreateBody.",
         "properties": {
+          "dividend_payout": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dividend Payout"
+          },
           "email": {
             "anyOf": [
               {
@@ -3733,6 +3830,30 @@
           "by_type"
         ],
         "title": "MembersOverviewOut",
+        "type": "object"
+      },
+      "MembersTrendPointOut": {
+        "description": "One active-members trend point: the count is reconstructed from\nthe immutable member.status transition facts (audit_log) at the\ncutoff; pct is share-of-window-peak geometry ONLY.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "month": {
+            "title": "Month",
+            "type": "string"
+          },
+          "pct": {
+            "title": "Pct",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "month",
+          "active",
+          "pct"
+        ],
+        "title": "MembersTrendPointOut",
         "type": "object"
       },
       "Module": {
@@ -3983,6 +4104,30 @@
           "code"
         ],
         "title": "OtpVerifyBody",
+        "type": "object"
+      },
+      "Par30TrendPointOut": {
+        "description": "One PAR-30 trend point (#31 batch 8, ledger (k)): the ratio is\nRECOMPUTED from posting-history truth at the month-end cutoff\n(reconstruct_month at the code-owned PAR threshold \u2014 never the\nmutable snapshot columns, \u00a71.5) and serialized verbatim\n(str(Decimal)); pct is share-of-window-peak geometry ONLY.",
+        "properties": {
+          "month": {
+            "title": "Month",
+            "type": "string"
+          },
+          "pct": {
+            "title": "Pct",
+            "type": "integer"
+          },
+          "ratio_pct": {
+            "title": "Ratio Pct",
+            "type": "string"
+          }
+        },
+        "required": [
+          "month",
+          "ratio_pct",
+          "pct"
+        ],
+        "title": "Par30TrendPointOut",
         "type": "object"
       },
       "PenaltyChargedOn": {

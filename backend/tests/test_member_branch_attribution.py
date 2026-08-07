@@ -42,6 +42,10 @@ FLAT_KEYS = {
     "status",
     "version",
     "branch_id",
+    # dividend_payout joined the flat contract with the authorized
+    # #31 batch-8 expand (ledger (c)) — nullable-never-optional, so
+    # the key is ALWAYS present (TEN keys).
+    "dividend_payout",
 }
 AGGREGATE_KEYS = {
     "deposits_total",

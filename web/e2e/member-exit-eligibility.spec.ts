@@ -50,6 +50,7 @@ const MEMBER_OUT = {
   status: "active",
   version: 3,
   branch_id: null,
+  dividend_payout: null,
 };
 
 /** Distinct counts so each verbatim row is unambiguous on screen. */
