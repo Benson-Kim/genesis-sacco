@@ -3,14 +3,102 @@
 Single source of truth for cursor encoding (DRY): the loan book and the
 applications listing paginate on the same (created_at DESC, id DESC)
 keyset and must parse cursors identically.
+
+Opaque signed cursor codec (#31 batch 13, senior review finding N4):
+``encode_cursor``/``decode_cursor`` wrap EVERY wire cursor in an
+HMAC-SHA256-signed base64url token so clients can neither read nor
+forge keyset positions. Token layout::
+
+    token = base64url( V || payload || tag )        (padding stripped)
+    tag   = HMAC-SHA256( key, V || len(scope)_4 || scope || payload )
+    scope = "<tenant uuid>|<endpoint id>"
+
+* ``V`` is the key-version byte (``Settings.cursor_key_version``) —
+  rotation = deploy a new ``Settings.cursor_signing_key`` with a bumped
+  version; tokens minted under the old version fail closed as 400s
+  (acceptable: cursors are short-lived pagination state).
+* The scope is length-prefixed inside the MAC (no concatenation
+  ambiguity) and binds the token to ONE tenant and ONE endpoint — a
+  cursor can never be replayed across tenants or endpoints (gate 1.6).
+* ``payload`` is the EXACT plaintext keyset string the inner
+  ``parse_*``/``build_*`` helpers below already speak — pagination
+  semantics (ordering, page walk, boundaries) are unchanged.
+* Every decode failure (bad base64, short token, wrong version, tag
+  mismatch, non-UTF-8 payload) raises the house ``InvalidInputError``
+  — a sanitized 400, never a 500, never a silently empty page. The
+  tag check uses ``hmac.compare_digest`` (no timing oracle).
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import hmac
+import struct
 import uuid
 from datetime import datetime
 
 from genesis.errors import InvalidInputError
+from genesis.settings import get_settings
+
+#: HMAC-SHA256 digest length; the token's trailing tag is exactly this.
+_TAG_LEN = 32
+
+
+def _cursor_signing_key() -> bytes:
+    """Environment-provided secret (the jwt_signing_key house pattern).
+
+    An unconfigured key is a DEPLOYMENT error, not client input — it
+    surfaces as the sanitized 500 envelope, never as a 400 that would
+    blame the caller for a server misconfiguration.
+    """
+    key = get_settings().cursor_signing_key
+    if not key:
+        raise RuntimeError("cursor signing key not configured")
+    return key.encode()
+
+
+def _cursor_tag(version: int, tenant_id: uuid.UUID, endpoint: str, payload: bytes) -> bytes:
+    scope = f"{tenant_id}|{endpoint}".encode()
+    message = bytes([version]) + struct.pack(">I", len(scope)) + scope + payload
+    return hmac.new(_cursor_signing_key(), message, hashlib.sha256).digest()
+
+
+def encode_cursor(inner: str, *, tenant_id: uuid.UUID, endpoint: str) -> str:
+    """Seal a plaintext keyset position into an opaque signed token."""
+    version = get_settings().cursor_key_version
+    payload = inner.encode()
+    raw = bytes([version]) + payload + _cursor_tag(version, tenant_id, endpoint, payload)
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def decode_cursor(token: str, *, tenant_id: uuid.UUID, endpoint: str, entity: str) -> str:
+    """Verify an opaque token and return the plaintext keyset position.
+
+    Tamper, garbage, foreign-scope and wrong-version tokens all raise
+    the same sanitized ``InvalidInputError`` (least disclosure: the
+    client learns only that the cursor is invalid, never which check
+    failed or what a cursor contains).
+    """
+    try:
+        # validate=True rejects any non-alphabet byte instead of
+        # silently discarding it (strict decode; FM4).
+        # binascii.Error (bad padding/alphabet) subclasses ValueError.
+        raw = base64.b64decode(token.encode() + b"=" * (-len(token) % 4), b"-_", validate=True)
+    except ValueError as exc:
+        raise InvalidInputError(f"invalid {entity} cursor") from exc
+    if len(raw) < 1 + _TAG_LEN:
+        raise InvalidInputError(f"invalid {entity} cursor")
+    version, payload, tag = raw[0], raw[1:-_TAG_LEN], raw[-_TAG_LEN:]
+    if version != get_settings().cursor_key_version:
+        raise InvalidInputError(f"invalid {entity} cursor")
+    if not hmac.compare_digest(tag, _cursor_tag(version, tenant_id, endpoint, payload)):
+        raise InvalidInputError(f"invalid {entity} cursor")
+    try:
+        return payload.decode()
+    except UnicodeDecodeError as exc:
+        raise InvalidInputError(f"invalid {entity} cursor") from exc
 
 
 def parse_created_id_cursor(cursor: str, *, entity: str) -> tuple[datetime, str]:
