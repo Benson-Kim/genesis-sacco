@@ -1,44 +1,41 @@
 "use client";
 
 /**
- * Share-transfers console (issue #31 batch 6, ledger (e) — audit #30
- * R2 remainder: the P13.11 share lifecycle's exit-path transfer had
- * NO console surface). Consumes EXACTLY what the contract exposes:
- * the one mutation `POST /members/{member_id}/share-transfers`
- * (members:approve server-side — moving member equity, the P12
- * settlement precedent).
+ * Share-transfers console (issue #31 batch 10, ledger (l)/(m) — the
+ * !77 human-authorized maker-checker rework of the batch-6 (e)
+ * console). Consumes EXACTLY the reworked contract:
  *
- * CONTRACT HONESTY: there is NO transfer register/list read and NO
- * by-id read on this contract — the missing read register is RECORDED
- * on issue #31 and this screen states it plainly instead of faking a
- * history from accumulated responses. The transfer trail is auditable
- * via the ledger (ST-OUT/ST-IN refs render on the result panel) and
- * the audit log.
+ * - MAKER phase `POST /members/{member_id}/share-transfers`
+ *   (members:approve): creates a PENDING workflow record bound to the
+ *   persisted approval snapshot — NO money moves from this form.
+ * - The ledger-(m) history REGISTER `GET /share-transfers`
+ *   (members:view): keyset, PENDING FIRST then newest first — the
+ *   server's order, never re-sorted locally. A row opens the review
+ *   drawer where a DIFFERENT principal approves or rejects
+ *   (TransferDetailDrawer — the checker surface).
  *
- * Security posture (the corrections/recovery precedent):
- * - Route guard is members:view (RequireModule); the transfer form
+ * Security posture (the corrections precedent):
+ * - Route guard is members:view (RequireModule); the request form
  *   mounts ONLY with members:approve — pure UX; the server enforces
- *   every call (gate 1.6, deny by default).
+ *   every call (gate 1.6, deny by default). Checker affordances live
+ *   in the drawer behind MakerCheckerPanel (structural SoD withhold).
  * - MONEY (blocker (a)): the amount is the operation's SUBJECT — the
- *   typed decimal STRING end-to-end, never a float. Every result
- *   figure (amount, BOTH closing figures) renders VERBATIM via fmtKes;
- *   the two balances belong to two different members and are NEVER
- *   summed, netted or reconciled client-side.
- * - EXACTLY ONE write per intent: ConfirmDangerModal typed phrase
- *   (the transferring member's id prefix — byte-identical compare),
+ *   typed decimal STRING end-to-end, never a float. Every rendered
+ *   figure is the SERVER's, verbatim via fmtKes.
+ * - EXACTLY ONE write per intent: ConfirmDangerModal typed phrase,
  *   pending short-circuit, `retry: 0`, one Idempotency-Key per
  *   logical intent (README MATERIAL rule: canonical entry + reload
  *   epoch + per-SUCCESS intent counter — a legitimate identical
- *   second transfer is a NEW intent, never served the stored
- *   response; there is no record version on this contract to fold).
- * - A 409 (insufficient share balance under the row locks, inactive
- *   member, self-transfer) renders the shared ConflictBanner's
- *   explicit reload-and-re-enter flow — NOTHING is replayed.
+ *   second request is a NEW intent, never served the stored
+ *   response).
+ * - A 409 (insufficient balance under the locks, inactive member,
+ *   self-transfer) renders the shared ConflictBanner's explicit
+ *   reload-and-re-enter flow — NOTHING is replayed.
  * - Every rendered string is attacker-influenced data; it renders
  *   exclusively through React text interpolation (gate-tested).
  */
 import { useRef, useState, type FormEvent, type ReactNode } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
 import { Banner, Button, Card, ConfirmDangerModal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
@@ -53,15 +50,19 @@ import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { announce } from "@/modules/layout/announcer";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
+import { KeysetTable, type Column } from "@/modules/table/KeysetTable";
+import { useKeysetList } from "@/modules/table/useKeysetList";
 import { isConflict } from "@/lib/errors";
-import { fmtKes } from "@/lib/format";
+import { fmtDateTime, fmtKes } from "@/lib/format";
 import grid from "@/modules/layout/grid.module.css";
-import { transferShares } from "../api";
+import { fetchShareTransfersPage, requestShareTransfer } from "../api";
 import {
   transferEntrySchema,
-  type ShareTransferResult,
+  type ShareTransferRecord,
   type TransferEntry,
 } from "../schemas";
+import { TransferDetailDrawer } from "./TransferDetailDrawer";
+import { transferStatusPill } from "./pills";
 import styles from "./Shares.module.css";
 
 function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
@@ -74,34 +75,44 @@ function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }
 }
 
 export function ShareTransfersScreen() {
+  const queryClient = useQueryClient();
   const permissions = usePermissions();
   const [fromMemberId, setFromMemberId] = useState("");
   const [toMemberId, setToMemberId] = useState("");
   const [amount, setAmount] = useState("");
   const [clientErrors, setClientErrors] = useState<FieldErrors>({});
   const [confirmEntry, setConfirmEntry] = useState<TransferEntry | null>(null);
-  const [result, setResult] = useState<ShareTransferResult | null>(null);
+  const [requested, setRequested] = useState<ShareTransferRecord | null>(null);
+  const [openTransferId, setOpenTransferId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string>("");
   // Freshness component for the idempotency key (!60 F3): bumped on
   // every explicit post-conflict reload — a re-entered identical
-  // transfer after a 409 is a NEW intent with a NEW key.
+  // request after a 409 is a NEW intent with a NEW key.
   const [reloadEpoch, setReloadEpoch] = useState(0);
-  // Per-success intent counter (the T2 lesson): a SECOND transfer of
+  // Per-success intent counter (the T2 lesson): a SECOND request of
   // the same amount between the same members is legitimate and is a
-  // NEW intent — never served the first transfer's stored response.
+  // NEW intent — never served the first request's stored response.
   const [intentSeq, setIntentSeq] = useState(0);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
 
-  const transfer = useMutation({
+  // The ledger-(m) register: server-ordered keyset pages (pending
+  // first — the checker's job order) — never re-sorted or filtered
+  // locally.
+  const register = useKeysetList<ShareTransferRecord>({
+    queryKey: ["shares", "transfers-register"],
+    fetchPage: (cursor) => fetchShareTransfersPage(cursor),
+  });
+
+  const request = useMutation({
     mutationFn: (entry: TransferEntry) =>
-      transferShares(
+      requestShareTransfer(
         entry.from_member_id,
         entry.to_member_id,
         entry.amount,
         idempotencyKeyFor(
           keySlot.current,
           JSON.stringify({
-            op: "share-transfer",
+            op: "share-transfer-request",
             from: entry.from_member_id,
             to: entry.to_member_id,
             amount: entry.amount,
@@ -110,42 +121,104 @@ export function ShareTransfersScreen() {
           }),
         ),
       ),
-    onSuccess: (posted) => {
+    onSuccess: (record) => {
       setConfirmEntry(null);
-      // SPENT affordance: the result panel replaces the form.
-      setResult(posted);
-      // The NEXT transfer is a new intent even if byte-identical (T2).
+      // SPENT affordance: the pending-record panel replaces the form.
+      setRequested(record);
+      // The NEXT request is a new intent even if byte-identical (T2).
       setIntentSeq((seq) => seq + 1);
       setNotice("");
-      announce("Share transfer posted — both ledger legs recorded.");
+      announce("Transfer request recorded — PENDING a different checker's approval; no money moved.");
+      void queryClient.invalidateQueries({ queryKey: ["shares", "transfers-register"] });
     },
     onError: () => {
       setConfirmEntry(null);
-      announce("The share transfer was NOT posted.");
+      announce("The transfer request was NOT recorded.");
     },
   });
 
-  const mayTransfer = can(permissions.data, "members", "approve");
-  const conflict = transfer.isError && isConflict(transfer.error);
-  const spent = result !== null;
+  const mayRequest = can(permissions.data, "members", "approve");
+  const conflict = request.isError && isConflict(request.error);
+  const spent = requested !== null;
+
+  const registerColumns: Column<ShareTransferRecord>[] = [
+    {
+      key: "status",
+      header: "Status",
+      render: (row) => transferStatusPill(row.status),
+    },
+    {
+      key: "transfer",
+      header: "Transfer",
+      render: (row) => (
+        <span className={styles.mono} title={row.id}>
+          {row.id.slice(0, 8)}
+        </span>
+      ),
+    },
+    {
+      key: "from",
+      header: "From member",
+      render: (row) => (
+        <span className={styles.mono} title={row.from_member_id}>
+          {row.from_member_id.slice(0, 8)}
+        </span>
+      ),
+    },
+    {
+      key: "to",
+      header: "To member",
+      render: (row) => (
+        <span className={styles.mono} title={row.to_member_id}>
+          {row.to_member_id.slice(0, 8)}
+        </span>
+      ),
+    },
+    {
+      key: "amount",
+      header: "Amount",
+      align: "right",
+      // The SERVER's figure, verbatim (blocker (a)).
+      render: (row) => <span className={styles.amountCell}>{fmtKes(row.amount)}</span>,
+    },
+    {
+      key: "maker",
+      header: "Maker",
+      // Bare staff UUID under least disclosure (!70 short-id render);
+      // a NULL maker is honest pre-workflow history, never invented.
+      render: (row) =>
+        row.created_by !== null ? (
+          <span className={styles.mono} title={row.created_by}>
+            {row.created_by.slice(0, 8)}
+          </span>
+        ) : (
+          <span className={styles.muted}>—</span>
+        ),
+    },
+    {
+      key: "requested",
+      header: "Requested",
+      render: (row) => <span className={styles.muted}>{fmtDateTime(row.created_at)}</span>,
+    },
+  ];
 
   function reloadAfterConflict() {
-    // Explicit reload flow (!60 F5): there is no record read on this
-    // contract to refetch — the conflicted attempt posted NOTHING
-    // (server-verified under both row locks); the operator re-checks
-    // the member's shares in the Members module and re-enters. The
-    // stale intent is NEVER replayed: its key rotates via the epoch.
+    // Explicit reload flow (!60 F5): the conflicted attempt recorded
+    // NOTHING (server-verified under the full lock set); the operator
+    // re-checks the member's shares and re-enters. The stale intent is
+    // NEVER replayed: its key rotates via the epoch.
     setReloadEpoch((epoch) => epoch + 1);
-    transfer.reset();
+    request.reset();
+    void queryClient.invalidateQueries({ queryKey: ["shares", "transfers-register"] });
     setNotice(
-      "Nothing was posted by the conflicted attempt. Re-check the transferring member's share balance and status (Members module) before re-entering — the transfer must clear the balance check under the server's row locks.",
+      "Nothing was recorded by the conflicted attempt. Re-check the transferring member's share balance and status (Members module) before re-entering — the request must clear the balance check under the server's row locks.",
     );
-    announce("Conflict acknowledged — nothing was posted; re-check the member before re-entering.");
+    announce("Conflict acknowledged — nothing was recorded; re-check the member before re-entering.");
   }
 
   function submitEntry(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (transfer.isPending || spent) return;
+    if (request.isPending || spent) return;
     const parsed = transferEntrySchema.safeParse({
       from_member_id: fromMemberId.trim(),
       to_member_id: toMemberId.trim(),
@@ -160,27 +233,27 @@ export function ShareTransfersScreen() {
   }
 
   // Server 422 verdicts WIN over the client's guesses per field.
-  const serverErrors = fromApiError(transfer.error);
+  const serverErrors = fromApiError(request.error);
   const fieldErrors = mergeFieldErrors(clientErrors, serverErrors);
   const renderedInline =
-    transfer.error instanceof ApiError &&
-    transfer.error.status === 422 &&
+    request.error instanceof ApiError &&
+    request.error.status === 422 &&
     Object.keys(serverErrors).length > 0;
 
   return (
     <div>
       <div className={grid.cards4}>
         <Card className={grid.wide}>
-          <div className={styles.cardTitle}>Share transfers</div>
+          <div className={styles.cardTitle}>Share transfers — maker-checker</div>
           <div className={styles.cardBody}>
-            Transfer share capital from one active member to another — the
-            exit path for a member whose shares move rather than pay out.
-            Both member rows are locked server-side, the balance check runs
-            under those locks, and BOTH double-entry legs (ST-OUT / ST-IN)
-            post atomically with the transfer record. The contract exposes
-            no transfer register to consult here (recorded on issue #31 as
-            a contract follow-up — never faked client-side): the trail is
-            auditable via the ledger refs below and the audit log.
+            Moving share capital between members takes FOUR EYES (issue #31
+            (l), human-authorized): a maker requests and the system freezes
+            the giver&apos;s balance; a DIFFERENT checker approves from the
+            register below — the server re-verifies the frozen snapshot
+            under the full lock set and refuses if anything moved, posting
+            nothing. Both members are notified when a transfer posts. The
+            register lists unfinished business first (issue #31 (m)); every
+            figure is the server&apos;s, verbatim.
           </div>
         </Card>
       </div>
@@ -189,36 +262,30 @@ export function ShareTransfersScreen() {
         {notice !== "" && <Banner>{notice}</Banner>}
 
         {/* One copy of the 409 reload-and-re-enter flow (gate 1.1). */}
-        <ConflictBanner error={transfer.error} onReload={reloadAfterConflict} />
-        {transfer.isError && !conflict && !renderedInline && (
-          <ErrorBanner error={transfer.error} />
+        <ConflictBanner error={request.error} onReload={reloadAfterConflict} />
+        {request.isError && !conflict && !renderedInline && (
+          <ErrorBanner error={request.error} />
         )}
 
-        {spent && result !== null && (
+        {spent && requested !== null && (
           <div className={styles.resultPanel} role="status">
             <div className={styles.resultTitle}>
-              Transfer posted · {result.out_txn_ref} / {result.in_txn_ref}
+              Transfer request recorded · PENDING approval
             </div>
             <Kv label="Transfer">
-              <span className={styles.mono} title={result.transfer_id}>
-                {result.transfer_id.slice(0, 8)}
+              <span className={styles.mono} title={requested.id}>
+                {requested.id.slice(0, 8)}
               </span>
             </Kv>
-            <Kv label="Amount transferred">
-              <span className={styles.amountCell}>{fmtKes(result.amount)}</span>
-            </Kv>
-            <Kv label="Transferor shares after">
-              <span className={styles.amountCell}>{fmtKes(result.from_balance_after)}</span>
-            </Kv>
-            <Kv label="Transferee shares after">
-              <span className={styles.amountCell}>{fmtKes(result.to_balance_after)}</span>
+            <Kv label="Status">{transferStatusPill(requested.status)}</Kv>
+            <Kv label="Amount requested">
+              <span className={styles.amountCell}>{fmtKes(requested.amount)}</span>
             </Kv>
             <div className={styles.formNote}>
-              Every figure above is the SERVER&apos;s from the transfer
-              response — the two balances belong to two different members
-              and nothing is summed or reconciled in this screen. The
-              ledger is append-only; a mistaken transfer is corrected by a
-              counter-transfer, never an edit.
+              NO money moved: the request is bound to the giver&apos;s frozen
+              balance and awaits a DIFFERENT checker&apos;s approval (you can
+              never approve your own request — server-enforced and a
+              database CHECK). It appears at the top of the register below.
             </div>
             <div className={styles.actions}>
               <Button
@@ -227,21 +294,21 @@ export function ShareTransfersScreen() {
                 onClick={() => {
                   // A NEW intent: entry cleared; fresh key material by
                   // content + intent_seq.
-                  setResult(null);
+                  setRequested(null);
                   setFromMemberId("");
                   setToMemberId("");
                   setAmount("");
                   setClientErrors({});
-                  transfer.reset();
+                  request.reset();
                 }}
               >
-                Record another transfer
+                Record another request
               </Button>
             </div>
           </div>
         )}
 
-        {!spent && mayTransfer && (
+        {!spent && mayRequest && (
           <form onSubmit={submitEntry} noValidate>
             <FormField
               id="transfer-from"
@@ -255,7 +322,7 @@ export function ShareTransfersScreen() {
                   className={styles.input}
                   value={fromMemberId}
                   onChange={(event) => setFromMemberId(event.target.value)}
-                  disabled={transfer.isPending}
+                  disabled={request.isPending}
                   spellCheck={false}
                 />
               )}
@@ -272,7 +339,7 @@ export function ShareTransfersScreen() {
                   className={styles.input}
                   value={toMemberId}
                   onChange={(event) => setToMemberId(event.target.value)}
-                  disabled={transfer.isPending}
+                  disabled={request.isPending}
                   spellCheck={false}
                 />
               )}
@@ -291,49 +358,74 @@ export function ShareTransfersScreen() {
                   maxLength={18}
                   value={amount}
                   onChange={(event) => setAmount(event.target.value)}
-                  disabled={transfer.isPending}
+                  disabled={request.isPending}
                 />
               )}
             </FormField>
             <div className={styles.formNote}>
-              The balance check, active-member checks and the posting date
-              are all resolved by the server under both member row locks —
-              a shortfall conflicts with nothing posted.
+              This records a PENDING request only — no money moves until a
+              DIFFERENT checker approves it from the register. The balance
+              check, active-member checks and the frozen snapshot are all
+              resolved by the server under the full lock set.
             </div>
             <div className={styles.actions}>
-              <Button type="submit" variant="primary" disabled={transfer.isPending}>
-                {transfer.isPending ? "Transferring…" : "Transfer shares…"}
+              <Button type="submit" variant="primary" disabled={request.isPending}>
+                {request.isPending ? "Recording…" : "Request transfer…"}
               </Button>
             </div>
           </form>
         )}
-        {!spent && !mayTransfer && (
+        {!spent && !mayRequest && (
           <div className={styles.formNote}>
-            Your role has no members approval permission — share transfers
-            move member equity and their controls are not offered. The
-            server enforces this regardless.
+            Your role has no members approval permission — share-transfer
+            requests move member equity and their controls are not offered.
+            The server enforces this regardless.
           </div>
         )}
       </Card>
 
+      <Card>
+        <div className={styles.cardTitle}>Transfer register</div>
+        <div className={styles.cardBody}>
+          Pending requests first (the checker&apos;s job order), then the
+          full history newest-first — the server&apos;s order, never
+          re-sorted here. Open a row to review it; approval and rejection
+          require a DIFFERENT principal from the maker.
+        </div>
+        <KeysetTable
+          query={register}
+          columns={registerColumns}
+          rowKey={(row) => row.id}
+          onRowClick={(row) => setOpenTransferId(row.id)}
+          emptyMessage="No share transfers exist for this SACCO yet."
+        />
+      </Card>
+
+      {openTransferId !== null && (
+        <TransferDetailDrawer
+          transferId={openTransferId}
+          onClose={() => setOpenTransferId(null)}
+        />
+      )}
+
       {confirmEntry !== null && (
         <ConfirmDangerModal
-          title="Transfer share capital"
+          title="Request share transfer"
           confirmPhrase={confirmEntry.from_member_id.slice(0, 8)}
-          confirmLabel="Transfer shares"
-          pending={transfer.isPending}
+          confirmLabel="Request transfer"
+          pending={request.isPending}
           onConfirm={() => {
-            if (!transfer.isPending) transfer.mutate(confirmEntry);
+            if (!request.isPending) request.mutate(confirmEntry);
           }}
           onClose={() => setConfirmEntry(null)}
         >
           <Banner>
-            This moves {fmtKes(confirmEntry.amount)} of share capital from
-            member {confirmEntry.from_member_id.slice(0, 8)} to member{" "}
-            {confirmEntry.to_member_id.slice(0, 8)} — both ledger legs post
-            atomically and the ledger is append-only (a mistake is corrected
-            by a counter-transfer, never an edit). The server verifies both
-            members and the balance under row locks before posting.
+            This records a PENDING request to move {fmtKes(confirmEntry.amount)}{" "}
+            of share capital from member {confirmEntry.from_member_id.slice(0, 8)}{" "}
+            to member {confirmEntry.to_member_id.slice(0, 8)}. NO money moves
+            now: a DIFFERENT checker must approve it (you can never approve
+            your own request), and the server re-verifies the frozen snapshot
+            under row locks before anything posts.
           </Banner>
         </ConfirmDangerModal>
       )}

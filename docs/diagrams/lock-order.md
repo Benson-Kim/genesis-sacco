@@ -55,7 +55,13 @@ flowchart TD
     %% approval then rides the existing E20/E21 chain. One new edge,
     %% anchor-first above the TXN anchor - see section 4. Rejection
     %% locks ADJ alone (a section-3 single-node locker).
-    %% Edge ids E1..E24 are annotated with code sites in lock-order.md §3.
+    %% Issue #31 (l) update (batch 10): STFR (share_transfers FOR
+    %% UPDATE) added as the maker-checker approval anchor with E25
+    %% (STFR -> MSELF); approval then rides the existing member ->
+    %% share-account chain (E13). One new edge, anchor-first above the
+    %% member tier - see section 4. Rejection locks STFR alone (a
+    %% section-3 single-node locker).
+    %% Edge ids E1..E25 are annotated with code sites in lock-order.md §3.
 
     subgraph T0["Tier 0 — workflow anchors"]
         EXIT["member_exits<br/>FOR UPDATE"]
@@ -64,6 +70,7 @@ flowchart TD
         ADJ["repayment_adjustments<br/>FOR UPDATE (issue-#24 approval anchor;<br/>reject locks it alone)"]
         TXN["transactions<br/>FOR UPDATE (reversal; adjustment chain)"]
         WOFF["loan_write_offs<br/>FOR UPDATE (posting; issue-#21 receipt anchor;<br/>votes/voids lock it alone)"]
+        STFR["share_transfers<br/>FOR UPDATE (issue-#31 (l) approval anchor;<br/>reject locks it alone)"]
     end
 
     subgraph T1["Tier 1 — member rows (root of the money chain)"]
@@ -108,6 +115,7 @@ flowchart TD
     MSELF -->|E13| SSELF
     SSELF -->|E14| LOANS
     ADJ -->|E24| TXN
+    STFR -->|E25| MSELF
     TXN -->|E20| MSELF
     MSELF -->|E21| LOANS
     WOFF -->|E22| LOANS
@@ -172,6 +180,7 @@ citation.
 | E22 | loan_write_offs → loans | FU → FU | `application/corrections.py:post_write_off` (snapshot row FOR UPDATE, then the loan row for the component re-verification + terminal transition); `application/corrections.py:record_recovery_receipt` (issue #21 — snapshot row FOR UPDATE pinning the claim math, then the loan row via the E23→E21 chain, anchoring the full-recovery guarantee release in E7 order) | P13.15; #21 |
 | E23 | loan_write_offs → members (self) | FU → FS | `application/corrections.py:record_recovery_receipt` (issue #21 — the claim anchor is locked FIRST, then the member FOR SHARE via `transactions._require_member` holds off a concurrent terminal exit; the exit's unresolved-claim guard in `member_exits._compute_under_locks` relies on this conflict at T1) | #21 |
 | E24 | repayment_adjustments → transactions | FU → FU | `application/corrections.py:approve_repayment_adjustment` (issue #24 — the pending adjustment row is locked FIRST as the workflow anchor, the WOFF/E22 shape; the approval then retakes the full E20/E21 chain via `_lock_adjustment_chain` for the snapshot re-verification). Nothing anywhere acquires an adjustment row while holding T0+ locks: the maker's request INSERTs it as a plain write under the E20/E21 chain, and rejection locks the adjustment row ALONE (§3 single-node rows) | #24 |
+| E25 | share_transfers → members (self) | FU → FU | `application/dividends.py:approve_share_transfer` (issue #31 (l) — the pending transfer row is locked FIRST as the workflow anchor, the ADJ/E24 shape; the approval then retakes the FULL transfer chain via `_lock_transfer_chain`, shared VERBATIM with the maker's request: BOTH member rows FOR UPDATE in global member-id order via `_lock_member_status`, then both share accounts FOR UPDATE in the same member order via `_lock_account` — the existing E13 hop — for the component-by-component snapshot re-verification). Nothing anywhere acquires a share_transfers row while holding T0+ locks: the maker's request (`request_share_transfer`) INSERTs the pending row as a plain write under the same chain, and rejection locks the transfer row ALONE (§3 single-node rows) | #31 (l) |
 
 **Single-node lockers** (no outgoing domain edges — they enter the DAG
 and stop, or never touch it):
@@ -192,6 +201,7 @@ and stop, or never touch it):
 | Dormancy batch (P13.13) | MSELF alone, `ORDER BY m.id … FOR UPDATE OF m SKIP LOCKED` (root tier, id order); the transition UPDATE, audit row and outbox INSERT happen under the held member row — **no ledger rows, no advisory, nothing below T1**. Reactivation is NOT this job: it rides E10 inside `record_deposit` | `dormancy.py:dormancy_scan_sql` L215; the worker cycle (`infrastructure/dormancy_worker.py`) takes no locks |
 | Deposit-interest batch | DSELF alone (SKIP LOCKED, id order) → E15/E16 posting | `deposit_interest.py:_accrue_batch` L231 |
 | Ledger reversal | TXN → E15 | `ledger.py:reverse_transaction` L694 |
+| Share-transfer reject (issue #31 (l)) | STFR alone (the ADJ/DECL void pattern): the pending row FOR UPDATE, the SoD checks and the optimistic-locked (version-pinned) decision UPDATE under it — **no money locks, nothing posts**; the mandatory rationale is audit metadata | `dividends.py:reject_share_transfer` |
 | Adjustment reject (issue #24) | ADJ alone (the DECL/WOFF void pattern): the pending row FOR UPDATE, the optimistic-locked decision UPDATE under it — **no money locks, nothing posts** | `corrections.py:reject_repayment_adjustment` |
 | Period close | ADVP **exclusive** (no row locks held when taken), then `ON CONFLICT` claim; the P13.17(a)/(b) writers run inside the same transaction: snapshot + rollup INSERT claims, whose 0028 late-insert fence probes the period row `FOR SHARE`, then the `rollup_at` marker UPDATE (implicitly `FOR NO KEY UPDATE`) — every one of these row locks is on the period row THIS transaction just inserted (invisible to every other transaction), so no cross-transaction wait can follow the advisory lock (§4 terminality note) | `accounting_periods.py:close_period` L159, `period_rollups.py:write_period_rollups` |
 | Rollup backfill (P13.17b) | accounting_periods single row `FOR UPDATE SKIP LOCKED` (oldest closed-but-unrolled), one period per short transaction via the shared batch runner; the writer's fence `FOR SHARE` + marker UPDATE then hit the row the transaction already holds (self, no wait). Re-run path (§5): a fully rolled tenant matches zero rows, locks nothing, writes nothing | `period_rollups.py:ROLLUP_BACKFILL_SCAN_SQL` L239 |
@@ -215,7 +225,7 @@ continues mid-chain — share top-up at T3, deposit-interest at T2,
 repayment at T4 — still only moves down). Ties inside a tier are broken
 by a **total order**: global member-id order for multi-member
 operations (E13, the !30 rule), `ORDER BY id` for multi-row scans
-(E2, E14, arrears, E17). All E1–E24 edges point downward **except two
+(E2, E14, arrears, E17). All E1–E25 edges point downward **except two
 upward edges out of the guarantees tier — E8 (→ guarantor member, T1)
 and E9 (→ borrower deposit, T2)** — so any cycle would have to pass
 through one of them. Each is safe for a different, checkable reason.
@@ -268,6 +278,28 @@ single-node rows), and the approval's own decision UPDATE hits the
 row it already holds. So every wait involving ADJ points strictly
 downward into the existing acyclic chain, and E24 extends the total
 order upward without creating any return path.
+
+**The issue-#31 edge E25 (STFR, T0 → members, T1) is anchor-first
+and strictly downward — the exact E24/WOFF discipline.** The
+checker's approval locks the PENDING share_transfers row FIRST (the
+workflow anchor), then retakes the FULL transfer chain via
+`_lock_transfer_chain` (shared verbatim with the maker's request):
+both member rows FOR UPDATE in global member-id order, then both
+share accounts in the same member order — the existing E13 hop — for
+the component-by-component snapshot re-verification. STFR sits
+strictly above the member tier because nothing anywhere acquires a
+share_transfers row lock while holding member/account (or any other)
+locks: the maker's request INSERTs the pending row as a plain write
+UNDER the member/account chain (an INSERT is not a lock on an
+existing row), rejection locks the transfer row ALONE (§3
+single-node rows), and the approval's one-shot decision UPDATE hits
+the row it already holds. Opposing concurrent approvals (A→B racing
+B→A) hold two DIFFERENT anchors and then serialise on the id-ordered
+member locks (the E13 total order) — no wait cycle is representable
+(falsifiable test: `tests/test_share_transfers.py::
+test_fm4_opposing_concurrent_approvals_do_not_deadlock_exactly_one_posts`).
+E25 extends the DAG downward from a source-only node; acyclicity is
+preserved.
 
 **The cross-actor edge E8 (and the guarantor continuation of E3):
 borrower's anchor/guarantee → guarantor's member row.** A transaction
@@ -530,6 +562,22 @@ commit/rollback, per-tenant keys so tenants never serialise each other.
   factored `_lock_pledged_guarantee`/`_lock_release_target` cores
   without changing a single lock acquisition. **No new lock-graph
   edges.**
+- **Issue #31 (l)/(m) (maker-checker share transfers, batch 10) —
+  AS-BUILT (this MR, !83):** ONE new anchor-first edge, E25
+  (share_transfers FOR UPDATE → members FOR UPDATE), landed
+  first-class in §2/§3/§4: the checker's approval locks the pending
+  transfer row FIRST (the workflow anchor, the ADJ/E24 discipline),
+  then retakes the EXISTING member → share-account chain — factored
+  into `dividends._lock_transfer_chain`, shared verbatim by the
+  maker's request (snapshot capture) and the approval (snapshot
+  re-verification), reusing the pre-existing
+  `_lock_member_status`/`_lock_account` statements. Rejection locks
+  the transfer row alone (a §3 single-node locker); the maker's
+  request adds NO edge (it enters at T1 and INSERTs the pending row
+  as a plain write); the ledger-(m) register read takes no locks.
+  The 0040 SoD CHECK / write-once + status-machine trigger lives in
+  migration DDL and takes no locking probes (the 0030/0031/0032
+  posture: row-shape guards, not cross-row sums).
 - **P19 (M-Pesa)** and later prompts: any lock they take must land as
   an edge here first-class, in the same MR.
 
@@ -758,6 +806,35 @@ migration DDL, not `src`, and takes **no locking probe** (the
 cross-row sum, so MVCC suffices; unlike 0034's cap SUM). The
 `live_credential_by_id` use-time re-checks are plain MVCC reads.
 **Zero new lock-graph edges.**
+
+**Issue-#31 (l) delta (maker-checker share transfers, authored on the
+batch-10 branch off `41af78d` — a SCOPED re-verification against this
+branch's base, the P13.17(e) precedent):** the two-phase flow adds
+exactly **two new executable SQL lock sites**, both in
+`application/dividends.py` — the pending share_transfers anchor
+`FOR UPDATE` in `approve_share_transfer` (the E25 tail) and the same
+anchor taken ALONE in `reject_share_transfer` (a §3 single-node
+locker). The member/share-account chain sites are UNCHANGED: the
+retired one-shot `transfer_shares` already drove the same
+`_lock_member_status`/`_lock_account` statements now factored into
+`_lock_transfer_chain` (a refactor, not a delta); the ledger-(m)
+register read (`list_share_transfers`) takes no locks. Grep totals
+measured against the branch base (main @ `41af78d`:
+141 / 32 / 36 / 2 / 64 = **244**): 145 / 33 / 36 / 2 / 64 = **249**
+(`for update` / `for share` / `skip locked` / `for no key update` /
+`advisory`; union of matching lines) — of the five new lines, two are
+the executable sites, two are docstrings restating the anchor-first
+chain, and one is a grep FALSE POSITIVE (the stale-version error
+message "… for share transfer …" matches `for share` without naming a
+lock). [Scope note: the running executable-site counter above was
+last printed at the P14.5 delta (76, !65); the read-model batches
+merged to main since then moved the raw totals to the 244 base
+without §8 delta paragraphs — re-deriving THEIR history is outside
+this MR's scope and is not claimed here.] The 0040 SoD CHECK and
+write-once/status-machine trigger live in migration DDL, not `src`,
+and take no locking probes (the 0031 posture: row-shape guards, not
+cross-row sums). **One new lock-graph edge (E25), landed first-class
+in this MR.**
 
 ## 9. Cross-check: MR prose vs code-derived DAG (P-DIAG.0 step 3)
 

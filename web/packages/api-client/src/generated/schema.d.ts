@@ -1729,10 +1729,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Transfer Shares
-         * @description Transfer share capital to an active member (the exit path).
+         * Request Share Transfer
+         * @description MAKER phase (issue #31 (l)): create a PENDING transfer bound to
+         *     the persisted approval snapshot — NO money moves until a distinct
+         *     checker approves.
          */
-        post: operations["transfer_shares_members__member_id__share_transfers_post"];
+        post: operations["request_share_transfer_members__member_id__share_transfers_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2019,6 +2021,92 @@ export interface paths {
          */
         put: operations["update_settings_settings_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/share-transfers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Share Transfers
+         * @description The share-transfer history register (issue #31 ledger (m)):
+         *     keyset, PENDING FIRST then newest first — the checker's job order
+         *     (the 0038 band pattern). Served under members:view (the house
+         *     read-split); explicit tenant predicate doubling RLS; bound
+         *     parameters only.
+         */
+        get: operations["list_share_transfers_share_transfers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/share-transfers/{transfer_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Share Transfer */
+        get: operations["get_share_transfer_share_transfers__transfer_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/share-transfers/{transfer_id}/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Share Transfer
+         * @description CHECKER phase (issue #31 (l)): a DISTINCT, non-assurance
+         *     principal re-verifies the snapshot under the full lock set (409 on
+         *     drift, posting nothing), then posts BOTH ledger legs, updates both
+         *     balances and notifies BOTH members via the outbox — atomically.
+         */
+        post: operations["approve_share_transfer_share_transfers__transfer_id__approval_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/share-transfers/{transfer_id}/rejection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject Share Transfer
+         * @description Reject a pending transfer (checker decision, optimistic-locked)
+         *     — the checker's rationale is REQUIRED (!52 F2) and recorded in the
+         *     audit row, never echoed.
+         */
+        post: operations["reject_share_transfer_share_transfers__transfer_id__rejection_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4266,6 +4354,12 @@ export interface components {
             total: string;
         };
         /**
+         * ShareTransferApproveBody
+         * @description NO money fields, ever (v1.1 rule 1): every figure derives from
+         *     the persisted pending transfer; extra="forbid" -> 422.
+         */
+        ShareTransferApproveBody: Record<string, never>;
+        /**
          * ShareTransferBody
          * @description The transferee and the subject amount only (2dp enforced at the
          *     contract; the balance check runs server-side under the locks).
@@ -4279,7 +4373,17 @@ export interface components {
              */
             to_member_id: string;
         };
-        /** ShareTransferOut */
+        /** ShareTransferListOut */
+        ShareTransferListOut: {
+            /** Items */
+            items: components["schemas"]["ShareTransferRecordOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * ShareTransferOut
+         * @description The APPROVAL result — the money actually moved (phase 2).
+         */
         ShareTransferOut: {
             /** Amount */
             amount: string;
@@ -4293,6 +4397,55 @@ export interface components {
             to_balance_after: string;
             /** Transfer Id */
             transfer_id: string;
+        };
+        /**
+         * ShareTransferRecordOut
+         * @description The workflow record (issue #31 (l)/(m)): the register row and
+         *     the request/rejection responses. Least disclosure: bare UUIDs (the
+         *     !66/!70 precedent — resolving them stays behind the entitled
+         *     modules), the amount as the verbatim decimal string, and NO
+         *     request-time balance snapshot (the approval re-verifies it
+         *     server-side; the audit rows carry the exact figures). Maker and
+         *     checker attribution are nullable-never-optional server truth: a
+         *     NULL (pre-0040 history) serialises as an honest null, never an
+         *     invented principal.
+         */
+        ShareTransferRecordOut: {
+            /** Amount */
+            amount: string;
+            /** Approved By */
+            approved_by: string | null;
+            /** Created At */
+            created_at: string;
+            /** Created By */
+            created_by: string | null;
+            /** Decided At */
+            decided_at: string | null;
+            /** From Member Id */
+            from_member_id: string;
+            /** Id */
+            id: string;
+            /** In Transaction Id */
+            in_transaction_id: string | null;
+            /** Out Transaction Id */
+            out_transaction_id: string | null;
+            /** Status */
+            status: string;
+            /** To Member Id */
+            to_member_id: string;
+            /** Version */
+            version: number;
+        };
+        /**
+         * ShareTransferRejectBody
+         * @description Version-pinned rejection with the MANDATORY checker rationale
+         *     (the !52 F2 posture); workflow metadata only, never money.
+         */
+        ShareTransferRejectBody: {
+            /** Reason */
+            reason: string;
+            /** Version */
+            version: number;
         };
         /**
          * Side
@@ -7753,7 +7906,7 @@ export interface operations {
             };
         };
     };
-    transfer_shares_members__member_id__share_transfers_post: {
+    request_share_transfer_members__member_id__share_transfers_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -7774,7 +7927,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ShareTransferOut"];
+                    "application/json": components["schemas"]["ShareTransferRecordOut"];
                 };
             };
             /** @description Validation Error */
@@ -8334,6 +8487,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_share_transfers_share_transfers_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareTransferListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_share_transfer_share_transfers__transfer_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transfer_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareTransferRecordOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_share_transfer_share_transfers__transfer_id__approval_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transfer_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShareTransferApproveBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareTransferOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_share_transfer_share_transfers__transfer_id__rejection_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transfer_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShareTransferRejectBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareTransferRecordOut"];
                 };
             };
             /** @description Validation Error */
