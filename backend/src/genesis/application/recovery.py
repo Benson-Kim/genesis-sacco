@@ -118,7 +118,12 @@ from genesis.application import rbac as rbac_service
 from genesis.application.audit import record_audit
 from genesis.application.batch_runner import SessionScope, run_in_batches
 from genesis.application.outbox import enqueue_event
-from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
+from genesis.application.pagination import (
+    build_created_id_cursor,
+    decode_cursor,
+    encode_cursor,
+    parse_created_id_cursor,
+)
 from genesis.domain.lending import NPL_CLASSES, LoanClass, LoanStatus
 from genesis.domain.rbac import ASSURANCE_ROLES, Action, Module
 from genesis.domain.recovery import (
@@ -132,6 +137,11 @@ from genesis.domain.recovery import (
 )
 from genesis.domain.users import UserStatus
 from genesis.errors import ConflictError, InvalidInputError, NotFoundError, UnprocessableError
+
+#: Cursor scope ids (#31 batch 13): signed cursors are bound to ONE
+#: endpoint - a worklist cursor can never open a notes page (gate 1.6).
+_WORKLIST_SCOPE = "recovery.worklist"
+_CASE_NOTES_SCOPE = "recovery.notes"
 
 __all__ = [
     "DEFAULT_CLOSE_BATCH_SIZE",
@@ -838,7 +848,12 @@ async def list_case_notes(
     await get_recovery_case(session, tenant_id, case_id)
     params: dict[str, object] = {"tid": str(tenant_id), "cid": str(case_id), "limit": limit + 1}
     if cursor is not None:
-        c_ts, c_id = parse_created_id_cursor(cursor, entity="recovery note")
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the plaintext parse stays as defense-in-depth.
+        inner = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=_CASE_NOTES_SCOPE, entity="recovery note"
+        )
+        c_ts, c_id = parse_created_id_cursor(inner, entity="recovery note")
         params["c_ts"] = c_ts
         params["c_id"] = c_id
     stmt = text(notes_page_sql(with_cursor=cursor is not None))
@@ -855,7 +870,11 @@ async def list_case_notes(
     ]
     next_cursor = None
     if len(rows) > limit and items:
-        next_cursor = build_created_id_cursor(items[-1].created_at, items[-1].id)
+        next_cursor = encode_cursor(
+            build_created_id_cursor(items[-1].created_at, items[-1].id),
+            tenant_id=tenant_id,
+            endpoint=_CASE_NOTES_SCOPE,
+        )
     return CaseNotePage(items=items, next_cursor=next_cursor)
 
 
@@ -953,7 +972,12 @@ async def list_worklist(
     if classification is not None:
         params["f_class"] = classification.value
     if cursor is not None:
-        c_dpd, c_id = _parse_worklist_cursor(cursor)
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the plaintext parse stays as defense-in-depth.
+        inner = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=_WORKLIST_SCOPE, entity="worklist"
+        )
+        c_dpd, c_id = _parse_worklist_cursor(inner)
         params["c_dpd"] = c_dpd
         params["c_id"] = c_id
     stmt = text(
@@ -989,7 +1013,11 @@ async def list_worklist(
     next_cursor = None
     if len(rows) > limit and items:
         last = items[-1]
-        next_cursor = f"{last.days_past_due}|{last.loan_id}"
+        next_cursor = encode_cursor(
+            f"{last.days_past_due}|{last.loan_id}",
+            tenant_id=tenant_id,
+            endpoint=_WORKLIST_SCOPE,
+        )
     return WorklistPage(items=items, next_cursor=next_cursor)
 
 

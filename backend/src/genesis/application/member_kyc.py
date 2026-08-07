@@ -72,6 +72,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application import members as members_service
 from genesis.application.audit import record_audit
+from genesis.application.pagination import decode_cursor, encode_cursor
 from genesis.domain.member_kyc import (
     DocumentStatus,
     DocumentTypeError,
@@ -83,6 +84,10 @@ from genesis.domain.member_kyc import (
 )
 from genesis.domain.members import MemberType
 from genesis.errors import ConflictError, NotFoundError, UnprocessableError
+
+#: Cursor scope id (#31 batch 13): signed cursors are bound to this
+#: endpoint and this tenant - no cross-scope replay (gate 1.6).
+_DOCUMENTS_LIST_SCOPE = "member_kyc.documents"
 
 
 class Unset(enum.Enum):
@@ -481,12 +486,20 @@ async def list_documents(
         "limit": limit + 1,
     }
     if cursor:
-        params["cursor"] = cursor
+        # Opaque signed cursor (#31 batch 13): verify+unseal before
+        # the keyset predicate; the plaintext doc_type is unchanged.
+        params["cursor"] = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=_DOCUMENTS_LIST_SCOPE, entity="document"
+        )
     rows = (
         await session.execute(text(documents_page_sql(with_cursor=cursor is not None)), params)
     ).all()
     items = [_row_to_document(r) for r in rows[:limit]]
-    next_cursor = items[-1].doc_type if len(rows) > limit and items else None
+    next_cursor = None
+    if len(rows) > limit and items:
+        next_cursor = encode_cursor(
+            items[-1].doc_type, tenant_id=tenant_id, endpoint=_DOCUMENTS_LIST_SCOPE
+        )
     await record_audit(
         session,
         tenant_id,
