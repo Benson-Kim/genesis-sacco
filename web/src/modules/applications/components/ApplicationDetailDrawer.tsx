@@ -208,9 +208,7 @@ export function ApplicationDetailDrawer({
         <Kv label="Rate">{app.rate_pct}% (product-set)</Kv>
         <Kv label="Security cover">{coverPill(app.cover_pct)}</Kv>
         <Kv label="Max eligible">
-          {app.max_eligible !== null && app.max_eligible !== undefined
-            ? fmtKes(app.max_eligible)
-            : "—"}
+          {app.max_eligible !== null ? fmtKes(app.max_eligible) : "—"}
         </Kv>
         <Kv label="Purpose">{app.purpose ?? "—"}</Kv>
         <Kv label="Stage">{stagePill(app.stage)}</Kv>
