@@ -81,8 +81,13 @@ export const applicationSchema = z.object({
   /** to_cents(deposits x multiplier) added to the two-place guarantee
    * sum (application_max_eligible, loan_applications.py) — Decimal
    * addition keeps the wider scale, so the wire value is ALWAYS the
-   * canonical two-place shape; fmtKes-fed (A2/S2 retrofit). */
-  max_eligible: moneySchema.nullable().optional(),
+   * canonical two-place shape; fmtKes-fed (A2/S2 retrofit).
+   * Nullable, NOT optional (the !70 hygiene flag, #31 batch 11):
+   * ApplicationOut always serializes the key — a string on the
+   * single-application read, NULL on listings (computing it per row
+   * would grow queries with result size, gate 1.3) — so a missing
+   * key is a contract violation, never a silent pass. */
+  max_eligible: moneySchema.nullable(),
   version: z.number().int(),
 });
 

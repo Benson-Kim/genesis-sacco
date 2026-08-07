@@ -11,6 +11,16 @@ export interface KvProps {
    * convention (tighter row, heavier key, unweighted/uncolored value).
    */
   variant?: "default" | "quiet";
+  /**
+   * Optional extra class APPENDED to the value span's class list (#31
+   * batch 11, ledger (o)): the residual raw-markup rows composed a
+   * per-value module class (the audit drawer's `tnum`) that the
+   * primitive could not express — this keeps their rendered class
+   * sets EQUIVALENT after folding in. Callers pass CSS-module tokens
+   * only; the string lands in a React-escaped class attribute (never
+   * parsed as HTML), so hostile strings stay inert regardless.
+   */
+  valueClassName?: string;
 }
 
 /**
@@ -20,13 +30,20 @@ export interface KvProps {
  * text interpolation — attacker-influenced strings stay inert (no HTML
  * parsing, no React parser sink).
  */
-export function Kv({ label, children, variant = "default" }: Readonly<KvProps>) {
+export function Kv({
+  label,
+  children,
+  variant = "default",
+  valueClassName,
+}: Readonly<KvProps>) {
   const rowClass =
     variant === "quiet" ? `${styles.kvRow} ${styles.quiet}` : styles.kvRow;
+  const valClass =
+    valueClassName === undefined ? styles.kvVal : `${styles.kvVal} ${valueClassName}`;
   return (
     <div className={rowClass}>
       <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
+      <span className={valClass}>{children}</span>
     </div>
   );
 }

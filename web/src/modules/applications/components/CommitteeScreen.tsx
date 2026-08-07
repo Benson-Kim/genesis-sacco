@@ -26,7 +26,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, Card, ConfirmDangerModal, Pill } from "@genesis/design-system";
+import { Banner, Button, Card, ConfirmDangerModal, Kv, Pill } from "@genesis/design-system";
 import { MakerCheckerPanel } from "@/modules/authz/components/MakerCheckerPanel";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
@@ -264,16 +264,14 @@ function ReviewPanel({ applicationId }: Readonly<{ applicationId: string }>) {
           <div className={styles.statValue}>{coverPill(app.cover_pct)}</div>
         </div>
       </div>
-      <div className={styles.kvRow}>
-        <span className={styles.kvKey}>Product</span>
-        <span className={styles.kvVal}>
-          {product !== undefined ? product.name : <span className={styles.mono}>{app.product_id}</span>}
-        </span>
-      </div>
-      <div className={styles.kvRow}>
-        <span className={styles.kvKey}>Purpose</span>
-        <span className={styles.kvVal}>{app.purpose ?? "—"}</span>
-      </div>
+      {/* Design-system Kv rows (#31 batch 11, ledger (o)) — default
+          variant, byte-equivalent rules to the module CSS this replaced;
+          the product-id fallback keeps its nested mono span in children
+          (the ApplicationDetailDrawer precedent — identical DOM). */}
+      <Kv label="Product">
+        {product !== undefined ? product.name : <span className={styles.mono}>{app.product_id}</span>}
+      </Kv>
+      <Kv label="Purpose">{app.purpose ?? "—"}</Kv>
       {result !== null && (
         <div className={styles.tally} role="status">
           <Pill bg="emeraldSoft" color="emerald">
