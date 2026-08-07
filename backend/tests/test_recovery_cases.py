@@ -579,9 +579,7 @@ def test_notes_append_only_keyset_and_closed_case_refusal() -> None:
             # FM9 (#31 batch 13): forged cursors are sanitized 400s —
             # garbage AND a validly signed token for a FOREIGN scope
             # (same tenant), which only the tag check can refuse.
-            cross_scope = encode_cursor(
-                page1["next_cursor"], tenant_id=tid, endpoint="tamper.test"
-            )
+            cross_scope = encode_cursor(page1["next_cursor"], tenant_id=tid, endpoint="tamper.test")
             for forged in ("not-a-cursor", cross_scope):
                 res = await client.get(
                     f"/recovery-cases/{case['id']}/notes",

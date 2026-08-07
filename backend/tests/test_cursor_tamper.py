@@ -72,9 +72,7 @@ async def _ctx() -> dict[str, str]:
         tid, _, token = await seed_actor()
         branch_id = await create_branch(token, f"T-{uuid.uuid4().hex[:8]}")
         member_id = await seed_member_no(tid, "GP-0001", name="Tamper Probe")
-        _CTX.update(
-            tid=str(tid), token=token, branch_id=branch_id, member_id=str(member_id)
-        )
+        _CTX.update(tid=str(tid), token=token, branch_id=branch_id, member_id=str(member_id))
     return _CTX
 
 
@@ -92,9 +90,7 @@ def test_forged_cursor_is_a_sanitized_400(template: str, label: str) -> None:
         sep = "&" if "?" in path else "?"
         async with api_client() as client:
             for forged in ("not-a-cursor", cross_scope):
-                res = await client.get(
-                    f"{path}{sep}cursor={forged}", headers=headers
-                )
+                res = await client.get(f"{path}{sep}cursor={forged}", headers=headers)
                 assert res.status_code == 400, (label, forged, res.status_code, res.text)
                 body = res.json()
                 assert set(body.keys()) == {"category", "correlation_id"}, (label, body)

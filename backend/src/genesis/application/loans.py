@@ -191,9 +191,7 @@ async def list_loans(
     if cursor:
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
-        inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_LOAN_BOOK_SCOPE, entity="loan"
-        )
+        inner = decode_cursor(cursor, tenant_id=tenant_id, endpoint=_LOAN_BOOK_SCOPE, entity="loan")
         params["c_ts"], params["c_id"] = parse_created_id_cursor(inner, entity="loan")
         clauses.append("(created_at, id) < (:c_ts, CAST(:c_id AS uuid))")
     where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
