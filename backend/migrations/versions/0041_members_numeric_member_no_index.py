@@ -1,7 +1,7 @@
 """members numeric member_no keyset index (issue #31 remediation N1)
 
-Revision ID: 0040
-Revises: 0039
+Revision ID: 0041
+Revises: 0040
 Create Date: 2026-08-07
 
 Expand-only revision backing the #31 post-merge remediation of senior
@@ -39,12 +39,18 @@ idx_members_branch (0016) and deliberately gets NO new index.
 NO table, column, constraint or RLS change: one index only, shipped
 in the SAME MR as the queries it serves. Downgrade drops the index
 exactly (reads only — the loud-refusal discipline is not implicated).
+
+RENUMBERED 0040 -> 0041 and re-chained onto 0040 after the batch-10
+merge (0040_share_transfer_maker_checker.py) claimed revision 0040 on
+main while this MR was in flight (v1.2 rule 14; the 0017 re-chain
+precedent — never renumber another track's claim: the later-merging
+track takes the next free number).
 """
 
 from alembic import op
 
-revision = "0040"
-down_revision = "0039"
+revision = "0041"
+down_revision = "0040"
 branch_labels = None
 depends_on = None
 

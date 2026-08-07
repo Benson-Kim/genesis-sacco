@@ -157,7 +157,7 @@ MEMBER_AGGREGATES_SQL = (
 #: — a longer value is strictly bigger, equal lengths compare
 #: zero-padded-lexicographically == numerically — and the matching
 #: row-value predicate in _member_list_clauses walks it exhaustively
-#: across the 4->5 digit boundary. Served by the 0040 expression index
+#: across the 4->5 digit boundary. Served by the 0041 expression index
 #: (tenant_id, length(member_no), member_no), shipped with this query
 #: (gate 1.3); the EXPLAIN gate proves the plan carries NO Sort node.
 #: The {where} slot only ever receives the static clause literals from
@@ -183,7 +183,7 @@ MEMBER_LIST_SQL = (
 #: assembled in _member_list_clauses below. Each probe is servable by
 #: an index that shipped with its table in 0001: the deposit/share
 #: (tenant_id, member_id) UNIQUE-key probes, idx_loans_member,
-#: idx_guarantees_guarantor, and the driving keyset rides the 0040
+#: idx_guarantees_guarantor, and the driving keyset rides the 0041
 #: expression index (tenant_id, length(member_no), member_no) — the
 #: NUMERIC member_no order (senior review N1; see MEMBER_LIST_SQL for
 #: the derivation). The CAST normalises the empty aggregate to column
@@ -515,7 +515,7 @@ async def list_members(
     the (length(member_no), member_no) order in MEMBER_LIST_SQL is the
     numeric order for the fixed 'GP-' + zero-padded-digits format, and
     the served member_no doubles as a stable cursor. Exactly one
-    indexed query per page regardless of table size (the 0040
+    indexed query per page regardless of table size (the 0041
     expression index).
     """
     limit = max(1, min(limit, 100))

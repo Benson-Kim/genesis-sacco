@@ -25,12 +25,21 @@
   Migration head 0038 -> 0039 by the issue-#31 batch-8 MR (!79,
   merged): 0039_member_dividend_payout.py (one nullable TEXT column +
   CHECK on members; no RLS change).
-  Migration head 0039 -> 0040 by the issue-#31 batch-7 remediation
-  MR (senior-review finding N1): 0040_members_numeric_member_no_index.py
+  Migration head 0039 -> 0040 by the issue-#31 batch-10 MR (merged
+  pre re-import as sircle8283932/sacco!83):
+  0040_share_transfer_maker_checker.py (expand-only: share_transfers
+  gains maker-checker workflow columns, DB SoD CHECK, write-once/
+  status-machine trigger, register expression index; authored with
+  down_revision '0038' at branch time and RE-CHAINED onto 0039 after
+  the batch-8 merge landed on main) ships in that MR (same-commit
+  refresh per v1.2 rule 11 / spot-check check 5).
+  Migration head 0040 -> 0041 by the issue-#31 batch-7 remediation
+  MR (senior-review finding N1): 0041_members_numeric_member_no_index.py
   (one expand-only expression index; no table/RLS change) ships in
-  that MR; down_revision re-chained 0038 -> 0039 after !79 merged
-  (the 0017 precedent; same-commit refresh per v1.2 rule 11 /
-  spot-check check 5).
+  that MR; RENUMBERED 0040 -> 0041 and re-chained onto 0040 after the
+  batch-10 merge claimed 0040 on main (the 0017 precedent; down_revision
+  had earlier been re-chained 0038 -> 0039 after !79 merged; same-commit
+  refresh per v1.2 rule 11 / spot-check check 5).
   Traceability: every box cites its module; `c4-spot-check.py` verifies
   every cited module path exists at the authoring SHA.
 -->
@@ -70,7 +79,7 @@ flowchart TB
         IDW["idempotency purge — P13.17c<br/>genesis/infrastructure/idempotency_worker.py"]
     end
 
-    MIG["Migration runner — alembic upgrade head<br/>backend/alembic.ini + backend/migrations/<br/>versions 0001..0040 (head 0040; 0039 merged via !79)"]
+    MIG["Migration runner — alembic upgrade head<br/>backend/alembic.ini + backend/migrations/<br/>versions 0001..0041 (head 0041; 0040 batch-10 share-transfer merged; 0041 RENUMBERED from 0040 after the batch-10 claim)"]
 
     PG[("PostgreSQL 16 — FORCED RLS (ADR-0002)<br/>append-only: ledger_entries + transactions (0004 triggers),<br/>audit_log (0001), repayments (0032), loan_recoveries (0030)<br/>write-once: dividend_declarations (0020), loan_write_offs (0025),<br/>repayment_adjustments (0025/0031), portfolio_month_snapshots (0027),<br/>period rollups (0028)<br/>closed-period posting barrier (0012/0014)<br/>advisory-lock tier: lock-order.md §6")]
     RD[("Redis<br/>rate limiting + readyz")]
@@ -106,7 +115,7 @@ flowchart TB
 | export renderer | `genesis/infrastructure/export_worker.py` → `genesis/application/exports.py` (`run_export_job` L381, claim `CLAIM_SQL` L82) |
 | dormancy worker | `genesis/infrastructure/dormancy_worker.py` (`run_dormancy_cycle` L65 — fail-closed per tenant, per-tenant error isolation per !37) → `genesis/application/dormancy.py` (`run_dormancy_for_tenant` L370) |
 | idempotency purge worker | `genesis/infrastructure/idempotency_worker.py` (`run_worker`) → `genesis/application/idempotency_purge.py` (`purge_expired_idempotency_keys` — shared batch runner, `FOR UPDATE SKIP LOCKED` subquery; P13.17c/DSA-3) |
-| migration runner | `backend/alembic.ini`, `backend/migrations/env.py`, `backend/migrations/versions/0001..0040` — head `0040` (`0040_members_numeric_member_no_index.py`, `down_revision = "0039"` — re-chained from `0038` after !79 merged `0039_member_dividend_payout.py`, the 0017 precedent; shipped by the issue-#31 batch-7 remediation MR in the same commit as this refresh), verified against `versions/` on this tree (nothing claims `0040` as parent) |
+| migration runner | `backend/alembic.ini`, `backend/migrations/env.py`, `backend/migrations/versions/0001..0041` — head `0041` (`0041_members_numeric_member_no_index.py`, `down_revision = "0040"` — RENUMBERED from `0040` and re-chained onto `0040_share_transfer_maker_checker.py` after the batch-10 merge claimed `0040` on main, the 0017 precedent; shipped by the issue-#31 batch-7 remediation MR in the same commit as this refresh), verified against `versions/` on this tree (nothing claims `0041` as parent) |
 | PostgreSQL 16 | forced RLS per ADR-0002; store properties below |
 | Redis | `genesis/infrastructure/redis_client.py` (`ping_redis` — `/readyz`), `genesis/infrastructure/rate_limit.py` (auth endpoints) |
 

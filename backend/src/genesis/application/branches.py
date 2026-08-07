@@ -224,7 +224,7 @@ def branch_members_roster_sql(*, with_cursor: bool) -> str:
     details, no figures; the member record stays on the P8 /members
     reads under the same members:view gate. The equality-probed
     single-branch roster is a bounded top-N under idx_members_branch
-    (0016) — NO new index needed here (the 0040 expression index
+    (0016) — NO new index needed here (the 0041 expression index
     serves the TENANT-WIDE listing). Static fragments chosen in code;
     every value is a bound parameter (v1.1 rule 6).
     """

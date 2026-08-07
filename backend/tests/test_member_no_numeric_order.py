@@ -8,7 +8,7 @@ NUMERICALLY, not lexicographically — as text 'GP-10000' < 'GP-9999' —
 so past 9,999 members the order was wrong and keyset walks
 skipped/duplicated rows. The fix orders both reads by
 (length(member_no), member_no) with the matching row-value keyset
-predicate; the 0040 expression index (tenant_id, length(member_no),
+predicate; the 0041 expression index (tenant_id, length(member_no),
 member_no) keeps the tenant-wide listing index-served (gate 1.3).
 
 Covers (HAND-COMPUTED oracles, MASTER_PROMPT §4 — controlled
@@ -30,7 +30,7 @@ GP-9998 < GP-9999, so every leg below FAILS against the old SQL):
 - the EXPLAIN gate: the exact production statements (MEMBER_LIST_SQL
   / MEMBER_LIST_AGGREGATES_SQL over the shared clause builder) are
   index-served with NO Sort node under enable_seqscan=off AND
-  enable_sort=off — the plan rides the 0040 expression index, proven
+  enable_sort=off — the plan rides the 0041 expression index, proven
   falsifiable: drop idx_members_member_no_numeric and a Sort node is
   the only remaining path, failing the gate. (The equality-probed
   single-branch roster stays a bounded top-N under idx_members_branch
@@ -164,7 +164,7 @@ def test_numeric_list_statements_are_index_served_without_sort() -> None:
     behind GET /members (plain and include=aggregates), cursorless AND
     resuming from the boundary cursor 'GP-9999', are index-served with
     NO Sort node under enable_seqscan=off AND enable_sort=off — the
-    driving order comes from the 0040 expression index
+    driving order comes from the 0041 expression index
     (tenant_id, length(member_no), member_no). Falsifiable: drop that
     index and a Sort over the tenant slice is the only remaining
     order path (enable_sort=off only penalises its cost), so 'Sort'
@@ -214,9 +214,9 @@ def test_numeric_list_statements_are_index_served_without_sort() -> None:
             "enable_seqscan=off AND enable_sort=off because CI tables are\n"
             "tiny; the assertion is structural AND sort-free: the numeric\n"
             "(length(member_no), member_no) order of the tenant-wide members\n"
-            "listing must come from the 0040 expression index\n"
+            "listing must come from the 0041 expression index\n"
             "idx_members_member_no_numeric — no Seq Scan, no Sort node.\n"
-            "Falsifiable: drop the 0040 index and 'Sort' appears, failing\n"
+            "Falsifiable: drop the 0041 index and 'Sort' appears, failing\n"
             "the gate.\n"
         )
         OUT_PATH.write_text(
@@ -226,7 +226,7 @@ def test_numeric_list_statements_are_index_served_without_sort() -> None:
         for title, plan in captures:
             assert "Seq Scan" not in plan, f"{title} fell back to a sequential scan"
             assert "Index" in plan, f"{title} is not index-served"
-            assert "Sort" not in plan, f"{title} sorts instead of riding the 0040 index"
+            assert "Sort" not in plan, f"{title} sorts instead of riding the 0041 index"
             assert "members" in plan, f"{title} plan does not touch members"
 
     asyncio.run(run())
