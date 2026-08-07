@@ -90,13 +90,27 @@ class Classification:
     is_npl: bool
 
 
+#: Named days-past-due boundaries of classify() below — the SINGLE
+#: source of truth for consumers that need a threshold as a value
+#: rather than a label (#31 batch 8, ledger (k)): dpd > PAR_DPD_DAYS
+#: is the PAR-30 membership (watch and worse — the same `> 30` the
+#: P10 portfolio_summary FILTER uses); dpd > NPL_DPD_DAYS is NPL
+#: membership (substandard and worse — the boundary the month-end
+#: reconstruction has always applied). classify() consumes these
+#: constants directly, so the existing boundary oracles in
+#: tests/test_lending.py pin them falsifiably — a drifted constant
+#: reclassifies the boundary days and fails those tests.
+PAR_DPD_DAYS = 30
+NPL_DPD_DAYS = 90
+
+
 def classify(days_past_due: int) -> Classification:
     """Prudential classification. Thresholds 30/90/180/360 days."""
     if days_past_due < 0:
         raise ValueError("days_past_due must not be negative")
-    if days_past_due <= 30:
+    if days_past_due <= PAR_DPD_DAYS:
         return Classification(LoanClass.NORMAL, Decimal("1"), False)
-    if days_past_due <= 90:
+    if days_past_due <= NPL_DPD_DAYS:
         return Classification(LoanClass.WATCH, Decimal("5"), False)
     if days_past_due <= 180:
         return Classification(LoanClass.SUBSTANDARD, Decimal("25"), True)

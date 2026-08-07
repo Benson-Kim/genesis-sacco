@@ -197,11 +197,27 @@ export function KycWizard({
               granted later, but never withdrawn)
             </label>
           </div>
+          {/* Dividend payout PREFERENCE (#31 ledger (c) — the
+              authorized batch-8 contract): the member record's stored
+              preference, the server's code-owned vocabulary token
+              rendered VERBATIM; NULL is the honest "not set" state,
+              never an invented default. */}
+          <dl className={styles.summaryList}>
+            <div className={styles.summaryRow}>
+              <dt>Dividend payout preference</dt>
+              <dd>
+                {member.dividend_payout === null
+                  ? "Not set (recorded on the member record when chosen)"
+                  : member.dividend_payout}
+              </dd>
+            </div>
+          </dl>
           <p className={styles.panelNote}>
             The prototype&apos;s remaining membership inputs (registration fee, share capital,
-            contribution amounts and method, home branch, recruited-by, dividend payout
-            preference) have NO backend contract on the member record — recorded as
-            contract follow-ups on issue #31, never faked here.
+            contribution amounts and method, recruited-by) have NO backend contract on the
+            member record — recorded as contract follow-ups on issue #31, never faked here.
+            Home branch is assigned through the branches console (#31 (j)); the dividend
+            payout preference above is the member record&apos;s stored value (#31 (c)).
           </p>
           {create.isError && (
             <>

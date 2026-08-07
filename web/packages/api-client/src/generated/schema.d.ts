@@ -2764,6 +2764,7 @@ export interface components {
             charts?: components["schemas"]["DashboardChartsOut"] | null;
             deposits?: components["schemas"]["DepositTotalsOut"] | null;
             guarantors?: components["schemas"]["GuarantorAggregatesOut"] | null;
+            kpi_trends?: components["schemas"]["KpiTrendsOut"] | null;
             loan_book?: components["schemas"]["PortfolioSummaryOut"] | null;
             members?: components["schemas"]["MembersOverviewOut"] | null;
             /** Monthly Flows */
@@ -3376,6 +3377,18 @@ export interface components {
             total_interest: string;
         };
         /**
+         * KpiTrendsOut
+         * @description Per-KPI trend series (#31 batch 8, ledger (k)); each series
+         *     follows its KPI card's parent grant (par30 <- loan_book:view,
+         *     members <- members:view) and is omitted when ungranted.
+         */
+        KpiTrendsOut: {
+            /** Members */
+            members?: components["schemas"]["MembersTrendPointOut"][] | null;
+            /** Par30 */
+            par30?: components["schemas"]["Par30TrendPointOut"][] | null;
+        };
+        /**
          * LedgerLegOut
          * @description One DR or CR leg of a posting (#31 ledger (g), audit #30 A3).
          *
@@ -3490,8 +3503,20 @@ export interface components {
             /** Shares Total */
             shares_total: string;
         };
-        /** MemberCreateBody */
+        /**
+         * MemberCreateBody
+         * @description extra="forbid" (gate 1.6): unknown fields are a 422, never
+         *     silently dropped. dividend_payout (#31 ledger (c)) is typed as a
+         *     bounded STRING, deliberately not the enum: the service resolves it
+         *     against the CODE-OWNED vocabulary and an unknown value surfaces as
+         *     the sanitized 422 category ONLY — a pydantic enum here would echo
+         *     the permitted values in FastAPI's structural 422 (least
+         *     disclosure). Stored PREFERENCE only; nothing routes money by it
+         *     (batch-8 fence).
+         */
         MemberCreateBody: {
+            /** Dividend Payout */
+            dividend_payout?: string | null;
             /** Email */
             email?: string | null;
             /** Name */
@@ -3514,6 +3539,8 @@ export interface components {
             aggregates: components["schemas"]["MemberAggregatesOut"];
             /** Branch Id */
             branch_id: string | null;
+            /** Dividend Payout */
+            dividend_payout: string | null;
             /** Email */
             email: string | null;
             /** Id */
@@ -3555,6 +3582,8 @@ export interface components {
         MemberOut: {
             /** Branch Id */
             branch_id: string | null;
+            /** Dividend Payout */
+            dividend_payout: string | null;
             /** Email */
             email: string | null;
             /** Id */
@@ -3597,8 +3626,14 @@ export interface components {
             /** Type */
             type: string;
         };
-        /** MemberUpdateBody */
+        /**
+         * MemberUpdateBody
+         * @description Versioned optimistic-lock edit body (stale = 409); extra="forbid"
+         *     and the dividend_payout string posture per MemberCreateBody.
+         */
         MemberUpdateBody: {
+            /** Dividend Payout */
+            dividend_payout?: string | null;
             /** Email */
             email?: string | null;
             /** Name */
@@ -3614,6 +3649,20 @@ export interface components {
             active_members: number;
             /** By Type */
             by_type: components["schemas"]["MemberTypeCountOut"][];
+        };
+        /**
+         * MembersTrendPointOut
+         * @description One active-members trend point: the count is reconstructed from
+         *     the immutable member.status transition facts (audit_log) at the
+         *     cutoff; pct is share-of-window-peak geometry ONLY.
+         */
+        MembersTrendPointOut: {
+            /** Active */
+            active: number;
+            /** Month */
+            month: string;
+            /** Pct */
+            pct: number;
         };
         /**
          * Module
@@ -3706,6 +3755,22 @@ export interface components {
             code: string;
             /** Email */
             email: string;
+        };
+        /**
+         * Par30TrendPointOut
+         * @description One PAR-30 trend point (#31 batch 8, ledger (k)): the ratio is
+         *     RECOMPUTED from posting-history truth at the month-end cutoff
+         *     (reconstruct_month at the code-owned PAR threshold — never the
+         *     mutable snapshot columns, §1.5) and serialized verbatim
+         *     (str(Decimal)); pct is share-of-window-peak geometry ONLY.
+         */
+        Par30TrendPointOut: {
+            /** Month */
+            month: string;
+            /** Pct */
+            pct: number;
+            /** Ratio Pct */
+            ratio_pct: string;
         };
         /**
          * PenaltyChargedOn

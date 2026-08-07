@@ -62,6 +62,7 @@ const MEMBER = {
   status: "active" as const,
   version: 3,
   branch_id: null,
+  dividend_payout: null,
 };
 
 /** Distinct counts so each row's VERBATIM value is unambiguous. */

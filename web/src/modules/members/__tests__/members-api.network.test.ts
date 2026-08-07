@@ -62,6 +62,7 @@ const memberOut = {
   // #31 (j).2: nullable-NOT-optional branch attribution — the key is
   // always on the wire; null is the honest unassigned state.
   branch_id: null,
+  dividend_payout: null,
 };
 
 // The DETAIL read (#31 batch 3): the same GET also carries the four

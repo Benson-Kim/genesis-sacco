@@ -48,6 +48,33 @@ class MemberStatus(enum.StrEnum):
     EXITED = "exited"
 
 
+class DividendPayout(enum.StrEnum):
+    """Member dividend payout PREFERENCE vocabulary (#31 ledger (c)).
+
+    CODE-OWNED, server-side — never caller-invented. Provenance: the
+    prototype's membership step declares the FIELD ("Dividend payout",
+    genesis_prestige_app.html vAdd()) but enumerates no option list
+    anywhere, so the vocabulary is assembled from the prototype's own
+    money-movement vocabulary: its two cash channels (M-Pesa / Bank —
+    the tx-channel and disbursement-channel selects, mirrored by the
+    as-built ledger Channel cash set) plus the two retention
+    destinations the prototype/as-built domain already carries
+    (deposit-account credit — the as-built P13.11 distribution leg;
+    share top-up — the prototype's SH- affordance).
+
+    REGULATORY/ACCOUNTING FENCE (batch 8): this is a stored PREFERENCE
+    ONLY. The P13.11 dividends distribution engine does NOT consume it
+    — routing money by preference is a separate, separately-authorized
+    batch. tests/test_members_domain.py pins the engine's
+    non-consumption falsifiably.
+    """
+
+    DEPOSIT_ACCOUNT = "deposit_account"
+    SHARE_CAPITAL = "share_capital"
+    MPESA = "mpesa"
+    BANK = "bank"
+
+
 class InvalidStatusTransitionError(Exception):
     """Raised when a member status transition is not allowed (gate 1.4)."""
 
