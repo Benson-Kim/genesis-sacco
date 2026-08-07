@@ -23,10 +23,10 @@
  * - Every result figure (period, rate, counts, total interest) is the
  *   SERVER's, rendered verbatim (blocker (a)).
  */
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { announce } from "@/modules/layout/announcer";
 import { isConflict } from "@/lib/errors";
@@ -34,15 +34,6 @@ import { fmtKes } from "@/lib/format";
 import { runDepositInterest } from "../api";
 import type { InterestRun } from "../schemas";
 import styles from "./Transactions.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 const CONFIRM_PHRASE = "accrue interest";
 

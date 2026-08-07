@@ -33,10 +33,10 @@
  * - Cash channels ONLY: the P11 contract rejects accrual/internal on
  *   teller writes (require_cash_channel) — the UI never offers them.
  */
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import { fromApiError, fromZodError, mergeFieldErrors, type FieldErrors } from "@/modules/forms/form-errors";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
@@ -59,15 +59,6 @@ import {
   type MoneyEntryInput,
 } from "../schemas";
 import styles from "./Transactions.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 /** Operator-facing wording per write kind (server semantics, P11). */
 const KIND_EFFECT: Record<MoneyEntryInput["kind"], string> = {
