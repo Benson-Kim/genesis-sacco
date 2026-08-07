@@ -412,9 +412,7 @@ async def list_share_transfers(
 
 
 @router.get("/share-transfers/{transfer_id}")
-async def get_share_transfer(
-    transfer_id: uuid.UUID, ctx: MembersViewCtx
-) -> ShareTransferRecordOut:
+async def get_share_transfer(transfer_id: uuid.UUID, ctx: MembersViewCtx) -> ShareTransferRecordOut:
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         record = await dividends_service.get_share_transfer(session, ctx.tenant_id, transfer_id)

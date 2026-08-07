@@ -1934,9 +1934,7 @@ async def approve_share_transfer(
         subject="a share transfer",
         subject_plural="share transfers",
     )
-    ctx = await _lock_transfer_chain(
-        session, tenant_id, record.from_member_id, record.to_member_id
-    )
+    ctx = await _lock_transfer_chain(session, tenant_id, record.from_member_id, record.to_member_id)
     # Component-by-component re-verification against the persisted
     # snapshot (never "the current state"): any transferor-balance
     # drift since the request — a deposit, a dividend, another transfer
