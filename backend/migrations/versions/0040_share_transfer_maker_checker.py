@@ -1,7 +1,7 @@
 """share-transfer maker-checker workflow + history register (issue #31 ledger (l)/(m))
 
 Revision ID: 0040
-Revises: 0038
+Revises: 0039
 Create Date: 2026-08-07
 
 Expand-only revision backing the issue-#31 batch-10 HUMAN-AUTHORIZED
@@ -11,7 +11,9 @@ down_revision '0038' in MR !83's description at branch time (v1.2 rule
 14; head 0038 + the single in-flight 0039 claim (!79) verified —
 declared plan: when !79 merges, this revision RE-CHAINS its
 down_revision to '0039' on the !83 branch, the !26/0017 re-chain
-precedent; never renumber another track's claim).
+precedent; never renumber another track's claim). RE-CHAINED to
+'0039' as declared: the batch-8 merge landed 0039_member_dividend_payout
+on main and this branch plain-merged it.
 
   * share_transfers becomes the TWO-PHASE maker-checker workflow row
     (the issue-#24/0031 repayment-adjustments pattern — the strongest
@@ -81,7 +83,7 @@ restoring the 0020 single-phase shape.
 from alembic import op
 
 revision = "0040"
-down_revision = "0038"
+down_revision = "0039"
 branch_labels = None
 depends_on = None
 

@@ -33,6 +33,17 @@ export const memberSchema = z.object({
      * without that grant the drawer renders the short id only and
      * fetches nothing (the created_by least-disclosure precedent). */
     branch_id: z.string().nullable(),
+    /** Dividend payout PREFERENCE (#31 ledger (c)) — the authorized
+     * batch-8 expand. NULLABLE, NOT optional: every member read
+     * carries the key, so a response missing it is a contract
+     * violation and is REJECTED (network-tested). NULL renders the
+     * honest "not set" affordance — a preference is never invented.
+     * The value is the server's CODE-OWNED vocabulary token rendered
+     * VERBATIM (the backend deliberately types it as a bounded string
+     * and never echoes the vocabulary — least disclosure); the client
+     * pins no duplicate enum. Stored preference ONLY: the P13.11
+     * distribution engine does not consume it (batch-8 fence). */
+    dividend_payout: z.string().nullable(),
 });
 
 export type Member = z.infer<typeof memberSchema>;

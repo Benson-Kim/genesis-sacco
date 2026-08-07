@@ -185,6 +185,7 @@ const BORROWER = {
   status: "active" as const,
   version: 1,
   branch_id: null,
+  dividend_payout: null,
 };
 
 const GUARANTOR = {
@@ -197,6 +198,7 @@ const GUARANTOR = {
   status: "active" as const,
   version: 1,
   branch_id: null,
+  dividend_payout: null,
 };
 
 const FULL_PERMS = {

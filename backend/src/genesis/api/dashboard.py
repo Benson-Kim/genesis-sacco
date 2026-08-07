@@ -127,6 +127,37 @@ class DashboardChartsOut(BaseModel):
     portfolio: PortfolioChartOut | None = None
 
 
+class Par30TrendPointOut(BaseModel):
+    """One PAR-30 trend point (#31 batch 8, ledger (k)): the ratio is
+    RECOMPUTED from posting-history truth at the month-end cutoff
+    (reconstruct_month at the code-owned PAR threshold — never the
+    mutable snapshot columns, §1.5) and serialized verbatim
+    (str(Decimal)); pct is share-of-window-peak geometry ONLY."""
+
+    month: str
+    ratio_pct: str
+    pct: int
+
+
+class MembersTrendPointOut(BaseModel):
+    """One active-members trend point: the count is reconstructed from
+    the immutable member.status transition facts (audit_log) at the
+    cutoff; pct is share-of-window-peak geometry ONLY."""
+
+    month: str
+    active: int
+    pct: int
+
+
+class KpiTrendsOut(BaseModel):
+    """Per-KPI trend series (#31 batch 8, ledger (k)); each series
+    follows its KPI card's parent grant (par30 <- loan_book:view,
+    members <- members:view) and is omitted when ungranted."""
+
+    par30: list[Par30TrendPointOut] | None = None
+    members: list[MembersTrendPointOut] | None = None
+
+
 class DashboardSummaryOut(BaseModel):
     """Composite response; ungranted slices are omitted entirely."""
 
@@ -138,6 +169,7 @@ class DashboardSummaryOut(BaseModel):
     guarantors: GuarantorAggregatesOut | None = None
     loan_book: PortfolioSummaryOut | None = None
     charts: DashboardChartsOut | None = None
+    kpi_trends: KpiTrendsOut | None = None
 
 
 def _to_out(summary: dashboard_service.DashboardSummary) -> DashboardSummaryOut:
@@ -202,6 +234,30 @@ def _to_out(summary: dashboard_service.DashboardSummary) -> DashboardSummaryOut:
             portfolio_summary_out(summary.loan_book) if summary.loan_book is not None else None
         ),
         charts=_charts_out(summary.charts) if summary.charts is not None else None,
+        kpi_trends=(
+            _kpi_trends_out(summary.kpi_trends) if summary.kpi_trends is not None else None
+        ),
+    )
+
+
+def _kpi_trends_out(trends: dashboard_service.KpiTrends) -> KpiTrendsOut:
+    return KpiTrendsOut(
+        par30=(
+            [
+                Par30TrendPointOut(month=p.month, ratio_pct=str(p.ratio_pct), pct=p.pct)
+                for p in trends.par30
+            ]
+            if trends.par30 is not None
+            else None
+        ),
+        members=(
+            [
+                MembersTrendPointOut(month=p.month, active=p.active, pct=p.pct)
+                for p in trends.members
+            ]
+            if trends.members is not None
+            else None
+        ),
     )
 
 

@@ -122,6 +122,7 @@ const memberRow = {
   status: "active" as const,
   version: 6,
   branch_id: null,
+  dividend_payout: null,
 };
 
 /** Every grant this console can use (register + rename + both panels). */

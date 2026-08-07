@@ -113,6 +113,7 @@ const MEMBER = {
   status: "active" as const,
   version: 3,
   branch_id: null,
+  dividend_payout: null,
 };
 
 const ACCOUNT_TXN: AccountTxn = {
@@ -816,4 +817,57 @@ test("W56-3 inheritance (post-!62 merge): a stray overlay click never discards a
   await screen.findByRole("dialog", { name: "Transaction detail" });
   await user.click(container.querySelector('[role="presentation"]') as HTMLElement);
   expect(screen.queryByRole("dialog", { name: "Transaction detail" })).toBeNull();
+});
+
+test("amount PASTE/IME hygiene (#31 ledger (h5)): a clipboard-grouped figure and IME-composed full-width digits are REJECTED inline as decimal-string violations — ZERO wire writes", async () => {
+  const user = userEvent.setup();
+  mountScreen();
+
+  await user.click(await screen.findByRole("button", { name: "+ Post transaction" }));
+  const drawer = await screen.findByRole("dialog", { name: "Post transaction" });
+  await user.selectOptions(await within(drawer).findByLabelText("Member"), MEMBER_ID);
+  await within(drawer).findByText(/Member verified:/);
+  await user.selectOptions(within(drawer).getByLabelText("Channel"), "mpesa");
+  const amount = within(drawer).getByLabelText("Amount (KES)");
+
+  // PASTE leg: "5,000.00" — the spreadsheet-grouped clipboard shape.
+  // The value lands VERBATIM in the input (no silent normalisation —
+  // stripping the comma would guess at the operator's intent) and the
+  // decimal-string schema refuses it before anything reaches the wire.
+  await user.click(amount);
+  await user.paste("5,000.00");
+  expect(amount).toHaveValue("5,000.00");
+  await user.click(within(drawer).getByRole("button", { name: "Post to ledger…" }));
+  expect(
+    await within(drawer).findByText(
+      "Enter a positive amount (up to 2 decimal places, no leading zeros).",
+    ),
+  ).toBeInTheDocument();
+  // No typed-confirmation dialog armed, nothing posted.
+  expect(screen.queryByRole("dialog", { name: "Post to ledger" })).toBeNull();
+  expect(mocked.postMoneyWrite).not.toHaveBeenCalled();
+
+  // IME leg: full-width composed digits "５０００" (an East-Asian IME
+  // committing FULLWIDTH DIGIT code points, U+FF15 etc.) are NOT the
+  // ASCII decimal grammar — refused the same way, zero writes.
+  await user.clear(amount);
+  await user.click(amount);
+  await user.paste("\uFF15\uFF10\uFF10\uFF10");
+  expect(amount).toHaveValue("５０００");
+  await user.click(within(drawer).getByRole("button", { name: "Post to ledger…" }));
+  expect(
+    await within(drawer).findByText(
+      "Enter a positive amount (up to 2 decimal places, no leading zeros).",
+    ),
+  ).toBeInTheDocument();
+  expect(mocked.postMoneyWrite).not.toHaveBeenCalled();
+
+  // The honest ASCII entry still posts — hygiene is exactness, not
+  // lockout (falsifiable: loosen DECIMAL_RE to accept the comma or
+  // full-width digits and the two rejection legs above fail).
+  await user.clear(amount);
+  await user.type(amount, "5000.10");
+  await user.click(await confirmEntry(user, drawer));
+  await within(drawer).findByText(/posted · ref/);
+  expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(1);
 });

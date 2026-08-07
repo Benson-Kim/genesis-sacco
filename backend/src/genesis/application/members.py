@@ -28,13 +28,14 @@ from genesis.application.outbox import enqueue_event
 from genesis.domain.lending import LoanStatus
 from genesis.domain.members import (
     MEMBER_NO_PREFIX,
+    DividendPayout,
     InvalidStatusTransitionError,
     MemberStatus,
     MemberType,
     format_member_no,
     transition,
 )
-from genesis.errors import ConflictError, InvalidInputError, NotFoundError
+from genesis.errors import ConflictError, InvalidInputError, NotFoundError, UnprocessableError
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,10 @@ class MemberRecord:
     #: calls — never invented here. NULL is the honest "unassigned"
     #: state every member starts in (expand-only read fact).
     branch_id: uuid.UUID | None
+    #: Stored dividend payout PREFERENCE (#31 ledger (c)); NULL is the
+    #: honest "not chosen" state. Preference ONLY — the P13.11
+    #: distribution engine does not consume it (batch-8 fence).
+    dividend_payout: DividendPayout | None
 
 
 @dataclass(frozen=True)
@@ -157,7 +162,7 @@ MEMBER_AGGREGATES_SQL = (
 #: so zero-activity rows serialize '0.00', never bare '0'.
 MEMBER_LIST_AGGREGATES_SQL = (
     "SELECT m.id, m.member_no, m.type, m.name, m.phone, m.email, m.status, m.version, "
-    "m.branch_id, "
+    "m.branch_id, m.dividend_payout, "
     "CAST(COALESCE(d.balance, 0) AS numeric(18,2)), "
     "CAST(COALESCE(s.balance, 0) AS numeric(18,2)), "
     "CAST(COALESCE(l.total, 0) AS numeric(18,2)), "
@@ -220,7 +225,27 @@ def _row_to_record(row: Any) -> MemberRecord:
         status=MemberStatus(str(row[6])),
         version=int(row[7]),
         branch_id=uuid.UUID(str(row[8])) if row[8] is not None else None,
+        dividend_payout=DividendPayout(str(row[9])) if row[9] is not None else None,
     )
+
+
+def parse_dividend_payout(raw: str | None) -> DividendPayout | None:
+    """Resolve a caller-supplied preference against the CODE-OWNED
+    vocabulary (#31 ledger (c)).
+
+    An unknown value surfaces as 422 via UnprocessableError — the
+    client receives the sanitized category ONLY: the vocabulary is
+    never echoed (least disclosure, gate 1.6 — the P13.12 precedent;
+    this is exactly why the API body types the field as a bounded
+    string, not the enum: FastAPI's structural 422 would enumerate the
+    permitted values). None stays None — the honest "not chosen".
+    """
+    if raw is None:
+        return None
+    try:
+        return DividendPayout(raw)
+    except ValueError as exc:
+        raise UnprocessableError("unknown dividend payout preference") from exc
 
 
 async def _next_member_no(session: AsyncSession, tenant_id: uuid.UUID) -> str:
@@ -286,23 +311,28 @@ async def create_member(
     name: str,
     phone: str | None = None,
     email: str | None = None,
+    dividend_payout: str | None = None,
 ) -> MemberRecord:
     """Create a member with share + deposit accounts in one transaction.
 
     Numbering is serialised by an advisory lock; the UNIQUE constraint is
     the final safety net and surfaces as 409 so the client retries with a
     fresh request (gate 1.4). Welcome notification is outbox-only
-    (gate 1.2).
+    (gate 1.2). The dividend payout PREFERENCE (#31 ledger (c))
+    resolves against the code-owned vocabulary — an unknown value is a
+    422 BEFORE any row is written; omitted stays NULL, the honest
+    "not chosen" state (never a backfilled default).
     """
+    payout = parse_dividend_payout(dividend_payout)
     member_no = await _next_member_no(session, tenant_id)
     member_id = uuid.uuid4()
     try:
         await session.execute(
             text(
                 "INSERT INTO members "
-                "(id, tenant_id, member_no, type, name, phone, email) "
+                "(id, tenant_id, member_no, type, name, phone, email, dividend_payout) "
                 "VALUES (CAST(:id AS uuid), CAST(:tid AS uuid), :no, :type, "
-                ":name, :phone, :email)"
+                ":name, :phone, :email, :payout)"
             ),
             {
                 "id": str(member_id),
@@ -312,6 +342,7 @@ async def create_member(
                 "name": name,
                 "phone": phone,
                 "email": email,
+                "payout": payout.value if payout is not None else None,
             },
         )
     except IntegrityError as exc:
@@ -341,6 +372,10 @@ async def create_member(
             "type": member_type.value,
             "name": name,
             "status": MemberStatus.ACTIVE.value,
+            # The stored preference is part of the mutation's audit
+            # truth (#31 ledger (c)); None records the honest
+            # "not chosen" state.
+            "dividend_payout": payout.value if payout is not None else None,
         },
     )
     await enqueue_event(
@@ -361,6 +396,7 @@ async def create_member(
         # Every member starts unassigned; only the batch-4 assignment
         # route writes the 0016 column (attribution never invented).
         branch_id=None,
+        dividend_payout=payout,
     )
 
 
@@ -372,7 +408,8 @@ async def get_member(
     row = (
         await session.execute(
             text(
-                "SELECT id, member_no, type, name, phone, email, status, version, branch_id "
+                "SELECT id, member_no, type, name, phone, email, status, version, "
+                "branch_id, dividend_payout "
                 "FROM members WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
             ),
             {"id": str(member_id), "tid": str(tenant_id)},
@@ -438,7 +475,7 @@ async def list_members(
         await session.execute(
             text(
                 "SELECT id, member_no, type, name, phone, email, status, version, "  # noqa: S608
-                "branch_id "
+                "branch_id, dividend_payout "
                 f"FROM members {where}"
                 "ORDER BY member_no LIMIT :limit"
             ),
@@ -490,10 +527,12 @@ async def list_members_with_aggregates(
         MemberWithAggregates(
             record=_row_to_record(row),
             aggregates=MemberAggregates(
-                deposits_total=Decimal(str(row[9])),
-                shares_total=Decimal(str(row[10])),
-                loans_outstanding=Decimal(str(row[11])),
-                guarantees_pledged=Decimal(str(row[12])),
+                # Aggregates start after the TEN flat columns (eight
+                # batch-3 + branch_id + dividend_payout).
+                deposits_total=Decimal(str(row[10])),
+                shares_total=Decimal(str(row[11])),
+                loans_outstanding=Decimal(str(row[12])),
+                guarantees_pledged=Decimal(str(row[13])),
             ),
         )
         for row in page_rows
@@ -512,16 +551,22 @@ async def update_member(
     name: str | None = None,
     phone: str | None = None,
     email: str | None = None,
+    dividend_payout: str | None = None,
 ) -> MemberRecord:
     """Optimistic-locked edit; a stale version surfaces as 409 (gate 1.4).
 
     Omitted fields keep their current values; clearing a field is a
     deliberate follow-up feature, not an accidental null overwrite.
+    The dividend payout PREFERENCE (#31 ledger (c)) updates ONLY
+    through this versioned optimistic-lock path — an unknown value is
+    a 422 BEFORE the compare-and-swap; a stale version is a 409.
     """
+    payout = parse_dividend_payout(dividend_payout)
     current = await get_member(session, tenant_id, member_id)
     new_name = name if name is not None else current.name
     new_phone = phone if phone is not None else current.phone
     new_email = email if email is not None else current.email
+    new_payout = payout if payout is not None else current.dividend_payout
     result = cast(
         CursorResult[Any],
         await session.execute(
@@ -529,6 +574,7 @@ async def update_member(
                 # Explicit tenant predicate on the write, on top of RLS
                 # (defence in depth, gate 1.6 v1.1; issue #17).
                 "UPDATE members SET name = :name, phone = :phone, email = :email, "
+                "dividend_payout = :payout, "
                 "version = version + 1, updated_at = now() "
                 "WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) "
                 "AND version = :ver"
@@ -537,6 +583,7 @@ async def update_member(
                 "name": new_name,
                 "phone": new_phone,
                 "email": new_email,
+                "payout": new_payout.value if new_payout is not None else None,
                 "id": str(member_id),
                 "tid": str(tenant_id),
                 "ver": version,
@@ -555,12 +602,16 @@ async def update_member(
             "name": current.name,
             "phone": current.phone,
             "email": current.email,
+            "dividend_payout": (
+                current.dividend_payout.value if current.dividend_payout is not None else None
+            ),
             "version": current.version,
         },
         after={
             "name": new_name,
             "phone": new_phone,
             "email": new_email,
+            "dividend_payout": new_payout.value if new_payout is not None else None,
             "version": current.version + 1,
         },
     )
@@ -576,6 +627,7 @@ async def update_member(
         # The profile edit never touches branch attribution (the
         # batch-4 assignment route is the sole writer of the column).
         branch_id=current.branch_id,
+        dividend_payout=new_payout,
     )
 
 
