@@ -26,7 +26,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, Modal } from "@genesis/design-system";
+import { Banner, Button, Kv, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import { fromApiError, mergeFieldErrors, type FieldErrors } from "@/modules/forms/form-errors";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
@@ -56,7 +56,6 @@ import {
 } from "../schemas";
 import { BranchAssignPanel, type AssignAdapter } from "./BranchAssignPanel";
 import { BranchRosterPanel, type RosterAdapter } from "./BranchRosterPanel";
-import { Kv } from "./Kv";
 import styles from "./Branches.module.css";
 
 /** USER roster adapter (#31 (j).1 — access_control:view, the batch-4

@@ -29,25 +29,16 @@
  *   epoch rotates the key for the NEXT explicit attempt only; nothing
  *   is retried or replayed automatically.
  */
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, Modal } from "@genesis/design-system";
+import { Banner, Button, Kv, Modal } from "@genesis/design-system";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { announce } from "@/modules/layout/announcer";
 import { isConflict } from "@/lib/errors";
 import { runExportQueue } from "../api";
 import type { ExportCycle } from "../schemas";
 import styles from "./Reports.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 export function RunQueueDialog({ onClose }: Readonly<{ onClose: () => void }>) {
   const [result, setResult] = useState<ExportCycle | null>(null);

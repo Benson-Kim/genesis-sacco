@@ -18,9 +18,8 @@
  * - Every rendered string (refs, member names) is attacker-influenced
  *   data; it renders exclusively through React text interpolation.
  */
-import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Banner, Modal } from "@genesis/design-system";
+import { Banner, Kv, Modal } from "@genesis/design-system";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
@@ -31,15 +30,6 @@ import { fetchTransactionLegs } from "../api";
 import { CHANNEL_LABELS, SIDE_LABELS, type Transaction } from "../schemas";
 import { directionPill, reversalPill, txnTypePill } from "./pills";
 import styles from "./Transactions.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 export function TransactionDetailDrawer({
   txn,

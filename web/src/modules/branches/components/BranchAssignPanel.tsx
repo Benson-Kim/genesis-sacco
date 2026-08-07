@@ -38,7 +38,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button } from "@genesis/design-system";
+import { Banner, Button, Kv } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
@@ -48,7 +48,6 @@ import { STALE_TIME } from "@/lib/query";
 import { useKeysetList } from "@/modules/table/useKeysetList";
 import type { KeysetPage } from "@/modules/table/schemas";
 import type { BranchAssignment } from "../schemas";
-import { Kv } from "./Kv";
 import styles from "./Branches.module.css";
 
 /** Picker option mapped from the entity module's canonical record. */

@@ -34,10 +34,10 @@
  * - Every rendered string is attacker-influenced data; it renders
  *   exclusively through React text interpolation (gate-tested).
  */
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, Card, ConfirmDangerModal } from "@genesis/design-system";
+import { Banner, Button, Card, ConfirmDangerModal, Kv } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import {
   fromApiError,
@@ -64,15 +64,6 @@ import {
 import { TransferDetailDrawer } from "./TransferDetailDrawer";
 import { transferStatusPill } from "./pills";
 import styles from "./Shares.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 export function ShareTransfersScreen() {
   const queryClient = useQueryClient();

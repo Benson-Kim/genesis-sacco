@@ -25,10 +25,10 @@
  *   (a)): the complete original allocation being undone and the 0031
  *   approval snapshot. The affordance is then SPENT.
  */
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import {
   fromApiError,
@@ -49,15 +49,6 @@ import {
 } from "../schemas";
 import { adjustmentStatusPill } from "./pills";
 import styles from "./Corrections.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 export function AdjustmentRequestDrawer({
   onReview,

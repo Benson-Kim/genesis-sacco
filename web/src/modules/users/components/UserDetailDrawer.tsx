@@ -9,10 +9,10 @@
  * audited role assignment and OTP lifecycle actions that surface
  * side-effect COUNTS only — zero OTP disclosure anywhere (gate 1.6).
  */
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, Field, Modal } from "@genesis/design-system";
+import { Banner, Button, Field, Kv, Modal } from "@genesis/design-system";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { usePermissions } from "@/modules/authz/usePermissions";
@@ -32,15 +32,6 @@ import {
 import type { OtpReenrolResult, Role, User, UserStatus } from "../schemas";
 import { statusPill } from "./StatusPill";
 import styles from "./Users.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 type ConfirmKind = "status" | "role" | "otp-invalidate" | "otp-reenrol";
 
@@ -124,12 +115,12 @@ export function UserDetailDrawer({
             </div>
           </div>
           <div className={styles.detailGrid}>
-            <Kv label="Role">{user.role_name}</Kv>
-            <Kv label="Branch">{user.branch ?? "—"}</Kv>
-            <Kv label="Phone">{user.phone ?? "—"}</Kv>
-            <Kv label="Status">{statusPill(user.status)}</Kv>
-            <Kv label="Last active">{fmtDateTime(user.last_active_at)}</Kv>
-            <Kv label="Record version">{user.version}</Kv>
+            <Kv variant="quiet" label="Role">{user.role_name}</Kv>
+            <Kv variant="quiet" label="Branch">{user.branch ?? "—"}</Kv>
+            <Kv variant="quiet" label="Phone">{user.phone ?? "—"}</Kv>
+            <Kv variant="quiet" label="Status">{statusPill(user.status)}</Kv>
+            <Kv variant="quiet" label="Last active">{fmtDateTime(user.last_active_at)}</Kv>
+            <Kv variant="quiet" label="Record version">{user.version}</Kv>
           </div>
           {own && (
             <Banner>
@@ -414,9 +405,9 @@ function ConfirmActionDialog({
         <>
           <Banner variant="ok">Done.</Banner>
           <div className={styles.detailGrid}>
-            <Kv label="Voided OTP challenges">{otpResult.voided_otp_challenges}</Kv>
+            <Kv variant="quiet" label="Voided OTP challenges">{otpResult.voided_otp_challenges}</Kv>
             {"revoked_refresh_tokens" in otpResult && (
-              <Kv label="Revoked refresh tokens">{otpResult.revoked_refresh_tokens}</Kv>
+              <Kv variant="quiet" label="Revoked refresh tokens">{otpResult.revoked_refresh_tokens}</Kv>
             )}
           </div>
           <Button className={styles.wide} onClick={onClose}>
@@ -433,9 +424,9 @@ function ConfirmActionDialog({
                   : "Activating restores sign-in for this user."}
               </Banner>
               <div className={styles.detailGrid}>
-                <Kv label="User">{user.full_name}</Kv>
-                <Kv label="Current status">{user.status}</Kv>
-                <Kv label="New status">{suspendTarget}</Kv>
+                <Kv variant="quiet" label="User">{user.full_name}</Kv>
+                <Kv variant="quiet" label="Current status">{user.status}</Kv>
+                <Kv variant="quiet" label="New status">{suspendTarget}</Kv>
               </div>
             </>
           )}
@@ -446,8 +437,8 @@ function ConfirmActionDialog({
                 Admin cannot be re-roled away.
               </Banner>
               <div className={styles.detailGrid}>
-                <Kv label="User">{user.full_name}</Kv>
-                <Kv label="Current role">{user.role_name}</Kv>
+                <Kv variant="quiet" label="User">{user.full_name}</Kv>
+                <Kv variant="quiet" label="Current role">{user.role_name}</Kv>
               </div>
               <Field label="New role" htmlFor="confirm-role">
                 <select
@@ -472,7 +463,7 @@ function ConfirmActionDialog({
                 displayed — the user simply requests a fresh OTP at sign-in.
               </Banner>
               <div className={styles.detailGrid}>
-                <Kv label="User">{user.full_name}</Kv>
+                <Kv variant="quiet" label="User">{user.full_name}</Kv>
               </div>
             </>
           )}
@@ -483,7 +474,7 @@ function ConfirmActionDialog({
                 fresh OTP sign-in. Nothing secret is shown or sent from this screen.
               </Banner>
               <div className={styles.detailGrid}>
-                <Kv label="User">{user.full_name}</Kv>
+                <Kv variant="quiet" label="User">{user.full_name}</Kv>
               </div>
             </>
           )}

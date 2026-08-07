@@ -36,7 +36,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import { fromApiError, mergeFieldErrors, type FieldErrors } from "@/modules/forms/form-errors";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
@@ -52,7 +52,6 @@ import {
   type PeriodRecord,
 } from "../schemas";
 import { periodStatusPill } from "./pills";
-import { Kv } from "./Kv";
 import styles from "./Periods.module.css";
 
 /** The typed-confirmation phrase: the month being frozen, "YYYY-MM". */

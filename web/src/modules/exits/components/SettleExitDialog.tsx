@@ -36,10 +36,10 @@
  *   money parameter exists. Every result figure (txn ref, settled
  *   record) renders VERBATIM from the response (blocker (a)).
  */
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import { MakerCheckerPanel } from "@/modules/authz/components/MakerCheckerPanel";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
@@ -60,15 +60,6 @@ import { fetchExit, postExitSettlement } from "../api";
 import { EXIT_MAKER_UNKNOWN, exitMakerOf } from "../makerRegistry";
 import type { SettlementResult } from "../schemas";
 import styles from "./Exits.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 export function SettleExitDialog({
   exitId,

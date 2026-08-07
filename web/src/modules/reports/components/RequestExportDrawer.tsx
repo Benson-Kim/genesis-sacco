@@ -31,10 +31,10 @@
  *   NOTHING and falls back to a plain UUID field (the server
  *   authorizes the export itself on reports:view alone; gate 1.6).
  */
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, Modal } from "@genesis/design-system";
+import { Banner, Button, Kv, Modal } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
 import { fromApiError, mergeFieldErrors, type FieldErrors } from "@/modules/forms/form-errors";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
@@ -62,15 +62,6 @@ import {
   type ReportName,
 } from "../schemas";
 import styles from "./Reports.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 /**
  * Member picker — a separate component so its keyset hook mounts ONLY

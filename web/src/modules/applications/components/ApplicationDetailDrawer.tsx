@@ -19,10 +19,10 @@
  *   registry records them so the committee screen's MakerCheckerPanel
  *   structurally withholds their own vote affordances.
  */
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, ConfirmDangerModal, Modal } from "@genesis/design-system";
+import { Banner, Button, ConfirmDangerModal, Kv, Modal } from "@genesis/design-system";
 import { ConflictBanner } from "@/modules/layout/ConflictBanner";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { announce } from "@/modules/layout/announcer";
@@ -43,15 +43,6 @@ import {
 } from "../schemas";
 import { coverPill, stagePill } from "./pills";
 import styles from "./Applications.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 /** The linear workflow (prototype indicator); rejected renders as a banner. */
 const WORKFLOW = APPLICATION_STAGES.filter((stage) => stage !== "rejected");

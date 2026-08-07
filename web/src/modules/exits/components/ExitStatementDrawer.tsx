@@ -22,9 +22,8 @@
  *   `member_exit_statement` (P13 blocker (k)), so no filename is ever
  *   derived from a server string (the !63 F-R1 class cannot arise).
  */
-import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Modal } from "@genesis/design-system";
+import { Kv, Modal } from "@genesis/design-system";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { fmtDateTime, fmtKes } from "@/lib/format";
 import { STALE_TIME } from "@/lib/query";
@@ -32,15 +31,6 @@ import { fetchExitStatement } from "../api";
 import { EXIT_STATUS_LABELS } from "../schemas";
 import { exitStatusPill } from "./pills";
 import styles from "./Exits.module.css";
-
-function Kv({ label, children }: Readonly<{ label: string; children: ReactNode }>) {
-  return (
-    <div className={styles.kvRow}>
-      <span className={styles.kvKey}>{label}</span>
-      <span className={styles.kvVal}>{children}</span>
-    </div>
-  );
-}
 
 export function ExitStatementDrawer({
   exitId,
