@@ -896,3 +896,147 @@ test("amount PASTE/IME hygiene (#31 ledger (h5)): a clipboard-grouped figure and
   await within(drawer).findByText(/posted · ref/);
   expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(1);
 });
+
+
+test("#35 item 13 date presets compute EXPLICIT from/to params client-side — the server never sees a preset token; All clears the keys", async () => {
+  // Pin ONLY the clock (Date), keep real timers for react-query.
+  jest.useFakeTimers({
+    now: new Date(2026, 7, 8, 12, 0, 0), // local 2026-08-08
+    doNotFake: [
+      "setTimeout",
+      "setInterval",
+      "clearTimeout",
+      "clearInterval",
+      "queueMicrotask",
+      "setImmediate",
+      "clearImmediate",
+      "performance",
+      "hrtime",
+      "nextTick",
+    ],
+  });
+  try {
+    const user = userEvent.setup();
+    mountScreen();
+    await screen.findByText("KES 8,000.10");
+
+    function lastFilters(): { date_from: string; date_to: string } {
+      const call = mocked.fetchTransactionsPage.mock.calls.at(-1);
+      return call?.[0] as { date_from: string; date_to: string };
+    }
+
+    // Hand-computed oracles for a 2026-08-08 clock:
+    //   Today        => [2026-08-08, 2026-08-08]
+    //   Last 7 days  => [2026-08-02, 2026-08-08]  (8 - 6 = 2)
+    //   Last 30 days => [2026-07-10, 2026-08-08]  (Aug 8 - 29d = Jul 10)
+    await user.click(screen.getByRole("button", { name: "Today" }));
+    await waitFor(() =>
+      expect(lastFilters()).toMatchObject({ date_from: "2026-08-08", date_to: "2026-08-08" }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Last 7 days" }));
+    await waitFor(() =>
+      expect(lastFilters()).toMatchObject({ date_from: "2026-08-02", date_to: "2026-08-08" }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Last 30 days" }));
+    await waitFor(() =>
+      expect(lastFilters()).toMatchObject({ date_from: "2026-07-10", date_to: "2026-08-08" }),
+    );
+
+    // The computed window is VISIBLE in the manual inputs (the operator
+    // can read exactly what was sent — no hidden state).
+    expect(screen.getByLabelText("From date")).toHaveValue("2026-07-10");
+    expect(screen.getByLabelText("To date")).toHaveValue("2026-08-08");
+
+    // All clears the date keys — the default view sends no date filter.
+    // (Switching back to the default re-uses the CACHED mount query, so
+    // the wire contract is pinned by the mount call below, and the
+    // cleared state by the visible inputs + pressed state.)
+    await user.click(screen.getByRole("button", { name: "All", pressed: false }));
+    await waitFor(() => expect(screen.getByLabelText("From date")).toHaveValue(""));
+    expect(screen.getByLabelText("To date")).toHaveValue("");
+    const mountFilters = mocked.fetchTransactionsPage.mock.calls[0]?.[0] as {
+      date_from: string;
+      date_to: string;
+    };
+    expect(mountFilters).toMatchObject({ date_from: "", date_to: "" });
+
+    // NOTHING preset-shaped ever reached the wire: every call's date
+    // params are either empty or ISO dates (falsifiable: send the
+    // token and this fails).
+    for (const call of mocked.fetchTransactionsPage.mock.calls) {
+      const filters = call[0] as { date_from: string; date_to: string };
+      for (const value of [filters.date_from, filters.date_to]) {
+        expect(value === "" || /^\d{4}-\d{2}-\d{2}$/.test(value)).toBe(true);
+      }
+    }
+
+    // Custom range keeps the manual flow: editing + Apply moves the
+    // pressed state to Custom and applies the typed dates verbatim.
+    await user.click(screen.getByRole("button", { name: "Custom range" }));
+    const fromField = screen.getByLabelText("From date");
+    const toField = screen.getByLabelText("To date");
+    await user.clear(fromField);
+    await user.type(fromField, "2026-06-01");
+    await user.clear(toField);
+    await user.type(toField, "2026-06-30");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() =>
+      expect(lastFilters()).toMatchObject({ date_from: "2026-06-01", date_to: "2026-06-30" }),
+    );
+    expect(screen.getByRole("button", { name: "Custom range" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("#35 W1: stale Custom dates never leak into a LATER real fetch — after All, the next pagination fetch carries EMPTY date params", async () => {
+  const user = userEvent.setup();
+  // Every FIRST page serves a cursor so "Load more" can force a REAL
+  // wire fetch after the cached default page is re-selected; the
+  // follow-on page carries a distinct row (no duplicate row keys).
+  mocked.fetchTransactionsPage.mockImplementation((_filters, cursor) =>
+    Promise.resolve(cursor === null ? page([debitTxn()], "w1-cursor-p2") : page([creditTxn()])),
+  );
+  mountScreen();
+  await screen.findByText("KES 8,000.10");
+
+  // Apply a Custom range through the manual drafts (the W1 scenario).
+  await user.type(screen.getByLabelText("From date"), "2026-06-01");
+  await user.type(screen.getByLabelText("To date"), "2026-06-30");
+  await user.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() =>
+    expect(mocked.fetchTransactionsPage).toHaveBeenCalledWith(
+      expect.objectContaining({ date_from: "2026-06-01", date_to: "2026-06-30" }),
+      null,
+    ),
+  );
+  expect(screen.getByRole("button", { name: "Custom range" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  // Back to All: react-query re-serves the CACHED default page — the
+  // cleared state is visible but no new wire fetch fires yet.
+  await user.click(screen.getByRole("button", { name: "All", pressed: false }));
+  await waitFor(() => expect(screen.getByLabelText("From date")).toHaveValue(""));
+  const callsBeforeRefetch = mocked.fetchTransactionsPage.mock.calls.length;
+
+  // Force a REAL wire fetch on the restored default key: paginate.
+  await user.click(screen.getByRole("button", { name: "Load more" }));
+  await waitFor(() =>
+    expect(mocked.fetchTransactionsPage.mock.calls.length).toBe(callsBeforeRefetch + 1),
+  );
+
+  // THE W1 ASSERTION: the later real fetch carries EMPTY date params —
+  // the stale Custom window survived nowhere in the query state
+  // (falsifiable: skip the date_from/date_to reset in the All branch
+  // of applyDatePreset and this fetch carries 2026-06-01/2026-06-30).
+  const laterCall = mocked.fetchTransactionsPage.mock.calls.at(-1);
+  expect(laterCall?.[0]).toMatchObject({ date_from: "", date_to: "" });
+  expect(laterCall?.[1]).toBe("w1-cursor-p2");
+});

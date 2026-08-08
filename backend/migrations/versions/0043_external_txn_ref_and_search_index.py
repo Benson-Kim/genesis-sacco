@@ -1,14 +1,14 @@
 """external transaction reference + ledger search prefix index (#35 items 6, 13)
 
 Revision ID: 0043
-Revises: 0041
+Revises: 0042
 Create Date: 2026-08-08
 
 Expand-only revision for the #35 remainder round (MR-declared per rule
-14; down_revision = '0041' — main's head at branch time; the in-flight
-!87 claim 0042 is another track's and is never renumbered here — when
-!87 merges first, THIS revision re-chains onto 0042 in its own MR, the
-0017/0041 precedent).
+14; authored with down_revision = '0041' — main's head at branch time;
+re-chained onto '0042' after the in-flight !87 claim
+(0042_phone_e164_backfill.py) merged to main — another track's number,
+never renumbered here; the 0017/0041 precedent).
 
 Item 6 — mandatory external transaction reference:
 
@@ -52,7 +52,7 @@ rows, which the downgrade never touches).
 from alembic import op
 
 revision = "0043"
-down_revision = "0041"
+down_revision = "0042"
 branch_labels = None
 depends_on = None
 

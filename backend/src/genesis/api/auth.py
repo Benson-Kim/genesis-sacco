@@ -59,8 +59,16 @@ async def request_otp(body: OtpRequestBody, request: Request) -> dict[str, str]:
     tenant_id = tenant_id_from_headers(request)
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, tenant_id) as session:
-        await auth_service.request_otp(session, tenant_id, body.email)
-    return {"status": "sent"}
+        code = await auth_service.request_otp(session, tenant_id, body.email)
+    payload = {"status": "sent"}
+    # DEV-ONLY (#35 item 11, REMOVE BEFORE STAGING): with SMS/email
+    # delivery unbuilt, testers read the OTP from this response. The
+    # dev_otp_display flag is FAIL-CLOSED (off by default); the code is
+    # never logged and never appears in any error path. The declared
+    # response contract (an open string map) is unchanged.
+    if code is not None and get_settings().dev_otp_display:
+        payload["dev_otp"] = code
+    return payload
 
 
 @router.post("/otp/verify", dependencies=[Depends(_rate_guard)])

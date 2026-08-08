@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
 import { Banner, Button, Field, Modal } from "@genesis/design-system";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
+import { KENYA_PHONE_MESSAGE, normalizeKenyaMsisdn } from "@/lib/phone";
 import { createUser, type CreateUserInput } from "../api";
 import type { Role, User } from "../schemas";
 import styles from "./Users.module.css";
@@ -33,7 +34,17 @@ export function UserCreateDrawer({
   const [phone, setPhone] = useState("");
   const [branch, setBranch] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  // #35 item 1 — blur-time Kenya-phone validation (courtesy mirror of
+  // the server's E.164 normalization rule). Shows on blur, clears on
+  // correction.
+  const [phoneBlurError, setPhoneBlurError] = useState<string | null>(null);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
+
+  function validatePhoneBlur(value: string) {
+    const trimmed = value.trim();
+    const ok = trimmed === "" || normalizeKenyaMsisdn(trimmed) !== null;
+    setPhoneBlurError(ok ? null : KENYA_PHONE_MESSAGE);
+  }
 
   const create = useMutation({
     mutationFn: (input: CreateUserInput) =>
@@ -57,6 +68,10 @@ export function UserCreateDrawer({
     };
     if (input.full_name === "" || input.email === "" || input.role_id === "") {
       setFormError("Full name, email and role are required.");
+      return;
+    }
+    if (input.phone != null && normalizeKenyaMsisdn(input.phone) === null) {
+      setPhoneBlurError(KENYA_PHONE_MESSAGE);
       return;
     }
     setFormError(null);
@@ -87,6 +102,7 @@ export function UserCreateDrawer({
             id="create-email"
             className={styles.input}
             type="email"
+            inputMode="email"
             maxLength={254}
             value={email}
             onChange={(event) => setEmail(event.target.value)}
@@ -111,11 +127,18 @@ export function UserCreateDrawer({
           <input
             id="create-phone"
             className={styles.input}
+            type="tel"
+            inputMode="tel"
             maxLength={32}
             value={phone}
-            onChange={(event) => setPhone(event.target.value)}
+            onChange={(event) => {
+              setPhone(event.target.value);
+              if (phoneBlurError !== null) validatePhoneBlur(event.target.value);
+            }}
+            onBlur={(event) => validatePhoneBlur(event.target.value)}
           />
         </Field>
+        {phoneBlurError !== null && <div role="alert">{phoneBlurError}</div>}
         <Field label="Branch (optional)" htmlFor="create-branch">
           <input
             id="create-branch"

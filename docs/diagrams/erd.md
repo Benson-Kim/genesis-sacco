@@ -35,11 +35,12 @@
   declared up front in !83; alters share_transfers only, no new
   table); diagram 2.D and §3 updated accordingly (v1.2 rules 11/14).
   Extended for 0043 by the issue-#35 remainder MR, IN THE SAME
-  COMMIT as the migration: alembic head 0041 -> 0043
-  (0043_external_txn_ref_and_search_index.py, down_revision = "0041"
-  on this tree — 0042 is the in-flight !87 claim, re-chained onto it
-  when !87 merges; alters transactions only: nullable external_ref +
-  partial UNIQUE dedupe + the search prefix index, no new table);
+  COMMIT as the migration: alembic head 0042 -> 0043
+  (0043_external_txn_ref_and_search_index.py, down_revision = "0042"
+  — re-chained from "0041" after !87 merged 0042_phone_e164_backfill
+  to main, the 0017/0041 precedent; alters transactions only:
+  nullable external_ref + partial UNIQUE dedupe + the search prefix
+  index, no new table);
   diagram 2.C, §3 and §5 updated accordingly (v1.2 rules 11/14).
   Derived exclusively from backend/migrations/versions/*.py — every
   entity is a real table from a migration; every edge cites the FK
@@ -51,10 +52,10 @@
 
 # Entity-relationship diagram — as-built (P-DIAG.2)
 
-The entire schema at alembic head **0043** (on this tree — 0042 is
-the in-flight !87 claim): **47 tables** (0035 creates
-`member_credentials`; 0033/0034/0036/0037/0040/0043 alter existing
-tables and create none; 0038/0041 add indexes only), drawn as
+The entire schema at alembic head **0043**: **47 tables** (0035
+creates `member_credentials`; 0033/0034/0036/0037/0040/0043 alter
+existing tables and create none; 0038/0041 add indexes only; 0042 is
+a data-only backfill touching no schema object), drawn as
 seven subject-area `erDiagram`s (one diagram would not render readably;
 the split follows the module boundaries in the §3 traceability table).
 An entity appearing in more than one diagram (e.g. `members`,
