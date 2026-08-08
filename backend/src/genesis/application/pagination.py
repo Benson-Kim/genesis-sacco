@@ -81,9 +81,7 @@ def assert_cursor_signing_key_configured() -> None:
                 f"{MIN_CURSOR_KEY_BYTES} bytes of key material when set"
             )
         if settings.cursor_key_version_previous == settings.cursor_key_version:
-            raise RuntimeError(
-                "cursor_key_version_previous must differ from cursor_key_version"
-            )
+            raise RuntimeError("cursor_key_version_previous must differ from cursor_key_version")
 
 
 def _cursor_signing_key() -> bytes:
