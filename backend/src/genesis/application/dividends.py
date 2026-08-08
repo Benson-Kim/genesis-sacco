@@ -155,6 +155,8 @@ from genesis.application.outbox import enqueue_event
 from genesis.application.pagination import (
     build_band_register_cursor,
     build_created_id_cursor,
+    decode_cursor,
+    encode_cursor,
     parse_band_register_cursor,
     parse_created_id_cursor,
 )
@@ -618,6 +620,11 @@ async def get_declaration(
     return _row_to_declaration(row)
 
 
+#: Cursor scope id (#31 batch 13): signed cursors are bound to this
+#: endpoint and this tenant — no cross-scope replay (gate 1.6).
+DECLARATIONS_LIST_SCOPE = "dividends.declarations"
+
+
 async def list_declarations(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -634,7 +641,12 @@ async def list_declarations(
     clauses = ["tenant_id = CAST(:tid AS uuid)"]
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if cursor:
-        params["c_ts"], params["c_id"] = parse_created_id_cursor(cursor, entity="declaration")
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the plaintext parse stays as defense-in-depth.
+        inner = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=DECLARATIONS_LIST_SCOPE, entity="declaration"
+        )
+        params["c_ts"], params["c_id"] = parse_created_id_cursor(inner, entity="declaration")
         clauses.append("(created_at, id) < (:c_ts, CAST(:c_id AS uuid))")
     rows = (
         await session.execute(
@@ -651,7 +663,11 @@ async def list_declarations(
     next_cursor = None
     if len(rows) > limit and page_rows:
         last = page_rows[-1]
-        next_cursor = build_created_id_cursor(last[16], last[0])
+        next_cursor = encode_cursor(
+            build_created_id_cursor(last[16], last[0]),
+            tenant_id=tenant_id,
+            endpoint=DECLARATIONS_LIST_SCOPE,
+        )
     return items, next_cursor
 
 
@@ -2308,6 +2324,11 @@ class ShareTransferPage:
     next_cursor: str | None
 
 
+#: Cursor scope id (#31 batch 13): signed cursors are bound to this
+#: endpoint and this tenant — no cross-scope replay (gate 1.6).
+SHARE_TRANSFERS_SCOPE = "dividends.share_transfers"
+
+
 async def list_share_transfers(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -2318,7 +2339,15 @@ async def list_share_transfers(
     """Keyset transfer register, pending-first (issue #31 ledger (m))."""
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if cursor is not None:
-        c_flag, c_ts, c_id = parse_band_register_cursor(cursor, entity="share transfer register")
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the plaintext parse stays as defense-in-depth.
+        inner = decode_cursor(
+            cursor,
+            tenant_id=tenant_id,
+            endpoint=SHARE_TRANSFERS_SCOPE,
+            entity="share transfer register",
+        )
+        c_flag, c_ts, c_id = parse_band_register_cursor(inner, entity="share transfer register")
         params["c_flag"] = c_flag
         params["c_ts"] = c_ts
         params["c_id"] = c_id
@@ -2328,7 +2357,11 @@ async def list_share_transfers(
     next_cursor = None
     if len(rows) > limit and items:
         last = items[-1]
-        next_cursor = build_band_register_cursor(
-            last.status is ShareTransferStatus.PENDING, last.created_at, last.id
+        next_cursor = encode_cursor(
+            build_band_register_cursor(
+                last.status is ShareTransferStatus.PENDING, last.created_at, last.id
+            ),
+            tenant_id=tenant_id,
+            endpoint=SHARE_TRANSFERS_SCOPE,
         )
     return ShareTransferPage(items=items, next_cursor=next_cursor)
