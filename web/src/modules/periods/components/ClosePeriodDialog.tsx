@@ -268,7 +268,7 @@ export function ClosePeriodDialog({ onClose }: Readonly<{ onClose: () => void }>
           <div className={styles.formNote}>
             Only the calendar month travels — the period bounds, the
             &quot;fully elapsed&quot; rule and every posting-date check are the
-            server&apos;s verdicts (issue #12: never caller-backdatable). No
+            server&apos;s verdicts — never caller-backdatable. No
             figure is entered or computed here.
           </div>
           <div className={styles.actions}>

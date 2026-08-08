@@ -267,7 +267,7 @@ export function SubstituteDrawer({
             id="substitute-consent-reference"
             label="Consent evidence reference"
             error={fieldErrors["consent_reference"]}
-            hint="Cite the evidence the substitute guarantor's consent rests on (e.g. the signed guarantorship form) — submitting IS the staff attestation and it is written as an audited fact (P14.5)."
+            hint="Cite the evidence the substitute guarantor's consent rests on (e.g. the signed guarantorship form) — submitting IS the staff attestation and it is written as an audited fact."
           >
             {(control) => (
               <input

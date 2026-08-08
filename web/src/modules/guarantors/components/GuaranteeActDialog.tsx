@@ -214,7 +214,7 @@ export function GuaranteeActDialog({
               id="consent-reference"
               label="Consent evidence reference"
               error={fieldErrors["consent_reference"]}
-              hint="P14.5: consent is the member's own act on the member surface; this staff override MUST cite the evidence it rests on (e.g. the signed consent form) — written as an audited fact."
+              hint="Consent is the member's own act on the member surface; this staff override MUST cite the evidence it rests on (e.g. the signed consent form) — written as an audited fact."
             >
               {(control) => (
                 <input

@@ -65,7 +65,7 @@ const userRosterAdapter: RosterAdapter<BranchUserRosterRow> = {
   kind: "users",
   title: "Users assigned to this branch",
   note:
-    "Reading the USER roster is user administration (access_control:view — the read leg of the batch-4 assignment split), never a settings right. Identity facts only; the full user record stays on the users screen.",
+    "Reading the USER roster is user administration (access_control:view — the read leg of the assignment permission split), never a settings right. Identity facts only; the full user record stays on the users screen.",
   columns: [
     {
       key: "user",
@@ -94,7 +94,7 @@ const memberRosterAdapter: RosterAdapter<BranchMemberRosterRow> = {
   kind: "members",
   title: "Members assigned to this branch",
   note:
-    "Reading the MEMBER roster is a member read (members:view — the read leg of the batch-4 assignment split), never a settings right. Identity facts only; figures stay on the members register.",
+    "Reading the MEMBER roster is a member read (members:view — the read leg of the assignment permission split), never a settings right. Identity facts only; figures stay on the members register.",
   columns: [
     {
       key: "member",
@@ -127,7 +127,7 @@ const userAdapter: AssignAdapter = {
   entityLabel: "User",
   op: "branch-assign-user",
   note:
-    "Assigning a USER is user administration (access_control:edit — the P13.5 precedent), not a settings right. The write pins the user row's fresh version.",
+    "Assigning a USER is user administration (access_control:edit), not a settings right. The write pins the user row's fresh version.",
   fetchOptionsPage: async (cursor) => {
     const page = await fetchUsersPage({ status: "", roleId: "" }, cursor);
     return {
@@ -349,8 +349,8 @@ export function BranchDetailDrawer({
       </div>
       <div className={styles.formNote}>
         The read contract exposes no delete/deactivate for a branch — none is
-        invented here (still recorded on issue #31 as a contract follow-up).
-        Roster reads below follow the batch-4 assignment permission split:
+        invented here. Roster reads below follow the assignment permission
+        split:
         each mounts only under its OWN module&apos;s view grant.
       </div>
 

@@ -274,7 +274,7 @@ export function WriteOffDetailDrawer({
   const ownId = getOwnUserId();
   const makerLabel =
     witnessedMakerId === WRITE_OFF_MAKER_UNKNOWN
-      ? "Requesting officer — not on the record (the contract does not attribute the requester; follow-up recorded on issue #31); no request witnessed by this tab. The server still bans the requester from voting or posting."
+      ? "Requesting officer — not on the record (the contract does not attribute the requester); no request witnessed by this tab. The server still bans the requester from voting or posting."
       : witnessedMakerId === ownId
         ? "You requested this write-off (witnessed by this tab)."
         : "Requesting officer (witnessed by this tab).";
@@ -623,7 +623,7 @@ function ReceiptsTrail({ writeOffId }: Readonly<{ writeOffId: string }>) {
 
   return (
     <>
-      <div className={styles.subhead}>Recovery trail (issue #21 — the surviving claim)</div>
+      <div className={styles.subhead}>Recovery trail (the surviving claim)</div>
       {position !== null && (
         <div className={styles.detailGrid}>
           <Kv label="Recovered so far">

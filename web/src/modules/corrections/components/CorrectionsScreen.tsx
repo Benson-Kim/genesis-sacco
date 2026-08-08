@@ -297,7 +297,7 @@ export function CorrectionsScreen() {
           <div className={styles.cardBody}>
             Committee-approved derecognition of an NPL loan bound to a
             write-once snapshot — write-off is NOT forgiveness: the legal claim
-            survives, and recovery receipts (issue #21) are the only money-in
+            survives, and recovery receipts are the only money-in
             path against it. Votes, void, posting and the recovery trail live
             on the record drawer.
           </div>
@@ -342,9 +342,8 @@ export function CorrectionsScreen() {
         <div className={styles.registerHead}>
           <span>Pending-adjustments checker register</span>
           <span className={styles.registerNote}>
-            Pending requests first, newest first — the server&apos;s order
-            (issue #31 ledger (a).1); figures are the persisted snapshot,
-            verbatim
+            Pending requests first, newest first — the server&apos;s
+            order; figures are the persisted snapshot, verbatim
           </span>
         </div>
         <KeysetTable
@@ -361,8 +360,7 @@ export function CorrectionsScreen() {
           <span>Write-off committee register</span>
           <span className={styles.registerNote}>
             Live write-offs (awaiting votes or posting) first, newest first —
-            the server&apos;s order (issue #31 ledger (a).2); snapshot figures
-            verbatim
+            the server&apos;s order; snapshot figures verbatim
           </span>
         </div>
         <KeysetTable

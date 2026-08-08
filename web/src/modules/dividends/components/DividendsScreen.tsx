@@ -164,7 +164,7 @@ export function DividendsScreen() {
           Rates and the financial year come exclusively from tenant
           configuration (Settings ▸ Deposits &amp; shares); every figure below
           is a server-computed snapshot. Dormant members remain shareholders
-          and are included in every declaration (issue #19 policy).
+          and are included in every declaration.
         </div>
         <div className={styles.toolbarActions}>
           {mayDeclare && (

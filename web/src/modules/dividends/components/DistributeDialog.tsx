@@ -272,7 +272,7 @@ export function DistributeDialog({
             Every figure above came from the run report — nothing was computed
             in this screen. &quot;Unclaimed&quot; are members who exited
             mid-run: their entitlement is parked as an unclaimed-dividends
-            payable (issue #19 policy), never credited to a closed account and
+            payable, never credited to a closed account and
             never silently dropped — resolve through the corrections paths.
             {lastRun.pending_members > 0 &&
               " Pending members were skipped under concurrent locks — re-run the distribution to pick them up; already-paid members are never paid twice."}

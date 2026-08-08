@@ -189,8 +189,8 @@ export function DeclareDividendDrawer({ onClose }: Readonly<{ onClose: () => voi
             Declaring computes the payout snapshot for the LAST COMPLETED
             financial year from the tenant&apos;s configured rates — dividend on
             the share basis, rebate on the deposit basis — across every member
-            with a positive entitlement (dormant members included; issue #19
-            policy). There is nothing to enter here: no rate, period or figure
+            with a positive entitlement (dormant members included). There is
+            nothing to enter here: no rate, period or figure
             can travel from this client (the server rejects any such attempt).
             You will not be able to vote on or distribute your own declaration.
           </div>

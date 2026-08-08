@@ -237,13 +237,13 @@ export function ShareTransfersScreen() {
         <Card className={grid.wide}>
           <div className={styles.cardTitle}>Share transfers — maker-checker</div>
           <div className={styles.cardBody}>
-            Moving share capital between members takes FOUR EYES (issue #31
-            (l), human-authorized): a maker requests and the system freezes
+            Moving share capital between members takes FOUR EYES
+            (human-authorized): a maker requests and the system freezes
             the giver&apos;s balance; a DIFFERENT checker approves from the
             register below — the server re-verifies the frozen snapshot
             under the full lock set and refuses if anything moved, posting
             nothing. Both members are notified when a transfer posts. The
-            register lists unfinished business first (issue #31 (m)); every
+            register lists unfinished business first; every
             figure is the server&apos;s, verbatim.
           </div>
         </Card>

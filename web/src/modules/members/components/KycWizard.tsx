@@ -213,11 +213,10 @@ export function KycWizard({
             </div>
           </dl>
           <p className={styles.panelNote}>
-            The prototype&apos;s remaining membership inputs (registration fee, share capital,
-            contribution amounts and method, recruited-by) have NO backend contract on the
-            member record — recorded as contract follow-ups on issue #31, never faked here.
-            Home branch is assigned through the branches console (#31 (j)); the dividend
-            payout preference above is the member record&apos;s stored value (#31 (c)).
+            Registration fee, share capital, contribution amounts and method, and
+            recruited-by are not yet on the member record — nothing is faked here.
+            Home branch is assigned through the branches console; the dividend
+            payout preference above is the member record&apos;s stored value.
           </p>
           {create.isError && (
             <>

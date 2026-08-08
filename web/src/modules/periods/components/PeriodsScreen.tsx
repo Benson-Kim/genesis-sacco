@@ -92,8 +92,8 @@ export function PeriodsScreen() {
       <div className={styles.toolbar}>
         <div className={styles.toolbarNote}>
           A row exists only for a month the books were CLOSED for — every
-          other month is open for posting (issue #12: posting dates are
-          resolved and checked server-side; the database trigger refuses
+          other month is open for posting (posting dates are resolved and
+          checked server-side; the database trigger refuses
           postings into a closed month regardless of any screen). There is
           no reopen: a close is a governance fact, not a toggle.
         </div>

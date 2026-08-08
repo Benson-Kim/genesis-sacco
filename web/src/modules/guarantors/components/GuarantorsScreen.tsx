@@ -104,7 +104,7 @@ function AggregatesStrip() {
       </Card>
       <Card>
         <Stat label="Aggregates as of" value={fmtDateTime(summary.data.as_of)} />
-        <div className={styles.statSub}>Server-computed snapshot (P13.9)</div>
+        <div className={styles.statSub}>Server-computed snapshot</div>
       </Card>
       <Card className={grid.wide}>
         <div className={styles.resultTitle}>Guarantor capacity (server slice)</div>

@@ -94,7 +94,7 @@ export function BranchesScreen() {
     <div>
       <div className={styles.toolbar}>
         <div className={styles.toolbarNote}>
-          Branches are organisational metadata (the P13.6 registry) — no money
+          Branches are organisational metadata — no money
           value exists on a branch record. Assigning PEOPLE to a branch is a
           user-administration or member-edit action with its own permission,
           never a settings right (the registry/entity split, server-enforced).

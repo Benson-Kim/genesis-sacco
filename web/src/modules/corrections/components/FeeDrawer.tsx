@@ -212,7 +212,7 @@ export function FeeDrawer({ onClose }: Readonly<{ onClose: () => void }>) {
             <span className={styles.mono}>{result.txn_id}</span>
           </Kv>
           <div className={styles.formNote}>
-            The amount above is the SERVER&apos;s P13.7-configured figure from
+            The amount above is the SERVER&apos;s configured figure from
             the posting response — no amount was (or can be) entered in this
             screen. The row now appears in the transactions register.
           </div>

@@ -298,7 +298,7 @@ export function DeclarationDetailDrawer({
         Every figure above is the SERVER&apos;s snapshot at declaration time —
         nothing is summed or re-derived in this screen (payout = dividend +
         rebate is the database&apos;s CHECK). Dormant members remain
-        shareholders and are inside the eligible count (issue #19 policy).
+        shareholders and are inside the eligible count.
         Distribution re-verifies the snapshot against live balances and
         conflicts on any drift.
       </div>
