@@ -84,7 +84,8 @@ REPLAY_LOOKUP_SQL = (
 
 
 def idempotency_retention_hours() -> int:
-    """Replay retention from server config (v1.1 rule 1) — the
+    """Replay retention from server config — the
+
     exports.py accessor pattern so tests can pin values."""
     return get_settings().idempotency_retention_hours
 
@@ -116,11 +117,11 @@ def _tenant_from_scope(scope: Scope) -> uuid.UUID | None:
 
 
 def _actor_from_scope(scope: Scope) -> str:
-    """Kind-qualified actor discriminator (review R4; P14.5 FM5).
+    """Kind-qualified actor discriminator.
 
     Authenticated requests are scoped per principal — staff by user
-    id, members by CREDENTIAL id (the authoritative member identity,
-    FM2) — with distinct kind prefixes so the two namespaces can never
+    id, members by CREDENTIAL id (the authoritative member identity) — with distinct kind prefixes
+    so the two namespaces can never
     collide. Pre-auth requests (x-tenant-id header, no bearer) have no
     actor and use the empty string — their identity lives in the body
     (e.g. the OTP email), which rides the request hash. An
@@ -141,8 +142,8 @@ def _actor_from_scope(scope: Scope) -> str:
 
 def scoped_storage_key(actor: str, method: str, path: str, client_key: str) -> str:
     """The stored claim key: (actor principal, route) folded into the
-    client's Idempotency-Key (FM5; the tenant scope is the claim row's
-    tenant_id). A different actor or route therefore claims a
+    client's Idempotency-Key (the tenant scope is the claim row's tenant_id). A different actor or
+    route therefore claims a
     DIFFERENT row — a cross-actor replay is a MISS, not a shared
     response and not a 409. Module-level so tests pin the exact
     scoping; the digest keeps the stored key bounded and free of

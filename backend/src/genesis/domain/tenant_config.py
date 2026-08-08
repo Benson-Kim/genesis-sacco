@@ -50,21 +50,21 @@ MAX_RATE_BANDS = 20
 
 
 class PenaltyChargedOn(enum.StrEnum):
-    """Basis the arrears penalty is charged on (prototype Interest tab)."""
+    """Basis the arrears penalty is charged on (the Interest settings tab)."""
 
     INSTALMENT_IN_ARREARS = "instalment_in_arrears"
     FULL_OUTSTANDING = "full_outstanding"
 
 
 class LoanInterestMethod(enum.StrEnum):
-    """Stored only: the P6 engine extension is out of scope (P13.7)."""
+    """Stored only: the P6 engine extension is out of scope."""
 
     REDUCING_BALANCE = "reducing_balance"
     FLAT = "flat"
 
 
 class LoanInterestBasis(enum.StrEnum):
-    """Stored only: the P6 engine extension is out of scope (P13.7)."""
+    """Stored only: the P6 engine extension is out of scope."""
 
     THIRTY_360 = "thirty_360"
     ACTUAL_365 = "actual_365"
@@ -307,7 +307,7 @@ class ApprovalBand:
     the code-owned RBAC role names — never free-form caller strings.
 
     Name-keying is safe because seeded role names are immutable
-    (review R5): no application path updates roles.name
+    no application path updates roles.name
     (application/rbac.py mutates permissions only) and migration 0017
     ships a DB trigger refusing renames of is_system roles, so a
     rename can never silently detach a configured ceiling.

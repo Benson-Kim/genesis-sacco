@@ -37,7 +37,7 @@ class ProfileValidationError(Exception):
     """Profile payload does not match the member type's schema.
 
     The message names field locations and error kinds only — submitted
-    values are deliberately excluded (gate 1.6).
+    values are deliberately excluded (least disclosure).
     """
 
 
@@ -46,7 +46,7 @@ class DocumentTypeError(Exception):
 
 
 class InvalidDocumentTransitionError(Exception):
-    """Raised when a document status transition is not allowed (gate 1.4)."""
+    """Raised when a document status transition is not allowed (concurrency safety)."""
 
 
 class _Section(BaseModel):

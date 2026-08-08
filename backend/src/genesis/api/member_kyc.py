@@ -91,7 +91,7 @@ class DocumentCreateBody(BaseModel):
 
 class DocumentUpdateBody(BaseModel):
     """Omitted fields keep their stored values. expires_at follows
-    exclude-unset semantics (review K2): omitted keeps the current
+    exclude-unset semantics: omitted keeps the current
     expiry, an EXPLICIT null clears a wrongly-entered date."""
 
     model_config = ConfigDict(extra="forbid")
@@ -163,7 +163,7 @@ async def create_profile(
 
 @router.get("/{member_id}/profile")
 async def get_profile(member_id: uuid.UUID, ctx: ViewCtx) -> ProfileOut:
-    """Profile read; every access writes an audit row (review K1)."""
+    """Profile read; every access writes an audit row."""
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         record = await kyc_service.read_profile(session, ctx.tenant_id, ctx.user_id, member_id)

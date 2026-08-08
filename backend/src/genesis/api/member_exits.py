@@ -128,9 +128,9 @@ class ExitListResponse(BaseModel):
 
 class ExitEligibilityOut(BaseModel):
     """Advisory blocker FACTS for the up-front eligibility checklist
-    (P15 batch 5, U6 — the prototype's vExit() criteria rows).
+    (the exit-eligibility criteria rows).
 
-    Least disclosure (gate 1.6): counts and booleans only — NEVER an
+    Least disclosure: counts and booleans only — NEVER an
     amount; served under members:view like every other exit read.
     ADVISORY only: computed WITHOUT locks; the binding verdict stays
     with the request/settlement locked recomputes (which also enforce
@@ -241,12 +241,11 @@ async def list_exit_requests(
 @router.get("/eligibility/{member_id}")
 async def get_exit_eligibility(member_id: uuid.UUID, ctx: ViewCtx) -> ExitEligibilityOut:
     """Advisory eligibility facts BEFORE a request is submitted
-    (members:view; P15 batch 5, U6 — human-authorized expand-only,
-    read-only contract change).
+    (members:view; human-authorized expand-only, read-only contract change).
 
     NO row locks: the checklist mirrors the blocker set the settlement
-    service enforces (same live-guarantee status set, same open-stage
-    list, the SAME unresolved-write-off SQL — gate 1.1), but the
+    service enforces (same live-guarantee status set, same open-stage list, the SAME
+    unresolved-write-off SQL — reuse-first), but the
     BINDING verdict remains the locked recompute at request and
     settlement time. Facts only — no amount ever travels here.
     """
@@ -329,7 +328,7 @@ async def post_exit_settlement(
 
 @router.get("/{exit_id}/statement")
 async def get_exit_statement(exit_id: uuid.UUID, ctx: ViewCtx) -> ExitStatementOut:
-    """Exit statement document (JSON; CSV/PDF arrives with P13 core/exports)."""
+    """Exit statement document (JSON; CSV/PDF arrives with core/exports)."""
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         doc = await exits_service.exit_statement(session, ctx.tenant_id, exit_id)

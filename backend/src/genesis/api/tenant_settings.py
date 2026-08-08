@@ -123,7 +123,7 @@ class SettingsOut(BaseModel):
     """The full settings view; null means "not configured" (fallbacks
     documented per key in the registry). Decimals travel as strings.
     ``corrupt_keys`` names stored band keys that failed read-side
-    revalidation (degraded to null in this view, review R3) — names
+    revalidation (degraded to null in this view) — names
     only, never the corrupt payload (least disclosure)."""
 
     configured: bool

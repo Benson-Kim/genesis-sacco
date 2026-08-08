@@ -113,8 +113,8 @@ async def list_periods(
 
 
 class SnapshotBackfillBody(BaseModel):
-    """Deliberately empty (P13.17a): the month worklist, cutoffs and
-    batching are ALL server-resolved (v1.1 rule 1 + the insider rule —
+    """Deliberately empty (.17a): the month worklist, cutoffs and
+    batching are ALL server-resolved (+ the insider rule —
     no caller-supplied dates or period identifiers anywhere);
     extra="forbid" makes any smuggled field a 422."""
 
@@ -131,7 +131,7 @@ class SnapshotBackfillOut(BaseModel):
 async def run_portfolio_snapshot_backfill(
     body: SnapshotBackfillBody, ctx: ApproveCtx
 ) -> SnapshotBackfillOut:
-    """Backfill month-end portfolio snapshots (P13.17a / DSA-1).
+    """Backfill month-end portfolio snapshots (.17a / DSA-1).
 
     Permission (P4 matrix, decided): transactions x APPROVE — the
     close-period authority. Snapshots freeze the month-end figures the
@@ -141,7 +141,7 @@ async def run_portfolio_snapshot_backfill(
 
     Batched through the shared batch runner (one month per short
     transaction); a completed re-run is a lock-free no-op (anti-join
-    on the claim key, v1.1 rule 8) proven by side-effect counts.
+    on the claim key) proven by side-effect counts.
     """
     factory = get_sessionmaker(get_settings().database_url)
     result = await snapshots_service.run_snapshot_backfill_for_tenant(
@@ -157,9 +157,9 @@ async def run_portfolio_snapshot_backfill(
 
 
 class RollupBackfillBody(BaseModel):
-    """Deliberately empty (P13.17b): the worklist is the server's own
+    """Deliberately empty (.17b): the worklist is the server's own
     closed-but-unrolled period set — no caller-supplied period
-    identifiers anywhere (v1.1 rule 1 + the insider rule);
+    identifiers anywhere (+ the insider rule);
     extra="forbid" makes any smuggled field a 422."""
 
     model_config = ConfigDict(extra="forbid")
@@ -176,7 +176,7 @@ class RollupBackfillOut(BaseModel):
 async def run_period_rollup_backfill(
     body: RollupBackfillBody, ctx: ApproveCtx
 ) -> RollupBackfillOut:
-    """Backfill rollups for periods closed before 0028 (P13.17b / DSA-2/5).
+    """Backfill rollups for periods closed before 0028 (.17b / DSA-2/5).
 
     Permission (P4 matrix, decided): transactions x APPROVE — the
     close-period authority; rollups ARE the closed-period figures the

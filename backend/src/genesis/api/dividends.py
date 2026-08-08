@@ -80,7 +80,7 @@ MembersApproveCtx = Annotated[AuthContext, Depends(_members_approve)]
 
 class DeclareBody(BaseModel):
     """Only the batch size is caller-tunable: rates and the financial
-    year come exclusively from tenant configuration (v1.1 rule 1) —
+    year come exclusively from tenant configuration —
     extra="forbid" rejects any attempt to supply them (422)."""
 
     model_config = ConfigDict(extra="forbid")
@@ -102,7 +102,8 @@ class DeclarationVoidBody(BaseModel):
 
 class DistributeBody(BaseModel):
     """No money fields, ever: every figure derives from the persisted
-    approval snapshot; extra="forbid" -> 422 (v1.1 rule 1)."""
+
+    approval snapshot; extra="forbid" -> 422."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -120,7 +121,8 @@ class ShareTransferBody(BaseModel):
 
 
 class ShareTransferApproveBody(BaseModel):
-    """NO money fields, ever (v1.1 rule 1): every figure derives from
+    """NO money fields, ever: every figure derives from
+
     the persisted pending transfer; extra="forbid" -> 422."""
 
     model_config = ConfigDict(extra="forbid")
@@ -128,7 +130,8 @@ class ShareTransferApproveBody(BaseModel):
 
 class ShareTransferRejectBody(BaseModel):
     """Version-pinned rejection with the MANDATORY checker rationale
-    (the !52 F2 posture); workflow metadata only, never money."""
+
+    (the F2 posture); workflow metadata only, never money."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -203,10 +206,9 @@ class ShareTransferOut(BaseModel):
 
 
 class ShareTransferRecordOut(BaseModel):
-    """The workflow record (issue #31 (l)/(m)): the register row and
-    the request/rejection responses. Least disclosure: bare UUIDs (the
-    !66/!70 precedent — resolving them stays behind the entitled
-    modules), the amount as the verbatim decimal string, and NO
+    """The workflow record: the register row and
+    the request/rejection responses. Least disclosure: bare UUIDs (the / precedent — resolving them
+    stays behind the entitled modules), the amount as the verbatim decimal string, and NO
     request-time balance snapshot (the approval re-verifies it
     server-side; the audit rows carry the exact figures). Maker and
     checker attribution are nullable-never-optional server truth: a
@@ -371,7 +373,7 @@ async def distribute(
 async def request_share_transfer(
     member_id: uuid.UUID, body: ShareTransferBody, ctx: MembersApproveCtx
 ) -> ShareTransferRecordOut:
-    """MAKER phase (issue #31 (l)): create a PENDING transfer bound to
+    """MAKER phase ((l)): create a PENDING transfer bound to
     the persisted approval snapshot — NO money moves until a distinct
     checker approves."""
     factory = get_sessionmaker(get_settings().database_url)
@@ -393,7 +395,7 @@ async def list_share_transfers(
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> ShareTransferListOut:
-    """The share-transfer history register (issue #31 ledger (m)):
+    """The share-transfer history register:
     keyset, PENDING FIRST then newest first — the checker's job order
     (the 0038 band pattern). Served under members:view (the house
     read-split); explicit tenant predicate doubling RLS; bound
@@ -421,7 +423,7 @@ async def get_share_transfer(transfer_id: uuid.UUID, ctx: MembersViewCtx) -> Sha
 async def approve_share_transfer(
     transfer_id: uuid.UUID, body: ShareTransferApproveBody, ctx: MembersApproveCtx
 ) -> ShareTransferOut:
-    """CHECKER phase (issue #31 (l)): a DISTINCT, non-assurance
+    """CHECKER phase ((l)): a DISTINCT, non-assurance
     principal re-verifies the snapshot under the full lock set (409 on
     drift, posting nothing), then posts BOTH ledger legs, updates both
     balances and notifies BOTH members via the outbox — atomically."""
@@ -445,7 +447,7 @@ async def reject_share_transfer(
     transfer_id: uuid.UUID, body: ShareTransferRejectBody, ctx: MembersApproveCtx
 ) -> ShareTransferRecordOut:
     """Reject a pending transfer (checker decision, optimistic-locked)
-    — the checker's rationale is REQUIRED (!52 F2) and recorded in the
+    — the checker's rationale is REQUIRED and recorded in the
     audit row, never echoed."""
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:

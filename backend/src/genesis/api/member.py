@@ -50,10 +50,9 @@ MemberCtx = Annotated[MemberAuthContext, Depends(_member_principal)]
 class MemberActBody(BaseModel):
     """Consent/self-release body: the optimistic-lock version ONLY.
 
-    extra="forbid" (gate 1.6 v1.1): there is deliberately NO field for
+    extra="forbid" (least disclosure v1.1): there is deliberately NO field for
     who consents — the principal IS the authenticated credential; a
-    caller-asserted identity or consent flag is a rejected design (the
-    !29 lesson)."""
+    caller-asserted identity or consent flag is a rejected design (the lesson)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -73,7 +72,7 @@ async def request_member_otp(body: OtpRequestBody, request: Request) -> dict[str
 
 @router.post("/auth/otp/verify", dependencies=[Depends(_rate_guard)])
 async def verify_member_otp(body: OtpVerifyBody, request: Request) -> TokenResponse:
-    """Verify the member OTP; issues MEMBER-audience tokens (FM1)."""
+    """Verify the member OTP; issues MEMBER-audience tokens."""
     tenant_id = tenant_id_from_headers(request)
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, tenant_id) as session:
@@ -120,7 +119,7 @@ async def consent_guarantee_as_member(
     """Guarantor consent as the MEMBER principal: pledged -> active.
 
     The link is re-verified inside the transaction under the guarantee
-    row lock (FM2); the consent row carries the credential (FM4).
+    row lock; the consent row carries the credential.
     """
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
@@ -139,8 +138,8 @@ async def release_guarantee_as_member(
     body: MemberActBody,
     ctx: MemberCtx,
 ) -> GuaranteeOut:
-    """Withdraw the member's OWN unconsented pledge (P13.14 rules;
-    the member-principal replacement for the retired email-match)."""
+    """Withdraw the member's OWN unconsented pledge (rules; the member-principal replacement for the
+    retired email-match)."""
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         record = await guarantees_service.release_guarantee_as_member(

@@ -17,7 +17,7 @@ declared in at branch time, the -after- precedent.
     - status machine (concurrency safety): open -> (closed_cured |
       closed_written_off), enforced by the single transition function
       in genesis.domain.recovery; the DB CHECK mirrors the state set.
-    - ONE-OPEN-CASE INVARIANT AT THE DB (addendum): the partial
+    - ONE-OPEN-CASE INVARIANT AT THE DB (review addendum): the partial
       UNIQUE index uq_recovery_cases_one_open on (tenant_id, loan_id)
       WHERE status = 'open' is claimed atomically with
       INSERT... ON CONFLICT DO NOTHING checked by rowcount (v1.1 rule
@@ -54,7 +54,7 @@ declared in at branch time, the -after- precedent.
     - version column: assignment is an optimistic-locked mutation
       (409 on stale, concurrency safety).
 
-  * recovery_case_notes — APPEND-ONLY case history (addendum):
+  * recovery_case_notes — APPEND-ONLY case history (review addendum):
     notes are rows, never an UPDATE-in-place of a notes blob; the API
     ships no edit/delete route, so the collections trail stays
     forensic evidence like audit_log. Assignment changes are audited

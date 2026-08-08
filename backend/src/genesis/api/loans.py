@@ -64,7 +64,7 @@ MemberIdentityApproveCtx = Annotated[AuthContext, Depends(_member_identity_appro
 
 
 class ProductCreateBody(BaseModel):
-    """extra="forbid" (gate 1.6 v1.1, retroactive on touched code).
+    """extra="forbid" (least disclosure v1.1, retroactive on touched code).
 
     max_digits/decimal_places on the money-rule fields mirror the
     backing numeric(5,2) columns (0001), so an over-precise value is a
@@ -111,8 +111,8 @@ class ProductOut(BaseModel):
 
 class ApplicationCreateBody(BaseModel):
     """extra="forbid": rate/pricing come from the product server-side;
-    a caller-sent rate_pct (or any unknown field) is a 422 (gate 1.6
-    v1.1, retroactive on touched code)."""
+    a caller-sent rate_pct (or any unknown field) is a 422 (least disclosure v1.1, retroactive on
+    touched code)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -133,7 +133,7 @@ class ApplicationOut(BaseModel):
     purpose: str | None
     stage: str
     cover_pct: str
-    #: Initiator attribution (R4, migration 0036): the staff
+    #: Initiator attribution (migration 0036): the staff
     #: principal who created the application — recorded at INSERT and
     #: now exposed so approvers and the disbursing officer can see WHO
     #: they are checking (the server enforces regardless: the initiator
@@ -149,7 +149,7 @@ class ApplicationOut(BaseModel):
     #: stage — the "refer to committee" recommendation, recorded at
     #: that transition and now on the read contract (the server
     #: enforces regardless: the recommender can neither vote on nor
-    #: disburse the application, 403). Least disclosure (least disclosure): the
+    #: disburse the application, 403). Least disclosure: the
     #: bare user UUID only — never a name or email; resolving it stays
     #: behind access_control:view (the users/audit read paths).
     #: NULL for applications not yet referred to committee, system
@@ -197,11 +197,11 @@ class GuaranteePledgeBody(BaseModel):
 
 
 class ConsentOverrideBody(BaseModel):
-    """Staff-attested consent override (P14.5 scope 4): consent is the
+    """Staff-attested consent override (scope 4): consent is the
     member principal's act on the /member routes; this body carries the
     optimistic-lock version plus the MANDATORY evidence citation — a
-    bare caller-asserted consent flag is a rejected design (the !29
-    lesson; there is no boolean to assert)."""
+    bare caller-asserted consent flag is a rejected design (the lesson; there is no boolean to
+    assert)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -210,8 +210,9 @@ class ConsentOverrideBody(BaseModel):
 
 
 class GuaranteeReleaseBody(BaseModel):
-    """No amounts, ever (P13.14): the released amount comes from the
-    guarantee row; version pins the optimistic lock (gate 1.4)."""
+    """No amounts, ever: the released amount comes from the
+
+    guarantee row; version pins the optimistic lock (concurrency safety)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -219,12 +220,12 @@ class GuaranteeReleaseBody(BaseModel):
 
 
 class GuaranteeSubstituteBody(BaseModel):
-    """Atomic-swap request (P13.14; P14.5 scope 4). consent_reference
+    """Atomic-swap request (scope 4). consent_reference
     cites the evidence the staff attestation rests on (e.g. the signed
     guarantorship form) — an unreferenced substitute is refused (422)
     and the attestation is written onto the replacement row and as a
-    first-class guarantee.consent_override audit fact. The pre-P14.5
-    caller-asserted `consented` boolean is REMOVED (the !29 lesson):
+    first-class guarantee.consent_override audit fact. The pre-
+    caller-asserted `consented` boolean is REMOVED (the lesson):
     consent is never a flag a caller asserts. amount may only meet or
     exceed the released amount (server-derived from the guarantee row
     when omitted)."""
@@ -463,7 +464,7 @@ async def consent_guarantee_override(
     body: ConsentOverrideBody,
     ctx: MemberIdentityApproveCtx,
 ) -> GuaranteeOut:
-    """Staff-attested consent OVERRIDE: pledged -> active (P14.5).
+    """Staff-attested consent OVERRIDE: pledged -> active.
 
     Consent is an act of the MEMBER principal
     (POST /member/guarantees/{id}/consent); this staff path is an
@@ -490,9 +491,9 @@ async def release_guarantee(
     body: GuaranteeReleaseBody,
     ctx: AppsEditCtx,
 ) -> GuaranteeOut:
-    """Release one guarantee per the P13.14 rules (prototype "Release").
+    """Release one guarantee per the rules (the "Release" action).
 
-    STAFF-only since P14.5: applications:edit EXACTLY — the interim
+    STAFF-only since: applications:edit EXACTLY — the interim
     email-match self-service is retired; a guarantor withdraws their
     own unconsented pledge as a MEMBER principal
     (POST /member/guarantees/{id}/release). Staff release pledged
@@ -518,7 +519,7 @@ async def substitute_guarantee(
     body: GuaranteeSubstituteBody,
     ctx: AppsEditCtx,
 ) -> SubstitutionOut:
-    """Atomic swap for a disbursed loan's collateral (P13.14).
+    """Atomic swap for a disbursed loan's collateral.
 
     Releases the guarantee and creates the replacement CONSENTED pledge
     in one transaction; any failure between the two writes leaves the

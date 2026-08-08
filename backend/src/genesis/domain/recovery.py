@@ -6,7 +6,7 @@ writer is application/recovery, and every path — staff disposition or
 job auto-close — must pass through:func:`transition`. Illegal moves
 raise.
 
-Assignment and notes are NON-STATE mutations (addendum): they never
+Assignment and notes are NON-STATE mutations (review addendum): they never
 touch ``status`` and therefore never pass through this map — assignment
 is an optimistic-locked column write, notes are append-only rows.
 
@@ -25,7 +25,7 @@ Issue (the dispositions) widens the machine — the
   * ``closed_restructured`` — terminal: the loan was restructured and
     the case's premise no longer holds (staff-attested).
   * Every terminal state stays terminal: a cured-then-re-defaulting
-    loan gets a NEW case (history preserved, addendum A6), never a
+    loan gets a NEW case (history preserved, review addendum), never a
     reopened one. Loan facts close from ANY live posture: the arrears
     job's auto-close pass moves a paused case to ``closed_cured`` /
     ``closed_written_off`` when the loan cures or is written off —
@@ -101,7 +101,7 @@ STAFF_DISPOSITION_TARGETS: frozenset[RecoveryCaseStatus] = frozenset(
 
 
 class InvalidRecoveryTransitionError(Exception):
-    """Raised when a case status transition is not allowed (gate 1.4)."""
+    """Raised when a case status transition is not allowed (concurrency safety)."""
 
 
 _ALLOWED: dict[RecoveryCaseStatus, frozenset[RecoveryCaseStatus]] = {

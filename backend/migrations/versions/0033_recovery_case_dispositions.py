@@ -52,7 +52,7 @@ note at/after closure, server-enforced —
   * uq_recovery_notes_one_outcome partial UNIQUE (tenant_id, case_id)
     WHERE is_outcome — claimed atomically with INSERT... ON CONFLICT
     DO NOTHING + rowcount: a concurrent double-add lands
-    exactly one row. Notes stay append-only (addendum): no edit or
+    exactly one row. Notes stay append-only (review addendum): no edit or
     delete route exists anywhere; the outcome note is a NEW row.
 
 Downgrade REFUSES LOUDLY (the 0017/0020 discipline applied to

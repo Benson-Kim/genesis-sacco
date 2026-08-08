@@ -78,7 +78,7 @@ class MemberStatus(enum.StrEnum):
 
 
 class DividendPayout(enum.StrEnum):
-    """Member dividend payout PREFERENCE vocabulary (#31 ledger (c)).
+    """Member dividend payout PREFERENCE vocabulary.
 
     CODE-OWNED, server-side — never caller-invented. Provenance: the
     prototype's membership step declares the FIELD ("Dividend payout",
@@ -88,17 +88,16 @@ class DividendPayout(enum.StrEnum):
     the tx-channel and disbursement-channel selects, mirrored by the
     as-built ledger Channel cash set) plus the two retention
     destinations the prototype/as-built domain already carries
-    (deposit-account credit — the as-built P13.11 distribution leg;
-    share top-up — the prototype's SH- affordance).
+    (deposit-account credit — the as-built distribution leg; share top-up — the prototype's SH-
+    affordance).
 
-    CONSUMED since #31 batch 12 (the batch-8 preference-only fence was
-    retired DELIBERATELY under the maintainer authorization recorded
-    on #31, 2026-08-07): the P13.11 distribution engine routes the
+    CONSUMED since (the preference-only fence was retired DELIBERATELY under the maintainer
+    authorization recorded on, 2026-08-07): the distribution engine routes the
     member-side credit legs of the payout posting per the code-owned
     application.dividends.PAYOUT_CREDIT_ROUTING map. The retention
     destinations are implementable and route; the external cash
-    channels are NOT implementable today (M-Pesa integration is #10,
-    unbuilt) and fall back honestly to the as-built default path with
+    channels are NOT implementable today (M-Pesa integration is, unbuilt) and fall back honestly to
+    the as-built default path with
     the token recorded verbatim in the distribution audit row. NULL
     keeps the as-built behaviour byte-for-byte. The routing map is
     pinned set-equal to this enum falsifiably (a future token forces a
@@ -112,7 +111,7 @@ class DividendPayout(enum.StrEnum):
 
 
 class InvalidStatusTransitionError(Exception):
-    """Raised when a member status transition is not allowed (gate 1.4)."""
+    """Raised when a member status transition is not allowed (concurrency safety)."""
 
 
 _ALLOWED: dict[MemberStatus, frozenset[MemberStatus]] = {
@@ -137,7 +136,7 @@ def transition(current: MemberStatus, target: MemberStatus) -> MemberStatus:
 
 
 class MoneyOperation(enum.StrEnum):
-    """Member-facing money operations gated by member status (P13.13)."""
+    """Member-facing money operations gated by member status."""
 
     DEPOSIT = "deposit"
     LOAN_REPAYMENT = "loan repayment"

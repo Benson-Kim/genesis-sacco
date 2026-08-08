@@ -52,7 +52,7 @@ class TxnType(enum.StrEnum):
     # (WO-); values match the 0025 transactions.type CHECK.
     FEE = "fee"
     LOAN_WRITE_OFF = "loan_write_off"
-    # Issue (A4 follow-up): bad-debt recovery receipt (RC-)
+    # Issue (follow-up): bad-debt recovery receipt (RC-)
     # against a written-off loan's surviving claim; value matches the
     # 0030 transactions.type CHECK.
     LOAN_RECOVERY = "loan_recovery"

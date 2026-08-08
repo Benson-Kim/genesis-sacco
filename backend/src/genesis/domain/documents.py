@@ -67,7 +67,7 @@ class CsvBuilder:
     """Incremental CSV assembly, one batch of rows at a time.
 
     add_rows is pure CPU and is called by the export engine off the
-    event loop (gate 1.3); state is sequential per export job.
+    event loop (scalability); state is sequential per export job.
     """
 
     def __init__(self, headers: tuple[str, ...]) -> None:
@@ -140,17 +140,15 @@ class PdfBuilder:
     The page model is line-oriented, so each batch is folded into its
     formatted LINES immediately and the raw Cell tuples are released
     with the batch — the export engine no longer accumulates rows for
-    the PDF (P13.17d: the third in-memory copy is gone; what remains
-    is one string per rendered line, the same order of memory as the
-    CSV buffer). Page streams are assembled at finish(), because the
+    the PDF (.17d: the third in-memory copy is gone; what remains is one string per rendered line,
+    the same order of memory as the CSV buffer). Page streams are assembled at finish(), because the
     per-page meta line (row count / truncation) is only known once the
     engine has observed the final batch.
 
     add_rows is pure CPU and is called by the export engine off the
-    event loop (gate 1.3); state is sequential per export job.
+    event loop (scalability); state is sequential per export job.
     Batching is invisible in the output: any split of the same rows
-    yields byte-identical PDFs (the FM4 equality gate,
-    tests/test_p1317_pdf_incremental.py).
+    yields byte-identical PDFs (the equality gate, tests/test_p1317_pdf_incremental.py).
     """
 
     def __init__(self, headers: tuple[str, ...]) -> None:

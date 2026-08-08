@@ -47,7 +47,7 @@ class ExitStatus(enum.StrEnum):
 
 
 class InvalidExitTransitionError(Exception):
-    """Raised when an exit settlement transition is not allowed (gate 1.4)."""
+    """Raised when an exit settlement transition is not allowed (concurrency safety)."""
 
 
 _ALLOWED: dict[ExitStatus, frozenset[ExitStatus]] = {

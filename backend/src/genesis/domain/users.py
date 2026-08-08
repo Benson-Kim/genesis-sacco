@@ -17,7 +17,7 @@ class UserStatus(enum.StrEnum):
 
 
 class InvalidUserStatusTransitionError(Exception):
-    """Raised when a user status transition is not allowed (gate 1.4)."""
+    """Raised when a user status transition is not allowed (concurrency safety)."""
 
 
 _ALLOWED: dict[UserStatus, frozenset[UserStatus]] = {

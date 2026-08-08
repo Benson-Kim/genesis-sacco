@@ -212,10 +212,10 @@ def daily_penalty(basis_amount: Decimal, rate_pct_per_month: Decimal) -> Decimal
 class RepaymentAllocation:
     """One repayment split across the documented allocation order.
 
-    Allocation order (P10 contract, single source of truth):
-      1. penalties  — outstanding penalty charges are cleared first
-      2. interest   — accrued unpaid interest on installments already due
-      3. principal  — the remainder reduces the outstanding balance
+    Allocation order (contract, single source of truth):
+      1. penalties — outstanding penalty charges are cleared first
+      2. interest — accrued unpaid interest on installments already due
+      3. principal — the remainder reduces the outstanding balance
     """
 
     penalties: Decimal
@@ -299,7 +299,7 @@ class ApplicationStage(enum.StrEnum):
 
 
 class InvalidTransitionError(Exception):
-    """Raised on any transition not in the allowed map (gate 1.4)."""
+    """Raised on any transition not in the allowed map (concurrency safety)."""
 
 
 _ALLOWED: dict[ApplicationStage, frozenset[ApplicationStage]] = {

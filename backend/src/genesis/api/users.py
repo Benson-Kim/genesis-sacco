@@ -95,7 +95,7 @@ class UserListResponse(BaseModel):
 
 
 class OtpInvalidateResponse(BaseModel):
-    """Side-effect counts only — never challenge contents (gate 1.6)."""
+    """Side-effect counts only — never challenge contents (least disclosure)."""
 
     voided_otp_challenges: int
 
