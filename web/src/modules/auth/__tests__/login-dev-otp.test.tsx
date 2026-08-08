@@ -35,7 +35,7 @@ function mountGate() {
 
 async function requestStage(user: ReturnType<typeof userEvent.setup>) {
   mountGate();
-  await user.type(screen.getByLabelText("Email"), "tester@sacco.co.ke");
+  await user.type(screen.getByLabelText("Email or phone"), "tester@sacco.co.ke");
   await user.click(screen.getByRole("button", { name: "Send OTP" }));
   await screen.findByLabelText("Digit 1");
 }
