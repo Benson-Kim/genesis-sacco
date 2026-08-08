@@ -1,11 +1,11 @@
-"""members/users phone local-format -> E.164 backfill (#35 item 1)
+"""members/users phone local-format -> E.164 backfill (item 1)
 
 Revision ID: 0042
 Revises: 0041
 Create Date: 2026-08-08
 
-Expand-only DATA backfill (rule 14, claimed in the MR description at
-branch time): the maintainer-declared canonical storage for Kenya
+Expand-only DATA backfill (the migration-declaration rule, claimed in the MR description at branch
+time): the maintainer-declared canonical storage for Kenya
 mobile identifiers is E.164 (+254…). The write path now normalizes
 every accepted spelling (07XXXXXXXX / 01XXXXXXXX / +2547XXXXXXXX /
 +2541XXXXXXXX) via domain/members.normalize_kenya_msisdn; this
