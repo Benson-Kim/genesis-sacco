@@ -1,14 +1,12 @@
 "use client";
 
 /**
- * Corrections console (P15 follow-on batch 1, issue #31 — audit #30
- * finding R1): the operator workbench for the P13.15 fraud-channel
- * surfaces — repayment adjustments (issue #24 maker-checker), misc
- * fees, committee loan write-offs and the issue-#21 recovery receipts.
+ * Corrections console (follow-on): the operator workbench for the fraud-channel
+ * surfaces — repayment adjustments (maker-checker), misc
+ * fees, committee loan write-offs and the issue- recovery receipts.
  *
- * REGISTERS (issue #31 batch 6, ledger (a).1/(a).2 — the batch-1
- * contract follow-up DELIVERED as a human-authorized read expansion):
- * the P13.15 contract now exposes keyset LIST reads, so the checker
+ * REGISTERS (the contract follow-up DELIVERED as a human-authorized read expansion):
+ * the contract now exposes keyset LIST reads, so the checker
  * works the pending-adjustments register (pending-first — the
  * server's order, never re-sorted locally) and the committee works
  * the write-off register (live-first) — no hand-carried id needed.
@@ -19,9 +17,7 @@
  * - Route guard is corrections:view (RequireModule); the create
  *   affordances mount only with corrections:create, checker/committee
  *   affordances inside the drawers only with corrections:approve —
- *   pure UX; the server enforces every call (gate 1.6, deny by
- *   default: corrections carry their OWN permission strings, never
- *   generic transactions:edit).
+ *   pure UX; the server enforces every call (least disclosure, deny by default: corrections carry their OWN permission strings, never generic transactions:edit).
  * - Every rendered string is attacker-influenced data; it renders
  *   exclusively through React text interpolation (gate-tested).
  * - MONEY (blocker (a)): no figure exists on this screen at all —
@@ -44,7 +40,7 @@ import { adjustmentStatusPill, writeOffStatusPill } from "./pills";
 import styles from "./Corrections.module.css";
 
 
-// Drawer-level code splitting (P15 Phase B speed): drawer chunks load
+// Drawer-level code splitting (speed): drawer chunks load
 // on first open, not with the console route.
 const AdjustmentRequestDrawer = dynamic(
   () => import("./AdjustmentRequestDrawer").then((m) => m.AdjustmentRequestDrawer),
@@ -88,7 +84,7 @@ export function CorrectionsScreen() {
 
   const mayCreate = can(permissions.data, "corrections", "create");
 
-  // The two batch-6 registers (ledger (a).1/(a).2): server-ordered
+  // The two registers: server-ordered
   // keyset pages (pending-first / live-first) — never re-sorted or
   // filtered locally.
   const adjustments = useKeysetList<AdjustmentRecord>({
@@ -137,7 +133,7 @@ export function CorrectionsScreen() {
     {
       key: "maker",
       header: "Maker",
-      // Bare staff UUID under least disclosure (!70 short-id render).
+      // Bare staff UUID under least disclosure (short-id render).
       render: (row) => (
         <span className={styles.mono} title={row.maker_id}>
           {row.maker_id.slice(0, 8)}

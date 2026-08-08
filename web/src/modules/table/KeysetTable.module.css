@@ -1,9 +1,9 @@
 /* Mirrors prototype table / thead / th / td */
 
-/* Small-viewport strategy (P15 Phase B): the table keeps its column
+/* Small-viewport strategy: the table keeps its column
    layout and the CONTAINER scrolls horizontally, with pure-CSS scroll
    shadows as the visible affordance and keyboard focusability so the
-   region scrolls without a pointer (issue #8). */
+   region scrolls without a pointer. */
 .scroller {
   overflow-x: auto;
   background:
@@ -20,7 +20,7 @@
   background-attachment: local, local, scroll, scroll;
 }
 
-/* Focus ring replaced, never removed (issue #8). */
+/* Focus ring replaced, never removed. */
 .scroller:focus-visible {
   outline: 2px solid var(--navy);
   outline-offset: -2px;
@@ -70,7 +70,7 @@
   background: var(--bg);
 }
 
-/* Focus ring replaced, never removed (issue #8) — inset so the ring
+/* Focus ring replaced, never removed — inset so the ring
    stays visible inside the table's clipping box. */
 .rowClickable:focus-visible {
   outline: 2px solid var(--navy);

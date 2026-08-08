@@ -1,8 +1,7 @@
 /*
- * Shared module-page grid patterns (P15 Phase B responsiveness — one
- * copy, gate 1.1). BREAKPOINT CONVENTION for the whole console:
- *   640px  — narrow (phones): single column, drawers full-screen
- *   960px  — medium (small laptops/tablets): sidebars stack, 4-up -> 2-up
+ * Shared module-page grid patterns (responsiveness — one copy, reuse-first). BREAKPOINT CONVENTION for the whole console:
+ *   640px — narrow (phones): single column, drawers full-screen
+ *   960px — medium (small laptops/tablets): sidebars stack, 4-up -> 2-up
  * Scale tokens only; no ad-hoc pixel values besides the two breakpoints.
  */
 
@@ -13,12 +12,12 @@
   gap: var(--space-md);
 }
 
-/* Half-width card inside .cards4. */
+/* Half-width card inside.cards4. */
 .half {
   grid-column: span 2;
 }
 
-/* Full-width card inside .cards4. */
+/* Full-width card inside.cards4. */
 .wide {
   grid-column: 1 / -1;
 }

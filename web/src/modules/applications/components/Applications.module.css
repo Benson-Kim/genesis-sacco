@@ -1,6 +1,6 @@
 /*
- * Applications + committee module styles (P15 module 3). Tokens only
- * (gate 1.1); page-level GRIDS come from the shared
+ * Applications + committee module styles (module 3). Tokens only
+ * (reuse-first); page-level GRIDS come from the shared
  * modules/layout/grid.module.css — no private page grid lives here.
  */
 
@@ -25,7 +25,7 @@
     gap: 6px;
 }
 
-/* Persistent label (issue #8 — never placeholder-as-label). */
+/* Persistent label (never placeholder-as-label). */
 .filterLabel {
     font-size: 11px;
     text-transform: uppercase;
@@ -147,7 +147,7 @@
 }
 
 /* Stage workflow indicator (prototype vAppDetail) — text+shape, never
- * color alone (issue #8). */
+ * color alone. */
 .stages {
     list-style: none;
     display: flex;

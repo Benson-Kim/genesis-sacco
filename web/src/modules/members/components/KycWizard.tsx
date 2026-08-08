@@ -1,9 +1,7 @@
 "use client";
 
 /**
- * Member-KYC registration wizard (issue #31 batch 3 — audit #30 U1:
- * the prototype's per-type registration wizard, `vAdd()` in
- * genesis_prestige_app.html, restored over the REAL P13.12 contract).
+ * Member-KYC registration wizard (the prototype's per-type registration wizard, `vAdd()` in genesis_prestige_app.html, restored over the REAL contract).
  *
  * The prototype's step 1 (member type + identity) IS the existing
  * quick-registration drawer (POST /members — untouched); this wizard
@@ -11,14 +9,11 @@
  *   1. KYC details — the per-type sections (forms map, field-for-field
  *      against domain/member_kyc.py);
  *   2. Membership & consent — the member category and the DPA-2019
- *      consent capture (the two membership-step inputs the contract
- *      provides; the rest of the prototype's membership step has NO
- *      backend contract and is recorded on issue #31, stated below);
+ *      consent capture (the two membership-step inputs the contract provides; the rest of the prototype's membership step has NO backend contract and is recorded on, stated below);
  *   3. Documents & review — the required-documents checklist
  *      (metadata; upload deferred behind ADR-0003) and the summary.
  *
- * - Mounted only with members:create (the server enforces regardless,
- *   gate 1.6). ONE profile POST per wizard: Idempotency-Key follows
+ * - Mounted only with members:create (the server enforces regardless, least disclosure). ONE profile POST per wizard: Idempotency-Key follows
  *   the MATERIAL rule (simple create — op + full canonical body);
  *   double-submit is disabled AND short-circuited.
  * - A create-409 (profile already exists, or key reuse with a changed
@@ -197,8 +192,7 @@ export function KycWizard({
               granted later, but never withdrawn)
             </label>
           </div>
-          {/* Dividend payout PREFERENCE (#31 ledger (c) — the
-              authorized batch-8 contract): the member record's stored
+          {/* Dividend payout PREFERENCE (the authorized contract): the member record's stored
               preference, the server's code-owned vocabulary token
               rendered VERBATIM; NULL is the honest "not set" state,
               never an invented default. */}

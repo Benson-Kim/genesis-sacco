@@ -121,11 +121,14 @@ export function extractRenderedStrings(source: string): string[] {
             }
         }
     }
-    // JSX text nodes: literal text between tags in the comment- and
-    // string-blanked code (expressions `{…}` and nested tags excluded).
+    // JSX text nodes: literal text between tags/expressions in the
+    // comment- and string-blanked code. Text may be delimited by a tag
+    // (`>`/`<`) OR an expression brace (`{…}`) on either side, so both
+    // delimiters open and close a text node here (code fragments the
+    // pattern also happens to catch are inert for these patterns).
     const jsxText = codeOnly
         .join("")
-        .matchAll(/>([^<>{}]*[A-Za-z][^<>{}]*)</g);
+        .matchAll(/[>}]([^<>{}]*[A-Za-z][^<>{}]*)[<{]/g);
     for (const match of jsxText) {
         const text = match[1];
         if (text !== undefined) {
