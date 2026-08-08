@@ -1,12 +1,12 @@
-"""Branches registry endpoints (P13.6, gate 1.6).
+"""Branches registry endpoints (least disclosure).
 
 Registry CRUD sits under settings x view/create/edit per the P4 matrix
 (the prototype manages branches from Settings; the spec-walk and
 matrix tests cover every route, deny-by-default). Assignment routes
 follow the entity being edited, not the registry: assigning a USER to
-a branch is a user-administration mutation (access_control x edit, the
-P13.5 users precedent), assigning a MEMBER is a member edit (members x
-edit, the P8 precedent) — settings rights alone must not allow editing
+a branch is a user-administration mutation (access_control x edit, the users precedent), assigning a
+MEMBER is a member edit (members x
+edit, the precedent) — settings rights alone must not allow editing
 people records.
 
 Mutations are idempotent via the Idempotency-Key middleware (gate

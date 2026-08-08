@@ -1,31 +1,31 @@
-"""Idempotency-Key middleware (gate 1.4).
+"""Idempotency-Key middleware (concurrency safety).
 
 The first request claims (tenant_id, key) with a UNIQUE insert. Concurrent
 duplicates find the claim and receive 409 while the original is in flight;
 once a response is stored, replays return it verbatim. A 5xx or crash
 releases the claim so the client can retry.
 
-Replay scope (review R4): a stored response is returned ONLY to the
+Replay scope: a stored response is returned ONLY to the
 same (tenant, actor, method, path, body) — the actor rides the request
 hash, so a DIFFERENT user presenting the same key can never read the
 first caller's stored response (that would bypass the per-handler
 authorization the original caller passed). A mismatched hash gets the
 least-disclosure 409 envelope instead.
 
-Expiry (P13.17c / DSA-3, named failure mode FM3): every claim carries
+Expiry (.17c / DSA-3, named failure mode): every claim carries
 expires_at = now() + Settings.idempotency_retention_hours (server
-config, v1.1 rule 1 — no request field exists for it). The fence
+config, — no request field exists for it). The fence
 ``expires_at > now()`` is enforced in BOTH places a stored row can be
 read — the replay lookup below AND the claim statement's takeover arm —
 so expiry holds even before the retention purge
 (application/idempotency_purge.py) has ever run:
 
-  * the claim is ONE atomic statement: INSERT .. ON CONFLICT DO UPDATE
+  * the claim is ONE atomic statement: INSERT.. ON CONFLICT DO UPDATE
     whose WHERE arm takes over the existing row ONLY when it has
     expired (resetting hash/response/epoch). Two concurrent requests
     on an expired key serialise on the row: the winner's takeover
     commits a fresh live epoch and the loser's WHERE re-evaluates to
-    false — exactly one new effect per claim epoch (FM3);
+    false — exactly one new effect per claim epoch;
   * an expired key therefore executes as a NEW request with its own
     single effect — it never replays the stale stored response;
   * _store/_release are pinned to the caller's own epoch
@@ -52,7 +52,7 @@ from genesis.settings import get_settings
 
 _MUTATING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
-#: Atomic claim + expired-claim takeover (DSA-3, FM3) in ONE statement:
+#: Atomic claim + expired-claim takeover (DSA-3) in ONE statement:
 #: a fresh key INSERTs; a conflicting LIVE row does nothing (no row
 #: returned → replay/409 path); a conflicting EXPIRED row is taken
 #: over — hash and response reset, a fresh retention window started —
@@ -107,7 +107,7 @@ def _tenant_from_scope(scope: Scope) -> uuid.UUID | None:
     bearer = _header(scope, b"authorization") or ""
     if bearer.lower().startswith("bearer "):
         try:
-            # decode_principal, not the staff-only decode (P14.5): both
+            # decode_principal, not the staff-only decode: both
             # principal kinds carry a tenant and both replay-protect.
             return decode_principal(bearer[7:]).tenant_id
         except (UnauthenticatedError, ForbiddenError):
@@ -196,7 +196,7 @@ class IdempotencyMiddleware:
         body = await _read_body(receive)
         method: str = scope["method"]
         path: str = scope["path"]
-        # Storage-key scope (tenant, actor principal, route) — FM5:
+        # Storage-key scope (tenant, actor principal, route) —:
         # the actor and route live in the CLAIM KEY, so a different
         # actor's identical client key claims a different row (a MISS,
         # never the first actor's stored response). The hash keeps the

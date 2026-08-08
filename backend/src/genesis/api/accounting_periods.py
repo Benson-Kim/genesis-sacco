@@ -1,8 +1,8 @@
-"""Accounting period endpoints (issue #12, P12.5, gate 1.6).
+"""Accounting period endpoints (least disclosure).
 
 Every route carries a RequirePermission dependency (deny-by-default);
 the close mutation is idempotent via the Idempotency-Key middleware
-(gate 1.4).
+(concurrency safety).
 
 Permission gates (P4 matrix, decided and documented):
 
@@ -17,7 +17,7 @@ Permission gates (P4 matrix, decided and documented):
 
 The close body carries only year/month — the period bounds, the
 "fully elapsed" rule and every posting-date check are resolved
-server-side (issue #12: never caller-backdatable). extra="forbid"
+server-side (never caller-backdatable). extra="forbid"
 rejects anything else with a 422.
 """
 

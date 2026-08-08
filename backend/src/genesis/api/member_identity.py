@@ -1,8 +1,8 @@
-"""Member credential-link administration endpoints (P14.5 FM3).
+"""Member credential-link administration endpoints.
 
 Link create/revoke are AUDITED ADMIN MUTATIONS under the dedicated
 narrow member_identity module — never self-service, never implied by
-members:edit or applications:edit (deny by default, gate 1.6).
+members:edit or applications:edit (deny by default, least disclosure).
 Re-linking an email to another member is revoke + create: two audited
 mutations, each notifying the member.
 """

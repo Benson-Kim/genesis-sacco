@@ -1,8 +1,8 @@
 """Loan endpoints: products, applications, committee votes, guarantees (P9).
 
-Every route carries a RequirePermission dependency (deny-by-default,
-gate 1.6); mutations are idempotent via the Idempotency-Key middleware
-(gate 1.4). APPROVED is only reachable through committee quorum and
+Every route carries a RequirePermission dependency (deny-by-default, least disclosure); mutations
+are idempotent via the Idempotency-Key middleware
+(concurrency safety). APPROVED is only reachable through committee quorum and
 DISBURSED only through the P7 disbursement contract.
 """
 
@@ -46,10 +46,10 @@ _products_list = RequireAnyPermission(
     (Module.SETTINGS, Action.VIEW),
     (Module.APPLICATIONS, Action.CREATE),
 )
-#: P14.5 consent-override gate: consent is the MEMBER principal's act
+#:  consent-override gate: consent is the MEMBER principal's act
 #: (the /member routes); the staff path is an explicit ATTESTED
 #: OVERRIDE carrying the dedicated narrow permission — never
-#: applications:edit (the !29 substitution-consent lesson).
+#: applications:edit (the substitution-consent lesson).
 _member_identity_approve = RequirePermission(Module.MEMBER_IDENTITY, Action.APPROVE)
 
 SettingsViewCtx = Annotated[AuthContext, Depends(_settings_view)]
@@ -78,7 +78,7 @@ class ProductCreateBody(BaseModel):
     rate_pct: Decimal = Field(gt=0, le=100, max_digits=5, decimal_places=2)
     deposit_multiplier: Decimal = Field(gt=0, max_digits=5, decimal_places=2)
     max_term_months: int = Field(ge=1, le=120)
-    #: P13.7: stored product configuration (prototype Settings screen);
+    #: stored product configuration (prototype Settings screen);
     #: bounds mirror the 0017 DB CHECK.
     guarantors_required: int = Field(default=0, ge=0, le=10)
 
@@ -133,33 +133,33 @@ class ApplicationOut(BaseModel):
     purpose: str | None
     stage: str
     cover_pct: str
-    #: Initiator attribution (issue #30 R4, migration 0036): the staff
+    #: Initiator attribution (R4, migration 0036): the staff
     #: principal who created the application — recorded at INSERT and
     #: now exposed so approvers and the disbursing officer can see WHO
     #: they are checking (the server enforces regardless: the initiator
     #: can never post the disbursement, 403). Least disclosure (gate
     #: 1.6): the bare user UUID only — never a name or email; resolving
-    #: it stays behind access_control:view (the P13.5 users/audit read
+    #: it stays behind access_control:view (the users/audit read
     #: paths). NULL only for rows written without an actor or whose
     #: pre-0036 audit history was not unambiguous (attribution is never
     #: invented).
     created_by: str | None
-    #: Recommender attribution (issue #30 close-out, migration 0037):
+    #: Recommender attribution (close-out, migration 0037):
     #: the staff principal who moved the application INTO the committee
     #: stage — the "refer to committee" recommendation, recorded at
     #: that transition and now on the read contract (the server
     #: enforces regardless: the recommender can neither vote on nor
-    #: disburse the application, 403). Least disclosure (gate 1.6): the
+    #: disburse the application, 403). Least disclosure (least disclosure): the
     #: bare user UUID only — never a name or email; resolving it stays
-    #: behind access_control:view (the P13.5 users/audit read paths).
+    #: behind access_control:view (the users/audit read paths).
     #: NULL for applications not yet referred to committee, system
     #: moves, or pre-0037 rows whose audit history was not unambiguous
     #: (attribution is never invented).
     recommended_by: str | None
     #: deposits x product multiplier + live guarantees — the cap the P7
-    #: disbursement gate enforces (issue #15). Computed on the single-
+    #: disbursement gate enforces. Computed on the single-
     #: application read only; None on listings (computing it per row
-    #: would grow queries with result size, gate 1.3).
+    #: would grow queries with result size, scalability).
     max_eligible: str | None = None
     version: int
 

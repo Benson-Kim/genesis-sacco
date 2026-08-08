@@ -1,10 +1,10 @@
-"""Ledger corrections, misc fees & loan write-off endpoints (P13.15).
+"""Ledger corrections, misc fees & loan write-off endpoints.
 
 Every route carries a RequirePermission dependency on the DEDICATED
-corrections module (A3 maker-checker; deny-by-default, gate 1.6) —
+corrections module (maker-checker; deny-by-default, least disclosure) —
 never generic transactions:edit; mutations are idempotent via the
-Idempotency-Key middleware (gate 1.4), whose stored responses are
-actor-scoped (the !29 lesson: a cross-actor replay misses).
+Idempotency-Key middleware (concurrency safety), whose stored responses are
+actor-scoped (the lesson: a cross-actor replay misses).
 
 Permission gates (P4 matrix extension, decided and documented):
 
@@ -13,19 +13,19 @@ Permission gates (P4 matrix extension, decided and documented):
   * adjustment approval / rejection, write-off vote / void / posting —
     corrections x APPROVE: the CHECKER actions (Branch Manager, Credit
     Committee, System Admin). User-level separation of duties is
-    server-side on top AND at the database (issue #24): the maker of
+    server-side on top AND at the database: the maker of
     an adjustment can never check it (the 0031 SoD CHECK), assurance
-    roles can never be checker (!47 B2), and the requester of a
+    roles can never be checker (B2), and the requester of a
     write-off can never vote on nor post it.
   * adjustment / write-off view — corrections x VIEW.
 
-Money parameters NEVER travel in request bodies (v1.1 rule 1, FM5):
-fee amounts resolve server-side from P13.7 configuration (the request
+Money parameters NEVER travel in request bodies:
+fee amounts resolve server-side from configuration (the request
 names a code-owned fee type only), adjustment figures derive from the
 original transaction's append-only legs, and write-off figures come
 from the persisted write-once snapshot; extra="forbid" turns any
 caller-supplied amount into a 422. Corrections post with occurred_at
-= NOW, server-resolved (A2) — no body carries a date.
+= NOW, server-resolved — no body carries a date.
 """
 
 from __future__ import annotations

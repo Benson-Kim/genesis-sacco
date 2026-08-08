@@ -1,16 +1,16 @@
-"""Dashboard summary endpoint (P13.9).
+"""Dashboard summary endpoint.
 
-One composite GET assembled per-permission (gate 1.6, deny by
-default): the route is reachable with ANY of the four slice grants
+One composite GET assembled per-permission (least disclosure, deny by default): the route is
+reachable with ANY of the four slice grants
 (RequireAnyPermission — still a RequirePermission dependency for the
 P4 spec-walk test), and each slice is then included ONLY when the
 caller's role holds that module's view grant. Ungranted slices are
 ABSENT from the response (response_model_exclude_none), never zeroed.
 
 The endpoint accepts NO parameters: the series window and guarantor
-list size are server-resolved from settings with hard caps (v1.1
-rule 1; gate 1.3). All slices read from one REPEATABLE READ snapshot
-(tenant_snapshot_session — the P13 blocker-h precedent) so the
+list size are server-resolved from settings with hard caps (scalability). All slices read from one
+REPEATABLE READ snapshot
+(tenant_snapshot_session — the blocker-h precedent) so the
 composite can never interleave with a concurrent settlement; the reads
 take no row locks and are documented as advisory versus the binding
 lock-guarded gates (see application.dashboard).

@@ -1,9 +1,9 @@
-"""Loan book endpoints: disbursement, repayments, portfolio, arrears (P10).
+"""Loan book endpoints: disbursement, repayments, portfolio, arrears.
 
-Every route carries a RequirePermission dependency (deny-by-default,
-gate 1.6); mutations are idempotent via the Idempotency-Key middleware
-(gate 1.4). Disbursement goes exclusively through the P7 atomic
-contract; repayments through the documented P10 allocation service.
+Every route carries a RequirePermission dependency (deny-by-default, least disclosure); mutations
+are idempotent via the Idempotency-Key middleware
+(concurrency safety). Disbursement goes exclusively through the P7 atomic
+contract; repayments through the documented allocation service.
 """
 
 from __future__ import annotations
@@ -152,12 +152,12 @@ class ArrearsRunOut(BaseModel):
     scanned: int
     updated: int
     batches: int
-    #: P13.8 — False means the tenant has not configured all three
+    #:  — False means the tenant has not configured all three
     #: penalty keys and the run accrued nothing by design (fail closed).
     penalty_configured: bool
     penalties_accrued: int
     penalty_total: str
-    #: P13.16 — recovery cases auto-closed by this run's close pass.
+    #:  — recovery cases auto-closed by this run's close pass.
     cases_closed_cured: int
     cases_closed_written_off: int
 

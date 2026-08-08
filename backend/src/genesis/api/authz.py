@@ -1,4 +1,4 @@
-"""Deny-by-default authorization (gate 1.6).
+"""Deny-by-default authorization (least disclosure).
 
 Every business route MUST carry a RequirePermission dependency; a CI test
 walks the route table and fails if any operation lacks one.
@@ -50,11 +50,11 @@ class RequirePermission:
                 session, ctx.tenant_id, ctx.user_id, ctx.role_id, self.module, self.action
             )
         if access is None or not access.is_active:
-            # Review F3: a suspended (or vanished) user is refused
+            # a suspended (or vanished) user is refused
             # immediately — the access token's remaining lifetime never
             # bridges a committed suspension. 401, not 403: the session
             # is dead, not under-privileged. Only the error category
-            # leaves the server (least disclosure, gate 1.6).
+            # leaves the server (least disclosure, least disclosure).
             raise UnauthenticatedError("user is not active")
         if not access.allowed:
             raise ForbiddenError(f"{self.module.value}:{self.action.value}")
@@ -121,7 +121,7 @@ class RequireAnyPermission(RequirePermission):
                     session, ctx.tenant_id, ctx.user_id, ctx.role_id, module, action
                 )
                 if access is None or not access.is_active:
-                    # Review F3: same immediate refusal as the base class.
+                    # same immediate refusal as the base class.
                     raise UnauthenticatedError("user is not active")
                 if access.allowed:
                     return ctx

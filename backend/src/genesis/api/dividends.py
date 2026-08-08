@@ -1,7 +1,7 @@
-"""Dividends & share lifecycle endpoints (P13.11, gate 1.6).
+"""Dividends & share lifecycle endpoints (least disclosure).
 
 Every route carries a RequirePermission dependency (deny-by-default);
-mutations are idempotent via the Idempotency-Key middleware (gate 1.4).
+mutations are idempotent via the Idempotency-Key middleware (concurrency safety).
 
 Permission gates (P4 matrix, decided and documented):
 
@@ -15,28 +15,26 @@ Permission gates (P4 matrix, decided and documented):
     Role-level separation of duties is not available (the matrix
     grants edit and approve to overlapping roles), so the compensating
     controls are user-level and server-side: the declaring user can
-    never VOTE on nor DISTRIBUTE their own declaration (403, the P12
-    precedent), and the decision needs the configured quorum (P9
+    never VOTE on nor DISTRIBUTE their own declaration (403, the precedent), and the decision needs
+    the configured quorum (P9
     machinery).
   * view / list — transactions x VIEW.
   * share transfer request / approval / rejection — members x
-    APPROVE: it moves member equity, the P12 settlement-posting
+    APPROVE: it moves member equity, the settlement-posting
     precedent (deliberately not members:edit, which covers non-money
-    lifecycle changes). TWO-PHASE maker-checker since issue #31
-    ledger (l) (MR !83, the !77 human-review HIGH finding): the
+    lifecycle changes). TWO-PHASE maker-checker since
+     (the human-review HIGH finding): the
     request creates a PENDING transfer bound to a persisted snapshot;
     a DISTINCT, non-assurance checker approves or rejects (server-side
     SoD + the 0040 DB CHECK). Same-permission different-principal is
-    the house posture (the P12/0031 precedent: the P4 matrix grants
-    overlapping role permissions, so separation is per USER,
-    server-side).
-  * share-transfer register / by-id read — members x VIEW (issue #31
-    ledger (m); the house read-split: corrections registers sit under
-    corrections:view while their mutations need create/approve).
+    the house posture (the /0031 precedent: the P4 matrix grants overlapping role permissions, so
+    separation is per USER, server-side).
+  * share-transfer register / by-id read — members x VIEW (the house read-split: corrections
+  registers sit under corrections:view while their mutations need create/approve).
     Least disclosure: bare UUIDs and verbatim decimal strings — the
     request-time balance snapshot is deliberately NOT serialised.
 
-Money parameters NEVER travel in request bodies (v1.1 rule 1): rates
+Money parameters NEVER travel in request bodies: rates
 and the financial-year period are resolved server-side from tenant
 configuration and the persisted approval snapshot; extra="forbid"
 turns a caller-supplied rate, period or total into a 422. The share
@@ -151,11 +149,11 @@ class DeclarationOut(BaseModel):
     total_rebate: str
     total_payout: str
     status: str
-    #: Declarer attribution (issue #31 ledger (a).4 — the human-
+    #: Declarer attribution (the human-
     #: authorized read-contract expansion): the EXISTING 0020 column
     #: that already drives the server's declarer-cannot-vote/distribute
     #: 403s, exposed as the bare staff UUID under least disclosure (the
-    #: !66/!70 exits precedent — resolving it stays behind
+    #: / exits precedent — resolving it stays behind
     #: access_control). Nullable, never invented: a NULL (system-actor
     #: declaration) serialises as an honest null.
     requested_by: str | None
@@ -183,7 +181,7 @@ class DistributionRunOut(BaseModel):
     skipped_zero: int
     skipped_claimed: int
     #: Mid-run-exited members disposed as unclaimed by this run
-    #: (issue #19 P3); exact figures live in the audit rows.
+    #: (P3); exact figures live in the audit rows.
     unclaimed: int
     dividend_total: str
     rebate_total: str

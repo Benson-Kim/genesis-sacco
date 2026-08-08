@@ -1,16 +1,15 @@
-"""Collections & recovery worklist endpoints (P13.16, gate 1.6).
+"""Collections & recovery worklist endpoints (least disclosure).
 
-The prototype "Initiate recovery" action and the P18 arrears worklist.
+The prototype "Initiate recovery" action and the arrears worklist.
 Every route carries a RequirePermission dependency (deny by default);
-mutations are idempotent via the Idempotency-Key middleware (gate 1.4).
+mutations are idempotent via the Idempotency-Key middleware (concurrency safety).
 Request bodies reject unknown fields (extra="forbid") — in particular
 NO timestamp may ride in (opened_at/first_assigned_at/closed_at are
 server-side only, addendum A7), and there is NO cure/write-off close
-route (loan-fact closes happen automatically in the arrears job; the
-issue-#23 disposition route is restricted to the code-owned
-staff-settable targets — pause, resume, restructure-close; !53 F1/F2:
-pauses require a reason and the restructure close requires — and
-atomically writes — THE outcome note) and NO note edit/delete route
+route (loan-fact closes happen automatically in the arrears job; the issue- disposition route is
+restricted to the code-owned staff-settable targets — pause, resume, restructure-close: pauses
+require a reason and the restructure close requires — and atomically writes — THE outcome note) and
+NO note edit/delete route
 (append-only, addendum A2; the single post-closure outcome note is a
 NEW append-only row).
 
@@ -23,8 +22,8 @@ ASSIGNEE must be an active same-tenant user holding loan_book:view —
 the grant that lets them see the worklist they work — EXCLUDING
 assurance roles (the Auditor) for audit-independence: segregation of
 duties forbids the collections trail's reviewer from being workable
-in it (review B2; enforced in the application service against the
-role resolved server-side from the assignee's role_id, addendum A4).
+in it (enforced in the application service against the
+role resolved server-side from the assignee's role_id, addendum).
 """
 
 from __future__ import annotations
@@ -146,7 +145,7 @@ class NoteOut(BaseModel):
     author_id: str
     note: str
     created_at: str
-    #: Issue #23 N3: True for the single post-closure outcome note.
+    #: Issue: True for the single post-closure outcome note.
     is_outcome: bool
 
 
@@ -209,7 +208,7 @@ async def open_case(body: CaseOpenBody, ctx: CreateCtx) -> CaseOut:
     return _case_out(record)
 
 
-#: DECLARED worklist status filter vocabulary (issue #31 ledger (a).3):
+#: DECLARED worklist status filter vocabulary:
 #: exactly the domain LIVE_STATUSES — the one-live-case invariant that
 #: keeps the worklist keyset's loan tiebreak valid. Code-owned Literal
 #: (the members-register include= precedent): any other value is a 422
