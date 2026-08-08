@@ -9,9 +9,11 @@ import { useState, type ClipboardEvent, type FormEvent, type KeyboardEvent } fro
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, newIdempotencyKey } from "@genesis/api-client";
-import { Button, Field } from "@genesis/design-system";
+import { Button } from "@genesis/design-system";
+import { FormField } from "@/modules/forms/FormField";
+import { KENYA_PHONE_MESSAGE, normalizeKenyaMsisdn } from "@/lib/phone";
 import { requestOtp, verifyOtp } from "../api";
-import { OTP_LENGTH, otpCodeSchema, signInEmailSchema } from "../schemas";
+import { OTP_LENGTH, classifyIdentifier, otpCodeSchema, signInEmailSchema } from "../schemas";
 import styles from "./LoginGate.module.css";
 
 const EMAIL_BLUR_MESSAGE = "Enter your registered email address.";
@@ -35,20 +37,36 @@ function errorMessage(error: unknown): string {
 export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
   const router = useRouter();
   const [stage, setStage] = useState<"request" | "verify">("request");
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [digits, setDigits] = useState<string[]>(Array.from({ length: OTP_LENGTH }, () => ""));
   const [formError, setFormError] = useState<string | null>(null);
-  //  item 1 — blur-time identifier validation (courtesy mirror of
-  // the server rule; the server stays the truth at the wire). The
-  // message shows on blur and clears the moment the value is corrected.
-  const [emailBlurError, setEmailBlurError] = useState<string | null>(null);
-  // DEV-ONLY (item 11, REMOVE BEFORE STAGING): the server sends
+  // Sign-in identifier — live AS-YOU-TYPE classification (email vs
+  // phone) with the matching validation rule, a courtesy mirror of the
+  // server's one-rule classifier; the server stays the truth at the
+  // wire. The message shows on blur and clears the moment the value is
+  // corrected while typing.
+  const [identifierError, setIdentifierError] = useState<string | null>(null);
+  // DEV-ONLY (REMOVE BEFORE STAGING): the server sends
   // dev_otp only behind its fail-closed flag; null renders NOTHING.
   const [devOtp, setDevOtp] = useState<string | null>(null);
 
-  function validateEmailBlur(value: string) {
-    const ok = signInEmailSchema.safeParse(value.trim()).success;
-    setEmailBlurError(ok ? null : EMAIL_BLUR_MESSAGE);
+  const identifierKind = classifyIdentifier(identifier);
+
+  /** null when valid; the matching rule's message when not. */
+  function identifierMessage(value: string): string | null {
+    if (classifyIdentifier(value) === "phone") {
+      return normalizeKenyaMsisdn(value) !== null ? null : KENYA_PHONE_MESSAGE;
+    }
+    return signInEmailSchema.safeParse(value.trim()).success ? null : EMAIL_BLUR_MESSAGE;
+  }
+
+  function validateIdentifierBlur(value: string) {
+    setIdentifierError(identifierMessage(value));
+  }
+
+  /** The declared wire value: normalized E.164 for a phone, trimmed email otherwise. */
+  function wireIdentifier(): string {
+    return normalizeKenyaMsisdn(identifier) ?? identifier.trim();
   }
 
   const request = useMutation({
@@ -71,13 +89,16 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
   function submitRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (request.isPending) return;
-    const parsed = signInEmailSchema.safeParse(email.trim());
-    if (!parsed.success) {
-      setFormError(EMAIL_BLUR_MESSAGE);
+    // Invalid submits are refused locally with ZERO wire calls; the
+    // inline message renders through the shared FormField wiring.
+    const message = identifierMessage(identifier);
+    if (message !== null) {
+      setIdentifierError(message);
       return;
     }
+    setIdentifierError(null);
     setFormError(null);
-    request.mutate(parsed.data);
+    request.mutate(wireIdentifier());
   }
 
   function submitVerify(event: FormEvent<HTMLFormElement>) {
@@ -92,7 +113,7 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
     // One Idempotency-Key per submission: a double-submit of the same code
     // replays the stored response instead of a second effect (concurrency safety).
     verify.mutate({
-      email: email.trim(),
+      identifier: wireIdentifier(),
       code: parsed.data,
       idempotencyKey: newIdempotencyKey(),
     });
@@ -142,32 +163,35 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
           {brand}
           <div className={styles.title}>Staff sign in</div>
           <div className={styles.subtitle}>
-            We&apos;ll send a one-time password to your registered email.
+            We&apos;ll send a one-time password to your registered email or phone.
           </div>
           {notice !== undefined && notice !== "" && (
             <div className={styles.notice}>{notice}</div>
           )}
-          <Field label="Email" htmlFor="login-email">
-            <input
-              id="login-email"
-              className={styles.input}
-              type="email"
-              inputMode="email"
-              autoComplete="email"
-              value={email}
-              onChange={(event) => {
-                setEmail(event.target.value);
-                // Clear the blur message the moment the value is corrected.
-                if (emailBlurError !== null) validateEmailBlur(event.target.value);
-              }}
-              onBlur={(event) => validateEmailBlur(event.target.value)}
-            />
-          </Field>
-          {emailBlurError !== null && (
-            <div className={styles.error} role="alert">
-              {emailBlurError}
-            </div>
-          )}
+          <FormField
+            id="login-identifier"
+            label="Email or phone"
+            error={identifierError ?? undefined}
+          >
+            {(control) => (
+              <input
+                {...control}
+                className={styles.input}
+                type="text"
+                inputMode={identifierKind === "phone" ? "tel" : "email"}
+                autoComplete="username"
+                value={identifier}
+                onChange={(event) => {
+                  setIdentifier(event.target.value);
+                  // Live re-classification happens every keystroke; a
+                  // showing message clears the moment the value is
+                  // corrected under its matching rule.
+                  if (identifierError !== null) validateIdentifierBlur(event.target.value);
+                }}
+                onBlur={(event) => validateIdentifierBlur(event.target.value)}
+              />
+            )}
+          </FormField>
           {formError !== null && <div className={styles.error}>{formError}</div>}
           <Button variant="primary" type="submit" className={styles.wide} disabled={request.isPending}>
             {request.isPending ? "Sending…" : "Send OTP"}
@@ -179,7 +203,7 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
           {brand}
           <div className={styles.title}>Verify OTP</div>
           <div className={styles.subtitle}>
-            Enter the 6-digit code sent to <b>{email}</b>
+            Enter the 6-digit code sent to <b>{identifier.trim()}</b>
           </div>
           {/* DEV-ONLY (item 11): renders ONLY when the server's
               fail-closed dev flag returned a code. REMOVE BEFORE STAGING. */}
@@ -215,7 +239,7 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
               className={styles.linkStrong}
               onClick={() => {
                 if (!request.isPending) {
-                  request.mutate(email.trim());
+                  request.mutate(wireIdentifier());
                 }
               }}
             >
@@ -223,7 +247,7 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
             </button>{" "}
             ·{" "}
             <button type="button" className={styles.link} onClick={() => setStage("request")}>
-              Change email
+              Change email or phone
             </button>
           </div>
         </form>

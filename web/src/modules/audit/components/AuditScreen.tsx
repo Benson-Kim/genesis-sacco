@@ -23,6 +23,7 @@ import { useKeysetList } from "@/modules/table/useKeysetList";
 import { fmtDateTime, isUuid, prettyJson } from "@/lib/format";
 import { fetchAuditPage } from "../api";
 import { EMPTY_AUDIT_FILTERS, type AuditEntry, type AuditFilters } from "../schemas";
+import { FormField } from "@/modules/forms/FormField";
 import styles from "./Audit.module.css";
 
 export function AuditScreen() {
@@ -108,64 +109,74 @@ export function AuditScreen() {
     <Card padded={false}>
       <form className={styles.toolbar} onSubmit={applyFilters}>
         <div className={styles.filters}>
-          <label className={styles.formStack}>
-            <span className={styles.label}>Entity</span>
-            <input
-              className={styles.input}
-              maxLength={100}
-              placeholder="e.g. users"
-              value={draft.entity}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, entity: event.target.value }))
-              }
-            />
-          </label>
-          <label className={styles.formStack}>
-            <span className={styles.label}>Action</span>
-            <input
-              className={styles.input}
-              maxLength={100}
-              placeholder="e.g. user.role"
-              value={draft.action}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, action: event.target.value }))
-              }
-            />
-          </label>
-          <label className={styles.formStack}>
-            <span className={styles.label}>Actor</span>
-            <input
-              className={styles.input}
-              maxLength={36}
-              placeholder="actor UUID"
-              value={draft.actorId}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, actorId: event.target.value }))
-              }
-            />
-          </label>
-          <label className={styles.formStack}>
-            <span className={styles.label}>From</span>
-            <input
-              className={styles.input}
-              type="date"
-              value={draft.dateFrom}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, dateFrom: event.target.value }))
-              }
-            />
-          </label>
-          <label className={styles.formStack}>
-            <span className={styles.label}>To</span>
-            <input
-              className={styles.input}
-              type="date"
-              value={draft.dateTo}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, dateTo: event.target.value }))
-              }
-            />
-          </label>
+          <FormField id="audit-filter-entity" label="Entity">
+            {(control) => (
+              <input
+                {...control}
+                className={styles.input}
+                maxLength={100}
+                placeholder="e.g. users"
+                value={draft.entity}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, entity: event.target.value }))
+                }
+              />
+            )}
+          </FormField>
+          <FormField id="audit-filter-action" label="Action">
+            {(control) => (
+              <input
+                {...control}
+                className={styles.input}
+                maxLength={100}
+                placeholder="e.g. user.role"
+                value={draft.action}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, action: event.target.value }))
+                }
+              />
+            )}
+          </FormField>
+          <FormField id="audit-filter-actor" label="Actor">
+            {(control) => (
+              <input
+                {...control}
+                className={styles.input}
+                maxLength={36}
+                placeholder="actor UUID"
+                value={draft.actorId}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, actorId: event.target.value }))
+                }
+              />
+            )}
+          </FormField>
+          <FormField id="audit-filter-from" label="From">
+            {(control) => (
+              <input
+                {...control}
+                className={styles.input}
+                type="date"
+                value={draft.dateFrom}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, dateFrom: event.target.value }))
+                }
+              />
+            )}
+          </FormField>
+          <FormField id="audit-filter-to" label="To">
+            {(control) => (
+              <input
+                {...control}
+                className={styles.input}
+                type="date"
+                value={draft.dateTo}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, dateTo: event.target.value }))
+                }
+              />
+            )}
+          </FormField>
         </div>
         <div className={styles.actions}>
           <Button type="button" onClick={clearFilters}>
