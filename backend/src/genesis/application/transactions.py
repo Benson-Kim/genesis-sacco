@@ -1,9 +1,9 @@
 """Member transactions: deposits, withdrawals, share top-ups, ledger listing (P11).
 
-Every money movement reuses the P7 posting contract (gate 1.1) and runs
+Every money movement reuses the P7 posting contract (reuse-first) and runs
 inside the caller's transaction: lock the account row -> validate ->
 post balanced legs -> update the balance -> audit; notifications are
-outbox-only via the posting services (gates 1.2, 1.4, 1.5).
+outbox-only via the posting services (the house gates).
 
 Withdrawal capacity honours guarantorship: withdrawable funds are the
 deposit balance minus the member's live pledges. Pledging computes
@@ -57,8 +57,8 @@ _TXN_COLS = (
     "reversal_of_id, created_by, external_ref"
 )
 
-#: Cursor scope id (#31 batch 13): signed cursors are bound to this
-#: endpoint and this tenant — no cross-scope replay (gate 1.6).
+#: Cursor scope id: signed cursors are bound to this
+#: endpoint and this tenant — no cross-scope replay (tenant isolation).
 TXN_LIST_SCOPE = "transactions.list"
 
 
@@ -81,13 +81,13 @@ class TransactionRecord:
     occurred_at: datetime
     direction: Side
     is_reversal: bool
-    #: Posting-actor attribution (issue #30 R3, migration 0036): the
+    #: Posting-actor attribution (migration 0036): the
     #: acting principal recorded at INSERT in ledger._post and pinned
     #: immutable by the 0004 append-only fence. None for system/job
     #: postings and for pre-0036 rows without unambiguous audit history
     #: — attribution is never invented.
     created_by: uuid.UUID | None
-    #: External receipt reference (#35 item 6, migration 0043): the
+    #: External receipt reference (migration 0043): the
     #: operator-entered M-Pesa confirmation code / bank slip ref on
     #: external-channel teller postings. None is the honest state for
     #: every system posting and every pre-0043 row — history is never
@@ -105,18 +105,18 @@ async def _require_member(
 ) -> MemberStatus:
     """Lock the member row and gate the operation on member status.
 
-    The status policy is the code-owned domain capability map (P13.13
-    FM2 — the single gatekeeper): dormant/exited refusals here are by
+    The status policy is the code-owned domain capability map (the
+    single gatekeeper): dormant/exited refusals here are by
     construction, never per-route literals. FOR SHARE holds off a
     concurrent terminal member exit (which locks the row FOR UPDATE)
     until this mutation commits, closing the TOCTOU window between the
-    status check and the posting (gate 1.4; P9 pledge precedent).
+    status check and the posting (concurrency safety; P9 pledge precedent).
     Deposits pass for_update=True instead: a deposit may have to
     reactivate a dormant member (a status WRITE), and taking FOR
     UPDATE from the start avoids a share->update lock upgrade (which
     would deadlock two concurrent deposits to the same dormant
     member). Explicit tenant predicate on top of RLS (defence in
-    depth, gate 1.6). Least disclosure: the refusal names the status
+    depth, least disclosure). Least disclosure: the refusal names the status
     and the operation, never a balance (rule 7).
     """
     lock = "FOR UPDATE" if for_update else "FOR SHARE"
@@ -148,7 +148,7 @@ async def _lock_account(
     """Row-lock the member's account; every balance writer takes this lock.
 
     The explicit tenant predicate doubles the RLS fence on this money
-    path (defence in depth, gate 1.6).
+    path (defence in depth).
     """
     table = _ACCOUNT_TABLES[kind]
     row = (
@@ -180,7 +180,7 @@ async def _set_balance(
         text(
             # Table name from _ACCOUNT_TABLES, never user input.
             # Explicit tenant predicate on the write, on top of RLS
-            # (defence in depth, gate 1.6 — second-pass finding 15).
+            # (defence in depth, least disclosure).
             f"UPDATE {table} SET balance = :bal, version = version + 1, "  # noqa: S608
             "updated_at = now() WHERE id = CAST(:id AS uuid) "
             "AND tenant_id = CAST(:tid AS uuid)"
@@ -199,18 +199,18 @@ async def record_deposit(
     channel: Channel,
     external_ref: str | None = None,
 ) -> AccountTxnResult:
-    """Post a deposit and credit the account atomically (gates 1.4, 1.5).
+    """Post a deposit and credit the account atomically (the house gates).
 
     Arrears members may deposit (money in reduces risk); dormant
     members may deposit AND are reactivated by it in this same
-    transaction (P13.13: the deposit posting, the balance credit, the
+    transaction (the deposit posting, the balance credit, the
     Dormant -> Active transition, its audit row and the member-facing
     outbox notification are one atomic unit). Exited members may not
     transact. Lock order: member row FOR UPDATE, then the deposit
     account FOR UPDATE — the established member -> accounts chain
     edge; the member FOR UPDATE is what serialises reactivation
     against the dormancy job's SKIP LOCKED scan (exactly one final
-    state, P13.13 FM3).
+    state).
     """
     amount = to_cents(amount)
     if amount <= ZERO:
@@ -240,7 +240,7 @@ async def record_deposit(
     )
     if status is MemberStatus.DORMANT:
         # Automatic reactivation inside the deposit transaction
-        # (P13.13): the member row is already held FOR UPDATE above.
+        # the member row is already held FOR UPDATE above.
         await reactivate_dormant_member(
             session, tenant_id, actor_id, member_id, txn_ref=posting.txn_ref
         )
@@ -257,12 +257,12 @@ async def record_withdrawal(
     channel: Channel,
     external_ref: str | None = None,
 ) -> AccountTxnResult:
-    """Withdraw under the account row lock; never overdraws (gate 1.4).
+    """Withdraw under the account row lock; never overdraws (concurrency safety).
 
     Withdrawable funds exclude live guarantee pledges: a guarantor can
     never withdraw collateral that backs someone else's application or
     loan. The rejection message is deliberately generic (least
-    disclosure, gate 1.6, matching the P9 pledge-capacity error): the
+    disclosure, matching the P9 pledge-capacity error): the
     withdrawable amount derives from the member's pledge exposure, and
     the audit row already records the exact figures for staff who are
     entitled to them.
@@ -316,7 +316,7 @@ async def record_share_topup(
 ) -> AccountTxnResult:
     """Post a share top-up and credit the share account atomically.
 
-    Dormant members are refused (P13.13, code-owned capability map):
+    Dormant members are refused (code-owned capability map):
     the ONLY money a dormant account accepts is a deposit, which also
     reactivates it — after that the member may top up shares normally.
     """
@@ -363,9 +363,9 @@ def _row_to_txn(row: object) -> TransactionRecord:
     )
 
 
-#: Free-text ledger search predicate (#35 item 13) — module-level so
+#: Free-text ledger search predicate — module-level so
 #: the EXPLAIN gate (tests/test_txn_search.py) asserts the exact
-#: production fragment (the P13.9 convention). ONE OR of two branches:
+#: production fragment (the EXPLAIN-capture convention). ONE OR of two branches:
 #: (a) txn_ref PREFIX probe — system refs are uppercase by
 #: construction, so the operator text probes uppercased; served
 #: portably by the 0043 text_pattern_ops index idx_txns_ref_prefix
@@ -442,7 +442,7 @@ async def list_transactions(
     cursor: str | None = None,
     limit: int = 20,
 ) -> tuple[list[TransactionRecord], str | None]:
-    """Keyset-paginated ledger listing, newest first, page cap 100 (gate 1.3).
+    """Keyset-paginated ledger listing, newest first, page cap 100 (scalability).
 
     Filters mirror the prototype columns (date, ref, member, type,
     DR/CR, channel). Backed by idx_txns_occurred_keyset and, for the
@@ -468,7 +468,7 @@ async def list_transactions(
         clauses.append("txn_ref = :ref")
         params["ref"] = ref
     if search is not None and search.strip() != "":
-        # #35 item 13: ref-prefix OR member (member_no exact / name
+        # Ref-prefix OR member (member_no exact / name
         # prefix) — see TXN_SEARCH_CLAUSE for the index derivation.
         clauses.append(TXN_SEARCH_CLAUSE)
         params.update(_search_params(search.strip()))
@@ -481,7 +481,7 @@ async def list_transactions(
         clauses.append("occurred_at < :d_to")
         params["d_to"] = date_to + timedelta(days=1)  # inclusive end date
     if cursor:
-        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # Opaque signed cursor: verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
         inner = decode_cursor(
             cursor, tenant_id=tenant_id, endpoint=TXN_LIST_SCOPE, entity="transaction"
@@ -513,29 +513,29 @@ async def list_transactions(
     return items, next_cursor
 
 
-#: Hard defensive cap on the legs of ONE posting (#31 remediation N3).
+#: Hard defensive cap on the legs of ONE posting.
 #: The widest as-built posting builder (the P12 exit settlement)
 #: writes 7 legs; 64 is comfortable headroom for any legitimate future
 #: builder while keeping the unpaginated legs response bounded by a
 #: GUARD, not merely "by construction". transaction_legs fetches
 #: cap + 1 rows and raises InvariantViolationError (a sanitized 500,
-#: no figures echoed — gate 1.6) when the cap is exceeded, so a future
+#: no figures echoed — least disclosure) when the cap is exceeded, so a future
 #: builder that unbounds a posting trips loudly instead of silently
 #: widening the response (falsifiable leg in
 #: tests/test_transaction_legs.py: remove the guard and the over-cap
 #: posting serves 200).
 MAX_TRANSACTION_LEGS = 64
 
-#: Legs drill-down read (#31 ledger (g), audit #30 A3): the per-posting
+#: Legs drill-down read: the per-posting
 #: DR/CR legs from the append-only ledger_entries truth. Module-level
 #: so the EXPLAIN capture (tests/test_batch7_explain.py) asserts
-#: against the production SQL (the P13.9 convention). Explicit tenant
-#: predicate on top of forced RLS (gate 1.6 v1.1); every value is a
+#: against the production SQL (the EXPLAIN-capture convention). Explicit tenant
+#: predicate on top of forced RLS (defence in depth); every value is a
 #: bound parameter (v1.1 rule 6). Served by idx_ledger_txn (0001:
 #: tenant_id, transaction_id) — this read ships NO migration. The leg
 #: set is bounded by construction (the widest posting builder, the P12
 #: exit settlement, writes 7 legs) AND by the MAX_TRANSACTION_LEGS
-#: guard above (#31 remediation N3: :leg_cap is bound to cap + 1 so
+#: guard above (:leg_cap is bound to cap + 1 so
 #: overflow is DETECTED, never truncated silently), so no pagination
 #: exists here; ORDER BY side DESC (debits first — the accountant's
 #: DR-before-CR convention), account, id is a total order making the
@@ -563,24 +563,24 @@ async def transaction_legs(
     tenant_id: uuid.UUID,
     transaction_id: uuid.UUID,
 ) -> list[LedgerLegRecord]:
-    """The DR/CR legs of one posting (#31 ledger (g)) — read-only.
+    """The DR/CR legs of one posting — read-only.
 
     404-BEFORE-FACTS: the transaction existence probe runs FIRST, so an
     unknown id — including a cross-tenant id hidden by RLS — surfaces
     404 before any leg is read; no rejection path ever echoes an
-    account or an amount (least disclosure, gate 1.6). The legs come
+    account or an amount (least disclosure). The legs come
     VERBATIM from the append-only ledger_entries rows (the 0004 fence):
     nothing is summed, netted or derived here — the 0004/0014 DB
     constraint trigger already proved balance at commit time, and the
     web client renders each row verbatim without a computed total
-    (P15 blocker (a)). The response is bounded by the
-    MAX_TRANSACTION_LEGS guard (#31 remediation N3), not merely by
+    (no client-side money math). The response is bounded by the
+    MAX_TRANSACTION_LEGS guard, not merely by
     construction.
     """
     exists = (
         await session.execute(
             text(
-                # Explicit tenant predicate on top of RLS (gate 1.6 v1.1).
+                # Explicit tenant predicate on top of RLS (defence in depth).
                 "SELECT 1 FROM transactions WHERE id = CAST(:txn AS uuid) "
                 "AND tenant_id = CAST(:tid AS uuid)"
             ),
@@ -595,17 +595,17 @@ async def transaction_legs(
             {
                 "tid": str(tenant_id),
                 "txn": str(transaction_id),
-                # cap + 1: the sentinel row proves overflow (#31 N3).
+                # cap + 1: the sentinel row proves overflow.
                 "leg_cap": MAX_TRANSACTION_LEGS + 1,
             },
         )
     ).all()
     if len(rows) > MAX_TRANSACTION_LEGS:
-        # Defensive bound (#31 remediation N3): a legitimate posting
+        # Defensive bound: a legitimate posting
         # never comes close (widest builder: 7 legs); tripping this
         # means a future builder unbounded a posting. Sanitized 500 —
         # the message names the id only, never an account or a figure
-        # (gate 1.6); the ledger rows themselves stay intact and
+        # (least disclosure); the ledger rows themselves stay intact and
         # auditable for staff entitled to them.
         raise InvariantViolationError(
             f"transaction {transaction_id} exceeds the bounded ledger-leg maximum"

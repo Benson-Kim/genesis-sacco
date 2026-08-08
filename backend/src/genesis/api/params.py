@@ -1,4 +1,4 @@
-"""Shared request-parameter guards for API routers (gates 1.4, 1.6).
+"""Shared request-parameter guards for API routers (the house gates).
 
 Single source of truth (DRY) for checks that several routers repeat:
 the cash-channel restriction on money-moving endpoints and the
@@ -17,8 +17,8 @@ from genesis.errors import InvalidInputError, UnprocessableError
 #: are made by jobs through their dedicated services, never by routes.
 CASH_CHANNELS = frozenset({Channel.MPESA, Channel.BANK})
 
-#: Channels whose money movement happens OUTSIDE this system (#35 item
-#: 6): an M-Pesa transfer or a bank deposit each mint an external
+#: Channels whose money movement happens OUTSIDE this system:
+#: an M-Pesa transfer or a bank deposit each mint an external
 #: receipt reference that reconciliation needs verbatim. Today this
 #: set equals CASH_CHANNELS (both teller channels are external money
 #: movements); it is a separate code-owned vocabulary because the
@@ -28,7 +28,7 @@ CASH_CHANNELS = frozenset({Channel.MPESA, Channel.BANK})
 EXTERNAL_CHANNELS = frozenset({Channel.MPESA, Channel.BANK})
 
 #: Code-owned PER-CHANNEL shapes for operator-entered external
-#: references (#35 review R3): the dedupe is only as strong as its
+#: references: the dedupe is only as strong as its
 #: canonical form, so each channel pins the exact shape its receipts
 #: actually carry. Validated AFTER trim + uppercase normalization, so
 #: the partial UNIQUE (tenant_id, channel, external_ref) dedupe (0043)
@@ -54,7 +54,7 @@ def require_cash_channel(channel: Channel) -> Channel:
 
 
 def require_external_ref(channel: Channel, external_ref: str | None) -> str | None:
-    """Mandatory external reference on EXTERNAL-channel postings (#35 item 6).
+    """Mandatory external reference on EXTERNAL-channel postings.
 
     Missing or malformed references are a sanitized 422 — the category
     only, the submitted value is NEVER echoed (least disclosure, gate
@@ -73,7 +73,7 @@ def require_external_ref(channel: Channel, external_ref: str | None) -> str | No
 
 
 def resolve_as_of(as_of: date | None) -> date:
-    """Default to today and reject future dates (gate 1.6).
+    """Default to today and reject future dates (least disclosure).
 
     A future as_of would let a caller inflate days-past-due, fabricate
     interest that is not yet due, or accrue a period that has not ended.

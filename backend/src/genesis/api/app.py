@@ -46,7 +46,7 @@ def _envelope(category: ErrorCategory) -> dict[str, str]:
 
 def create_app() -> FastAPI:
     configure_logging()
-    # Fail-closed boot guard (#31 batch 13, review B13-R5): a missing
+    # Fail-closed boot guard: a missing
     # or short cursor-signing key aborts startup here, never at the
     # first decode.
     assert_cursor_signing_key_configured()

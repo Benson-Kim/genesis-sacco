@@ -1,5 +1,5 @@
 /**
- * Web-admin security headers (gate 1.6 — banking posture).
+ * Web-admin security headers (least disclosure — banking posture).
  *
  * - CSP with per-request nonce + strict-dynamic: NO 'unsafe-inline' in
  *   script-src, ever. The nonce is minted in middleware.ts per request and

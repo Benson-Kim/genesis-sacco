@@ -1,9 +1,8 @@
 "use client";
 
 /**
- * Audit-log viewer (P15 — the governance counterpart of the audit-write
- * gate 1.5), salvaged from duo/feature/p13-5-frontend-followthrough
- * @ 198a238 (itself ported from !25 onto the P14 scaffold).
+ * Audit-log viewer (the governance counterpart of the audit-write data integrity), salvaged from duo/feature/p13-5-frontend-followthrough
+ * @ 198a238 (itself ported from onto the scaffold).
  *
  * Security posture (carried forward):
  * - before/after payloads are ATTACKER-INFLUENCED data (they embed member
@@ -215,7 +214,7 @@ function AuditEntryDrawer({ entry, onClose }: { entry: AuditEntry; onClose: () =
   return (
     <Modal title="Audit entry" onClose={onClose}>
       <div className={styles.detailGrid}>
-        {/* Design-system Kv rows (#31 batch 11, ledger (o)) — quiet
+        {/* Design-system Kv rows — quiet
             variant, byte-equivalent rules to the module CSS this
             replaced; the At row's composed tnum class passes through
             valueClassName, keeping the rendered class set equivalent. */}

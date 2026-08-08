@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * P15 dashboard — live figures from GET /dashboard/summary (P13.9/P10).
+ *  dashboard — live figures from GET /dashboard/summary (/).
  *
- * Money rules (P15 blocker (a)): every amount below is the API's decimal
+ * Money rules: every amount below is the API's decimal
  * string rendered through the string-only formatters — the client never
  * computes, aggregates or converts a money figure. Slices the role is
  * not granted arrive omitted and render as "—" (deny-by-default, 1.6).
@@ -37,16 +37,16 @@ export function useDashboardSummary() {
     });
 }
 
-// Single copy of the KES label lives in fmtKes (gate 1.1; finding F-A7).
+// Single copy of the KES label lives in fmtKes (reuse-first; finding).
 function kes(value: string | undefined): string {
     return value === undefined ? "—" : fmtKes(value);
 }
 
 /**
- * Per-KPI trend sparkline (#31 batch 8, ledger (k)): the SERVER's
+ * Per-KPI trend sparkline: the SERVER's
  * share-of-window-peak geometry consumed VERBATIM — the polyline maps
  * the pct integers 1:1; no client summing, interpolation or derived
- * deltas exist here (P15 blocker (a)).
+ * deltas exist here.
  * - series === null/undefined is PER-GRANT STRUCTURAL WITHHOLDING
  *   (the KPI's parent grant is missing or the slice predates the
  *   expand): NOTHING mounts — no affordance ever claims data exists.
@@ -78,6 +78,12 @@ function KpiTrendSparkline({
 }
 
 function StatCards({ summary }: Readonly<{ summary: DashboardSummary }>) {
+    // KPI sparklines: SERVER-normalized series from the
+    // charts slice — mapped to plain integer arrays here, no money
+    // value is ever read. HONEST labelling: the deposit/disbursement
+    // flow series render on the cards they truly describe; the PAR-30
+    // and member cards consume the ledger-(k) kpi_trends
+    // slice (posting-history / status-fact truth) VERBATIM.
     const flowSeries = summary.charts?.flows ?? null;
     const depositTrend = flowSeries?.months.map((m) => m.deposits_pct) ?? null;
     const disbursementTrend = flowSeries?.months.map((m) => m.disbursements_pct) ?? null;
@@ -189,7 +195,7 @@ function ClassificationCard({
     return (
         <Card className={grid.third}>
             <h2 className={styles.title}>Portfolio classification</h2>
-            {/* Progress-bar supplement (issue #32): server-computed
+            {/* Progress-bar supplement: server-computed
                 shares; the table below is the figures of record. */}
             {portfolio !== null && <ClassificationBars portfolio={portfolio} />}
             <table className={styles.flows}>

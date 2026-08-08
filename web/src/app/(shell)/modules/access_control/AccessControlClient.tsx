@@ -7,7 +7,7 @@ import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
 import styles from "./access-control.module.css";
 
-// Tab-level code splitting (P15 Phase B speed): each panel is its own
+// Tab-level code splitting (speed): each panel is its own
 // chunk — the permissions matrix never loads unless its tab is opened.
 const UsersScreen = dynamic(
   () => import("@/modules/users/components/UsersScreen").then((m) => m.UsersScreen),
@@ -19,8 +19,7 @@ const PermissionsScreen = dynamic(
 );
 
 /**
- * Client shell for the access-control page (P15; salvaged from
- * duo/feature/p13-5-frontend-followthrough @ 198a238).
+ * Client shell for the access-control page (salvaged from duo/feature/p13-5-frontend-followthrough @ 198a238).
  * - Tab switcher and "Add user" share one flex row; the button only
  *   appears when the Users tab is active AND the signed-in user has
  *   access_control:create.
