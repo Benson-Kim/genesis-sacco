@@ -104,9 +104,7 @@ def test_member_create_invalid_phone_is_sanitized_422_and_writes_nothing() -> No
             # Least disclosure: the identifier is NEVER echoed back.
             assert INVALID_PHONE not in json.dumps(payload)
         async with tenant_session(factory(), tid) as session:
-            count = (
-                await session.execute(text("SELECT count(*) FROM members"))
-            ).scalar_one()
+            count = (await session.execute(text("SELECT count(*) FROM members"))).scalar_one()
         assert int(count) == 0
 
     asyncio.run(run())

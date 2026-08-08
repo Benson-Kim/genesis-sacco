@@ -64,10 +64,7 @@ async def _delete_permission_row(tid: uuid.UUID, role_id: uuid.UUID, module: str
     """Simulate a tenant seeded BEFORE `module` joined the Module enum."""
     async with tenant_session(factory(), tid) as session:
         await session.execute(
-            text(
-                "DELETE FROM permissions "
-                "WHERE role_id = CAST(:rid AS uuid) AND module = :module"
-            ),
+            text("DELETE FROM permissions WHERE role_id = CAST(:rid AS uuid) AND module = :module"),
             {"rid": str(role_id), "module": module},
         )
 

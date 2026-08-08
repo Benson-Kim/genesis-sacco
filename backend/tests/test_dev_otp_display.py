@@ -58,9 +58,7 @@ def test_flag_off_by_default_response_has_no_dev_otp(
         headers = {"x-tenant-id": str(tid)}
         with caplog.at_level(logging.DEBUG):
             async with api_client() as client:
-                res = await client.post(
-                    "/auth/otp/request", json={"email": email}, headers=headers
-                )
+                res = await client.post("/auth/otp/request", json={"email": email}, headers=headers)
         assert res.status_code == 202
         # FAIL-CLOSED: the key is ABSENT, not empty/null.
         assert res.json() == {"status": "sent"}
@@ -79,9 +77,7 @@ def test_flag_on_displays_a_code_that_actually_verifies(
         headers = {"x-tenant-id": str(tid)}
         with caplog.at_level(logging.DEBUG):
             async with api_client() as client:
-                res = await client.post(
-                    "/auth/otp/request", json={"email": email}, headers=headers
-                )
+                res = await client.post("/auth/otp/request", json={"email": email}, headers=headers)
                 assert res.status_code == 202
                 body = res.json()
                 assert body["status"] == "sent"
