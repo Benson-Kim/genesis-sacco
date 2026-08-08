@@ -49,6 +49,11 @@ export interface TxnListFilters {
   direction: Side | "";
   /** Exact txn_ref match (the P11 contract's `ref` filter). */
   ref: string;
+  /** Free-text probe (#35 item 13): txn_ref PREFIX or member match
+   * (member_no exact / name prefix) — resolved entirely SERVER-side
+   * (bound parameters, code-escaped LIKE); the client never filters
+   * locally. */
+  search: string;
   /** ISO dates (YYYY-MM-DD); the server treats date_to as inclusive. */
   date_from: string;
   date_to: string;
@@ -60,6 +65,7 @@ export const EMPTY_TXN_FILTERS: TxnListFilters = {
   channel: "",
   direction: "",
   ref: "",
+  search: "",
   date_from: "",
   date_to: "",
 };
@@ -78,6 +84,7 @@ export async function fetchTransactionsPage(
         channel: filters.channel === "" ? undefined : filters.channel,
         direction: filters.direction === "" ? undefined : filters.direction,
         ref: filters.ref === "" ? undefined : filters.ref,
+        search: filters.search === "" ? undefined : filters.search,
         date_from: filters.date_from === "" ? undefined : filters.date_from,
         date_to: filters.date_to === "" ? undefined : filters.date_to,
       },
@@ -111,6 +118,10 @@ export async function fetchTransactionLegs(txnId: string): Promise<LedgerLeg[]> 
 export interface MoneyWireBody {
   amount: string;
   channel: CashChannel;
+  /** External receipt reference (#35 item 6): REQUIRED by the server
+   * on both offered channels (sanitized 422 when missing); the server
+   * normalizes UPPERCASE and enforces the per-channel dedupe (409). */
+  external_ref: string;
 }
 
 /**

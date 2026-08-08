@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from genesis.api.authz import RequirePermission
-from genesis.api.params import require_cash_channel
+from genesis.api.params import require_cash_channel, require_external_ref
 from genesis.application import deposit_interest as interest_service
 from genesis.application import transactions as txn_service
 from genesis.application.auth import AuthContext
@@ -51,6 +51,13 @@ class MoneyBody(BaseModel):
     #: of silently rounding them into the ledger (P10 precedent).
     amount: Decimal = Field(gt=0, le=1_000_000_000, decimal_places=2)
     channel: Channel
+    #: External receipt reference (#35 item 6): REQUIRED for the
+    #: external channels (mpesa, bank — every channel this teller
+    #: boundary accepts) and enforced by require_external_ref with a
+    #: sanitized 422 (the value is never echoed). Wire-OPTIONAL for
+    #: one release (expand -> migrate -> contract): an old client's
+    #: body still parses; the handler refuses it honestly.
+    external_ref: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class InterestRunBody(BaseModel):
@@ -95,6 +102,11 @@ class TransactionOut(BaseModel):
     #: pre-0036 rows without unambiguous audit history — attribution is
     #: never invented. Immutable by the 0004 append-only fence.
     created_by: str | None
+    #: External receipt reference (#35 item 6, migration 0043) —
+    #: expand-only NULLABLE field: the operator-entered M-Pesa code /
+    #: bank slip ref on external-channel teller postings; null is the
+    #: honest state for system postings and pre-0043 history.
+    external_ref: str | None
 
 
 class TransactionListResponse(BaseModel):
@@ -165,6 +177,7 @@ def _txn_out(t: txn_service.TransactionRecord) -> TransactionOut:
         occurred_at=t.occurred_at.isoformat(),
         is_reversal=t.is_reversal,
         created_by=str(t.created_by) if t.created_by else None,
+        external_ref=t.external_ref,
     )
 
 
@@ -176,10 +189,17 @@ async def post_member_deposit(
 ) -> AccountTxnOut:
     """Record a member deposit (teller flow)."""
     channel = require_cash_channel(body.channel)
+    external_ref = require_external_ref(channel, body.external_ref)
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         result = await txn_service.record_deposit(
-            session, ctx.tenant_id, ctx.user_id, member_id, amount=body.amount, channel=channel
+            session,
+            ctx.tenant_id,
+            ctx.user_id,
+            member_id,
+            amount=body.amount,
+            channel=channel,
+            external_ref=external_ref,
         )
     return _account_out(result)
 
@@ -192,10 +212,17 @@ async def post_member_withdrawal(
 ) -> AccountTxnOut:
     """Record a withdrawal; capacity excludes live guarantee pledges."""
     channel = require_cash_channel(body.channel)
+    external_ref = require_external_ref(channel, body.external_ref)
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         result = await txn_service.record_withdrawal(
-            session, ctx.tenant_id, ctx.user_id, member_id, amount=body.amount, channel=channel
+            session,
+            ctx.tenant_id,
+            ctx.user_id,
+            member_id,
+            amount=body.amount,
+            channel=channel,
+            external_ref=external_ref,
         )
     return _account_out(result)
 
@@ -208,10 +235,17 @@ async def post_member_share_topup(
 ) -> AccountTxnOut:
     """Record a share top-up (SH- ref)."""
     channel = require_cash_channel(body.channel)
+    external_ref = require_external_ref(channel, body.external_ref)
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         result = await txn_service.record_share_topup(
-            session, ctx.tenant_id, ctx.user_id, member_id, amount=body.amount, channel=channel
+            session,
+            ctx.tenant_id,
+            ctx.user_id,
+            member_id,
+            amount=body.amount,
+            channel=channel,
+            external_ref=external_ref,
         )
     return _account_out(result)
 
@@ -224,12 +258,20 @@ async def list_ledger(
     channel: Channel | None = None,
     direction: Side | None = None,
     ref: Annotated[str | None, Query(max_length=32)] = None,
+    search: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
     date_from: date | None = None,
     date_to: date | None = None,
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> TransactionListResponse:
-    """Ledger listing with the prototype filters (date, ref, member, type, DR/CR, channel)."""
+    """Ledger listing with the prototype filters (date, ref, member, type, DR/CR, channel).
+
+    search (#35 item 13): expand-only declared free-text probe —
+    txn_ref PREFIX, or member match (member_no exact / name prefix)
+    via an EXISTS on members. Bound parameters only; LIKE
+    metacharacters are escaped code-side; keyset order preserved; the
+    0043 idx_txns_ref_prefix serves the ref-prefix branch portably.
+    """
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         items, next_cursor = await txn_service.list_transactions(
@@ -240,6 +282,7 @@ async def list_ledger(
             channel=channel,
             direction=direction,
             ref=ref,
+            search=search,
             date_from=date_from,
             date_to=date_to,
             cursor=cursor,

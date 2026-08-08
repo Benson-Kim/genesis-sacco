@@ -45,9 +45,7 @@ import { announce } from "@/modules/layout/announcer";
 import { isConflict } from "@/lib/errors";
 import { fmtKes } from "@/lib/format";
 import { STALE_TIME } from "@/lib/query";
-import { useKeysetList } from "@/modules/table/useKeysetList";
-import { fetchMember, fetchMembersPage } from "@/modules/members/api";
-import type { Member } from "@/modules/members/schemas";
+import { fetchMember, lookupMemberByNo } from "@/modules/members/api";
 import { postMoneyWrite } from "../api";
 import {
   CASH_CHANNELS,
@@ -71,9 +69,18 @@ const KIND_EFFECT: Record<MoneyEntryInput["kind"], string> = {
 export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => void }>) {
   const queryClient = useQueryClient();
   const [kind, setKind] = useState("deposit");
-  const [memberId, setMemberId] = useState("");
+  // #35 item 14: the member is looked up by their UNIQUE number on
+  // blur — the full member-list select no longer exists here. The
+  // lookup resolves ONLY the blurred value; editing the field
+  // withdraws the resolution until the next blur.
+  const [memberNoInput, setMemberNoInput] = useState("");
+  const [lookupNo, setLookupNo] = useState("");
   const [amount, setAmount] = useState("");
   const [channel, setChannel] = useState("");
+  // External receipt reference (#35 item 6): required by the server on
+  // both offered channels; cleared per posting so a duplicate ref can
+  // never ride a "Post another" flow by accident.
+  const [externalRef, setExternalRef] = useState("");
   const [clientErrors, setClientErrors] = useState<FieldErrors>({});
   const [confirmEntry, setConfirmEntry] = useState<MoneyEntryInput | null>(null);
   const [result, setResult] = useState<AccountTxn | null>(null);
@@ -92,16 +99,18 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
   const [intentSeq, setIntentSeq] = useState(0);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
 
-  // Member picker: the keyset contract (gate 1.3) — pages of 20 with an
-  // explicit "load more". The P8 list has no search parameter (recorded
-  // honestly in the MR). No status filter: deposits into arrears or
-  // dormant accounts are legitimate teller flows; the server rejects
-  // exited members regardless.
-  const members = useKeysetList<Member>({
-    queryKey: ["members", "list", { status: "", type: "" }],
-    fetchPage: (cursor) => fetchMembersPage({ status: "", type: "" }, cursor),
+  // Unique-identifier lookup (#35 item 14): the expand-only member_no
+  // exact-match param on GET /members (DB UNIQUE (tenant_id,
+  // member_no)). No status filter: deposits into arrears or dormant
+  // accounts are legitimate teller flows; the server rejects exited
+  // members regardless.
+  const lookup = useQuery({
+    queryKey: ["members", "lookup", lookupNo === "" ? "none" : lookupNo],
+    queryFn: () => lookupMemberByNo(lookupNo),
+    enabled: lookupNo !== "",
+    staleTime: STALE_TIME.record,
   });
-  const memberOptions = members.data?.pages.flatMap((page) => page.items) ?? [];
+  const memberId = lookup.data?.id ?? "";
 
   // FRESH record read (staleTime 0) the moment a member is chosen —
   // the confirmation only arms once this read has landed (pattern (e)).
@@ -118,7 +127,7 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
       postMoneyWrite(
         input.kind,
         input.member_id,
-        { amount: input.amount, channel: input.channel },
+        { amount: input.amount, channel: input.channel, external_ref: input.external_ref },
         idempotencyKeyFor(
           keySlot.current,
           JSON.stringify({
@@ -181,6 +190,7 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
       member_id: memberId,
       amount: amount.trim(),
       channel,
+      external_ref: externalRef.trim(),
     });
     if (!parsed.success) {
       setClientErrors(fromZodError(parsed.error));
@@ -252,6 +262,7 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
                 setResult(null);
                 setAmount("");
                 setChannel("");
+                setExternalRef("");
                 setClientErrors({});
                 post.reset();
               }}
@@ -286,32 +297,39 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
             drawer); misc fees belong to the corrections module — neither is
             posted from this screen.
           </div>
-          <FormField id="txn-member" label="Member" error={fieldErrors["member_id"]}>
+          <FormField
+            id="txn-member-no"
+            label="Member number"
+            error={fieldErrors["member_id"]}
+            hint="Unique member number (e.g. GP-0421) — looked up when you leave the field."
+          >
             {(control) => (
-              <select
+              <input
                 {...control}
-                className={styles.select}
-                value={memberId}
-                onChange={(event) => setMemberId(event.target.value)}
+                className={styles.input}
+                inputMode="search"
+                maxLength={32}
+                value={memberNoInput}
+                onChange={(event) => {
+                  setMemberNoInput(event.target.value);
+                  // Editing withdraws any prior resolution: the money
+                  // write can only ever target the value the operator
+                  // actually blurred (#35 item 14).
+                  setLookupNo("");
+                }}
+                onBlur={() => setLookupNo(memberNoInput.trim())}
                 disabled={post.isPending}
-              >
-                <option value="">Select a member…</option>
-                {memberOptions.map((member) => (
-                  <option key={member.id} value={member.id}>
-                    {member.name} · {member.member_no}
-                  </option>
-                ))}
-              </select>
+              />
             )}
           </FormField>
-          {members.hasNextPage && (
-            <Button
-              type="button"
-              onClick={() => void members.fetchNextPage()}
-              disabled={members.isFetchingNextPage}
-            >
-              {members.isFetchingNextPage ? "Loading…" : "Load more members"}
-            </Button>
+          {lookupNo !== "" && lookup.isPending && (
+            <div className={styles.formNote}>Looking up member {lookupNo}…</div>
+          )}
+          {lookupNo !== "" && lookup.isError && <ErrorBanner error={lookup.error} />}
+          {lookupNo !== "" && !lookup.isPending && !lookup.isError && lookup.data === null && (
+            <div className={styles.formNote} role="status">
+              No member found with number {lookupNo} — check the number and try again.
+            </div>
           )}
           {memberId !== "" && memberDetail.isPending && (
             <div className={styles.formNote}>Verifying the member record…</div>
@@ -363,6 +381,23 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
                   </option>
                 ))}
               </select>
+            )}
+          </FormField>
+          <FormField
+            id="txn-ext-ref"
+            label="External reference"
+            error={fieldErrors["external_ref"]}
+            hint="M-Pesa confirmation code or bank slip reference — required; the server refuses a duplicate per channel."
+          >
+            {(control) => (
+              <input
+                {...control}
+                className={styles.input}
+                maxLength={40}
+                value={externalRef}
+                onChange={(event) => setExternalRef(event.target.value)}
+                disabled={post.isPending}
+              />
             )}
           </FormField>
           <div className={styles.formNote}>
