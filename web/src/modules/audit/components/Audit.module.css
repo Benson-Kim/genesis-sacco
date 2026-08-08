@@ -1,7 +1,7 @@
 /*
- * Audit-log viewer (P15 access-control) — salvaged from
+ * Audit-log viewer (access-control) — salvaged from
  * duo/feature/p13-5-frontend-followthrough @ 198a238; inputs adapted to
- * this branch's issue-#8 conventions (44px targets, :focus-visible).
+ * this branch's issue- conventions (44px targets,:focus-visible).
  */
 .toolbar {
   display: flex;

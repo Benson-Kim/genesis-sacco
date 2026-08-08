@@ -19,7 +19,7 @@ import styles from "./Members.module.css";
 /**
  * Register-member drawer (P8 POST /members). The Idempotency-Key stays
  * stable across retries of an identical submission and rotates when the
- * form content changes (gate 1.4); the submit button is disabled while
+ * form content changes (concurrency safety); the submit button is disabled while
  * the mutation is pending, so a double-submit produces exactly one
  * member. Money-bearing accounts are opened by the SERVER as part of
  * member registration — nothing monetary is entered or computed here.
@@ -37,7 +37,7 @@ export function MemberCreateDrawer({
     const [phone, setPhone] = useState("");
     const [email, setEmail] = useState("");
     const [formError, setFormError] = useState<string | null>(null);
-    // #35 item 1 — blur-time Kenya-phone validation (courtesy mirror of
+    //  item 1 — blur-time Kenya-phone validation (courtesy mirror of
     // the server rule, which normalizes to E.164 on write and refuses
     // invalid input with a sanitized 422). Shows on blur, clears on
     // correction.

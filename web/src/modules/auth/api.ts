@@ -15,7 +15,7 @@ export async function requestOtp(email: string): Promise<{ devOtp: string | null
   if (error !== undefined) {
     throw toApiError(error, response);
   }
-  // DEV-ONLY (#35 item 11, REMOVE BEFORE STAGING): the server includes
+  // DEV-ONLY (item 11, REMOVE BEFORE STAGING): the server includes
   // dev_otp only behind its fail-closed flag; absent means null here —
   // the note simply does not render.
   const parsed = otpRequestResponseSchema.safeParse(data);
@@ -25,7 +25,7 @@ export async function requestOtp(email: string): Promise<{ devOtp: string | null
 export async function verifyOtp(input: {
   email: string;
   code: string;
-  /** One key per logical submission; reuse on retry of the same attempt (gate 1.4). */
+  /** One key per logical submission; reuse on retry of the same attempt (concurrency safety). */
   idempotencyKey?: string;
 }): Promise<TokenResponse> {
   const { data, error, response } = await api.POST("/auth/otp/verify", {
@@ -50,7 +50,7 @@ export async function logout(): Promise<void> {
     // Local sign-out must never be blocked by a failed revocation call.
     clearSession();
     // Every per-tab witnessed registry dies with the session (W58-2,
-    // the !60 F2 class): the next operator inherits no witnessed
+    // the F2 class): the next operator inherits no witnessed
     // attributions and no armed affordances.
     clearSessionScopedStores();
   }
