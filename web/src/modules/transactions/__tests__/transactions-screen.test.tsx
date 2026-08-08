@@ -802,7 +802,14 @@ test("Zod boundary rejects money as NUMBERS, unknown enums and leading-zero inpu
 
   // Money INPUT hygiene (!60 F6): pure string shape — leading zeros and
   // zero amounts rejected, honest cents accepted.
-  const entry = { kind: "deposit", member_id: MEMBER_ID, channel: "mpesa" };
+  // external_ref is REQUIRED since #35 item 6 — a valid M-Pesa code
+  // keeps these legs probing ONLY the amount shape.
+  const entry = {
+    kind: "deposit",
+    member_id: MEMBER_ID,
+    channel: "mpesa",
+    external_ref: "SGH3KLM9QT",
+  };
   expect(moneyEntrySchema.safeParse({ ...entry, amount: "007.10" }).success).toBe(false);
   expect(moneyEntrySchema.safeParse({ ...entry, amount: "0" }).success).toBe(false);
   expect(moneyEntrySchema.safeParse({ ...entry, amount: "0.00" }).success).toBe(false);

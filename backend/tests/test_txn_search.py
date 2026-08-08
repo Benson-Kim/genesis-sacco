@@ -135,9 +135,7 @@ def test_like_metacharacters_are_inert_and_keyset_walk_is_preserved() -> None:
         async with api_client() as client:
             # '%' probes LITERALLY (escaped code-side): nothing matches.
             # Falsifiable: drop the escaping and '%' matches all three.
-            res = await client.get(
-                "/transactions", params={"search": "%"}, headers=_headers(token)
-            )
+            res = await client.get("/transactions", params={"search": "%"}, headers=_headers(token))
             assert res.status_code == 200
             assert res.json()["items"] == []
 
@@ -149,9 +147,7 @@ def test_like_metacharacters_are_inert_and_keyset_walk_is_preserved() -> None:
                 params: dict[str, object] = {"search": "alice", "limit": 1}
                 if cursor:
                     params["cursor"] = cursor
-                res = await client.get(
-                    "/transactions", params=params, headers=_headers(token)
-                )
+                res = await client.get("/transactions", params=params, headers=_headers(token))
                 assert res.status_code == 200
                 body = res.json()
                 seen.extend(i["id"] for i in body["items"])
