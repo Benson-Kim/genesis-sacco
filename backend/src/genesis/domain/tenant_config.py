@@ -1,11 +1,10 @@
-"""Tenant configuration registry and band rules (P13.7). Pure logic.
+"""Tenant configuration registry and band rules. Pure logic.
 
 Single source of truth for every tenant-configurable money parameter
-(gate 1.6 v1.1 rule 1: the settings API is the single legitimate
-writer, and these code-owned keys are the only keys it accepts —
-callers can never invent a setting).
+(least disclosure: the settings API is the single legitimate writer, and these code-owned keys are
+the only keys it accepts — callers can never invent a setting).
 
-Three pieces live here, all free of I/O (MASTER_PROMPT 2.1):
+Three pieces live here, all free of I/O (the house doctrine 2.1):
 
   * SETTINGS_REGISTRY — the typed setting registry. Every key declares
     its group, type, unit, bounds (mirrored 1:1 by a DB CHECK shipped
@@ -106,7 +105,7 @@ def _spec(
     return key, SettingSpec(key, group, value_type, unit, bounds, consumers)
 
 
-#: The typed setting registry (P13.7). Keys are the tenant_settings
+#: The typed setting registry. Keys are the tenant_settings
 #: column names; the settings API accepts exactly these keys (unknown
 #: keys are a 422 via extra="forbid") and the completeness tests pin
 #: API model <-> registry <-> DB columns to each other.
@@ -459,12 +458,12 @@ def authority_may_ratify(role_name: str, amount: Decimal, bands: tuple[ApprovalB
 
     A role LISTED in the matrix is capped by its own band ceiling. A
     role NOT listed in a configured matrix FAILS CLOSED WITH A FLOOR
-    (review R2): it may ratify only amounts within the FIRST band's
+    it may ratify only amounts within the FIRST band's
     ceiling, so a misconfigured matrix (a role holding
     applications:edit that the tenant forgot to list) degrades to the
     smallest configured authority instead of silently uncapping a
-    money ceiling. The uncapped pre-P13.7 fallback (BUILD_PROMPTS
-    P13.7: "current constants as fallback defaults") applies only when
+    money ceiling. The uncapped earlier fallback (the build plan: "current constants as fallback
+    defaults") applies only when
     NO matrix is configured at all — enforce_authority_band returns
     before ever calling this function in that case.
     """
