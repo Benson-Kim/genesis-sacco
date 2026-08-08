@@ -140,11 +140,13 @@ from genesis.errors import ConflictError, InvalidInputError, NotFoundError, Unpr
 
 #: Cursor scope ids (#31 batch 13): signed cursors are bound to ONE
 #: endpoint - a worklist cursor can never open a notes page (gate 1.6).
-_WORKLIST_SCOPE = "recovery.worklist"
-_CASE_NOTES_SCOPE = "recovery.notes"
+WORKLIST_SCOPE = "recovery.worklist"
+CASE_NOTES_SCOPE = "recovery.notes"
 
 __all__ = [
+    "CASE_NOTES_SCOPE",
     "DEFAULT_CLOSE_BATCH_SIZE",
+    "WORKLIST_SCOPE",
     "CaseNotePage",
     "CaseNoteRecord",
     "RecoveryCaseRecord",
@@ -851,7 +853,7 @@ async def list_case_notes(
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
         inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_CASE_NOTES_SCOPE, entity="recovery note"
+            cursor, tenant_id=tenant_id, endpoint=CASE_NOTES_SCOPE, entity="recovery note"
         )
         c_ts, c_id = parse_created_id_cursor(inner, entity="recovery note")
         params["c_ts"] = c_ts
@@ -873,7 +875,7 @@ async def list_case_notes(
         next_cursor = encode_cursor(
             build_created_id_cursor(items[-1].created_at, items[-1].id),
             tenant_id=tenant_id,
-            endpoint=_CASE_NOTES_SCOPE,
+            endpoint=CASE_NOTES_SCOPE,
         )
     return CaseNotePage(items=items, next_cursor=next_cursor)
 
@@ -975,7 +977,7 @@ async def list_worklist(
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
         inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_WORKLIST_SCOPE, entity="worklist"
+            cursor, tenant_id=tenant_id, endpoint=WORKLIST_SCOPE, entity="worklist"
         )
         c_dpd, c_id = _parse_worklist_cursor(inner)
         params["c_dpd"] = c_dpd
@@ -1016,7 +1018,7 @@ async def list_worklist(
         next_cursor = encode_cursor(
             f"{last.days_past_due}|{last.loan_id}",
             tenant_id=tenant_id,
-            endpoint=_WORKLIST_SCOPE,
+            endpoint=WORKLIST_SCOPE,
         )
     return WorklistPage(items=items, next_cursor=next_cursor)
 

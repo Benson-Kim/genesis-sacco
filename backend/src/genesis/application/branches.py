@@ -75,9 +75,9 @@ from genesis.errors import ConflictError, InvalidInputError, NotFoundError
 #: Cursor scope ids (#31 batch 13): every signed cursor is bound to ONE
 #: endpoint — a branches cursor can never open a roster page and vice
 #: versa (gate 1.6).
-_BRANCHES_LIST_SCOPE = "branches.list"
-_BRANCH_USERS_SCOPE = "branches.users"
-_BRANCH_MEMBERS_SCOPE = "branches.members"
+BRANCHES_LIST_SCOPE = "branches.list"
+BRANCH_USERS_SCOPE = "branches.users"
+BRANCH_MEMBERS_SCOPE = "branches.members"
 
 #: Users scanned per backfill transaction (P10/P11 batch precedent).
 DEFAULT_BATCH_SIZE = 200
@@ -352,7 +352,7 @@ async def list_branches(
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
         inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_BRANCHES_LIST_SCOPE, entity="branch"
+            cursor, tenant_id=tenant_id, endpoint=BRANCHES_LIST_SCOPE, entity="branch"
         )
         c_ts, c_id = parse_created_id_cursor(inner, entity="branch")
         params["c_ts"] = c_ts
@@ -367,7 +367,7 @@ async def list_branches(
         next_cursor = encode_cursor(
             build_created_id_cursor(last.created_at, last.id),
             tenant_id=tenant_id,
-            endpoint=_BRANCHES_LIST_SCOPE,
+            endpoint=BRANCHES_LIST_SCOPE,
         )
     return BranchPage(items=items, next_cursor=next_cursor)
 
@@ -401,7 +401,7 @@ async def list_branch_users(
         # Review F4: the house cursor helper then rejects malformed
         # plaintext with InvalidInputError (defense-in-depth).
         inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_BRANCH_USERS_SCOPE, entity="branch user roster"
+            cursor, tenant_id=tenant_id, endpoint=BRANCH_USERS_SCOPE, entity="branch user roster"
         )
         c_ts, c_id = parse_created_id_cursor(inner, entity="branch user roster")
         params["c_ts"] = c_ts
@@ -425,7 +425,7 @@ async def list_branch_users(
         next_cursor = encode_cursor(
             build_created_id_cursor(last.created_at, last.id),
             tenant_id=tenant_id,
-            endpoint=_BRANCH_USERS_SCOPE,
+            endpoint=BRANCH_USERS_SCOPE,
         )
     return BranchUserRosterPage(items=items, next_cursor=next_cursor)
 
@@ -459,12 +459,21 @@ async def list_branch_members(
         "limit": limit + 1,
     }
     if cursor:
+        # Opaque signed cursor (#31 batch 13): verify+unseal BEFORE the
+        # F3 semantic guard — the guard keeps fencing the PLAINTEXT
+        # member_no shape as defense-in-depth after the tag check.
+        inner = decode_cursor(
+            cursor,
+            tenant_id=tenant_id,
+            endpoint=BRANCH_MEMBERS_SCOPE,
+            entity="branch member roster",
+        )
         if (
-            len(cursor) > _MEMBER_NO_CURSOR_MAX_LEN
-            or _MEMBER_NO_CURSOR_RE.fullmatch(cursor) is None
+            len(inner) > _MEMBER_NO_CURSOR_MAX_LEN
+            or _MEMBER_NO_CURSOR_RE.fullmatch(inner) is None
         ):
             raise InvalidInputError("invalid branch member roster cursor")
-        params["cursor"] = cursor
+        params["cursor"] = inner
     rows = (
         await session.execute(
             text(branch_members_roster_sql(with_cursor=cursor is not None)), params
@@ -482,7 +491,7 @@ async def list_branch_members(
     next_cursor = None
     if len(rows) > limit and items:
         next_cursor = encode_cursor(
-            items[-1].member_no, tenant_id=tenant_id, endpoint=_BRANCH_MEMBERS_SCOPE
+            items[-1].member_no, tenant_id=tenant_id, endpoint=BRANCH_MEMBERS_SCOPE
         )
     return BranchMemberRosterPage(items=items, next_cursor=next_cursor)
 

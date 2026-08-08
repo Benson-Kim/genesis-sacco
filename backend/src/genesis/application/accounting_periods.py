@@ -42,7 +42,7 @@ from genesis.errors import ConflictError, InvalidInputError
 
 #: Cursor scope id (#31 batch 13): signed cursors are bound to this
 #: endpoint and this tenant - no cross-scope replay (gate 1.6).
-_PERIODS_LIST_SCOPE = "accounting_periods.list"
+PERIODS_LIST_SCOPE = "accounting_periods.list"
 
 #: Advisory lock namespace for the period barrier — distinct from the
 #: ledger reference namespace (int4 range; the ledger._advisory_key
@@ -271,7 +271,7 @@ async def list_periods(
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext ISO-date parse stays as defense-in-depth.
         inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_PERIODS_LIST_SCOPE, entity="period"
+            cursor, tenant_id=tenant_id, endpoint=PERIODS_LIST_SCOPE, entity="period"
         )
         try:
             params["c_ps"] = date.fromisoformat(inner)
@@ -297,6 +297,6 @@ async def list_periods(
         next_cursor = encode_cursor(
             items[-1].period_start.isoformat(),
             tenant_id=tenant_id,
-            endpoint=_PERIODS_LIST_SCOPE,
+            endpoint=PERIODS_LIST_SCOPE,
         )
     return items, next_cursor

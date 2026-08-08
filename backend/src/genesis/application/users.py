@@ -85,7 +85,7 @@ from genesis.errors import ConflictError, ForbiddenError, NotFoundError
 
 #: Cursor scope id (#31 batch 13): signed cursors are bound to this
 #: endpoint and this tenant — no cross-scope replay (gate 1.6).
-_USERS_LIST_SCOPE = "users.list"
+USERS_LIST_SCOPE = "users.list"
 
 
 @dataclass(frozen=True)
@@ -276,7 +276,7 @@ async def list_users(
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
         inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_USERS_LIST_SCOPE, entity="user"
+            cursor, tenant_id=tenant_id, endpoint=USERS_LIST_SCOPE, entity="user"
         )
         c_ts, c_id = parse_created_id_cursor(inner, entity="user")
         params["c_ts"] = c_ts
@@ -304,7 +304,7 @@ async def list_users(
         next_cursor = encode_cursor(
             build_created_id_cursor(last.created_at, last.id),
             tenant_id=tenant_id,
-            endpoint=_USERS_LIST_SCOPE,
+            endpoint=USERS_LIST_SCOPE,
         )
     return UserPage(items=items, next_cursor=next_cursor)
 

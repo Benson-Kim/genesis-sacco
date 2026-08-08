@@ -109,7 +109,7 @@ _EXIT_COLS = (
 
 #: Cursor scope id (#31 batch 13): signed cursors are bound to this
 #: endpoint and this tenant — no cross-scope replay (gate 1.6).
-_EXITS_LIST_SCOPE = "member_exits.list"
+EXITS_LIST_SCOPE = "member_exits.list"
 
 #: Application stages that block an exit (P8 blocker set, single list).
 _OPEN_STAGES = "('submitted', 'appraisal', 'committee', 'approved')"
@@ -645,7 +645,7 @@ async def list_exits(
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
         inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_EXITS_LIST_SCOPE, entity="exit"
+            cursor, tenant_id=tenant_id, endpoint=EXITS_LIST_SCOPE, entity="exit"
         )
         params["c_ts"], params["c_id"] = parse_created_id_cursor(inner, entity="exit")
         clauses.append("(created_at, id) < (:c_ts, CAST(:c_id AS uuid))")
@@ -669,7 +669,7 @@ async def list_exits(
         next_cursor = encode_cursor(
             build_created_id_cursor(last[14], last[0]),
             tenant_id=tenant_id,
-            endpoint=_EXITS_LIST_SCOPE,
+            endpoint=EXITS_LIST_SCOPE,
         )
     return items, next_cursor
 

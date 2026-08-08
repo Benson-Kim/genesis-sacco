@@ -38,7 +38,7 @@ from genesis.errors import InvalidInputError
 
 #: Cursor scope id (#31 batch 13): signed cursors are bound to this
 #: endpoint and this tenant — no cross-scope replay (gate 1.6).
-_AUDIT_LIST_SCOPE = "audit_log.list"
+AUDIT_LIST_SCOPE = "audit_log.list"
 
 # Code-owned entity -> owning module map (deny-by-default: unmapped
 # entities are redacted for every caller). Values mirror the module
@@ -207,7 +207,7 @@ async def list_audit_log(
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
         inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_AUDIT_LIST_SCOPE, entity="audit-log"
+            cursor, tenant_id=tenant_id, endpoint=AUDIT_LIST_SCOPE, entity="audit-log"
         )
         c_ts, c_id = _parse_cursor(inner)
         params["c_ts"] = c_ts
@@ -268,6 +268,6 @@ async def list_audit_log(
         next_cursor = encode_cursor(
             f"{last[1].isoformat()}|{int(last[0])}",
             tenant_id=tenant_id,
-            endpoint=_AUDIT_LIST_SCOPE,
+            endpoint=AUDIT_LIST_SCOPE,
         )
     return AuditLogPage(items=items, next_cursor=next_cursor)

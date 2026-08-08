@@ -56,7 +56,7 @@ _TXN_COLS = "id, txn_ref, member_id, type, amount, channel, occurred_at, reversa
 
 #: Cursor scope id (#31 batch 13): signed cursors are bound to this
 #: endpoint and this tenant — no cross-scope replay (gate 1.6).
-_TXN_LIST_SCOPE = "transactions.list"
+TXN_LIST_SCOPE = "transactions.list"
 
 
 @dataclass(frozen=True)
@@ -421,7 +421,7 @@ async def list_transactions(
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
         inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_TXN_LIST_SCOPE, entity="transaction"
+            cursor, tenant_id=tenant_id, endpoint=TXN_LIST_SCOPE, entity="transaction"
         )
         params["c_ts"], params["c_id"] = parse_created_id_cursor(inner, entity="transaction")
         clauses.append("(occurred_at, id) < (:c_ts, CAST(:c_id AS uuid))")
@@ -445,7 +445,7 @@ async def list_transactions(
         next_cursor = encode_cursor(
             build_created_id_cursor(last[6], last[0]),
             tenant_id=tenant_id,
-            endpoint=_TXN_LIST_SCOPE,
+            endpoint=TXN_LIST_SCOPE,
         )
     return items, next_cursor
 

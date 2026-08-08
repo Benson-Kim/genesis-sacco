@@ -42,7 +42,7 @@ API_TRANSITION_TARGETS = frozenset(
 
 #: Cursor scope id (#31 batch 13): signed cursors are bound to this
 #: endpoint and this tenant — no cross-scope replay (gate 1.6).
-_APPLICATIONS_LIST_SCOPE = "applications.list"
+APPLICATIONS_LIST_SCOPE = "applications.list"
 
 _COLS = (
     "id, member_id, product_id, amount, term_months, rate_pct, purpose, stage, cover_pct, "
@@ -384,7 +384,7 @@ async def list_applications(
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
         inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_APPLICATIONS_LIST_SCOPE, entity="application"
+            cursor, tenant_id=tenant_id, endpoint=APPLICATIONS_LIST_SCOPE, entity="application"
         )
         params["c_ts"], params["c_id"] = parse_created_id_cursor(inner, entity="application")
         clauses.append("(created_at, id) < (:c_ts, CAST(:c_id AS uuid))")
@@ -408,7 +408,7 @@ async def list_applications(
         next_cursor = encode_cursor(
             build_created_id_cursor(last[0], last[1]),
             tenant_id=tenant_id,
-            endpoint=_APPLICATIONS_LIST_SCOPE,
+            endpoint=APPLICATIONS_LIST_SCOPE,
         )
     return items, next_cursor
 

@@ -41,8 +41,8 @@ from genesis.errors import ConflictError, InvalidInputError, NotFoundError, Unpr
 #: Cursor scope ids (#31 batch 13): every signed cursor is bound to ONE
 #: endpoint — the two shapes of GET /members (plain / aggregates) share
 #: one scope because they share one endpoint and one keyset.
-_MEMBERS_LIST_SCOPE = "members.list"
-_STATEMENT_SCOPE = "members.statement"
+MEMBERS_LIST_SCOPE = "members.list"
+STATEMENT_SCOPE = "members.statement"
 
 
 @dataclass(frozen=True)
@@ -530,7 +530,7 @@ async def list_members(
     # keyset predicate; the plaintext member_no keyset is unchanged.
     if cursor:
         cursor = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_MEMBERS_LIST_SCOPE, entity="member"
+            cursor, tenant_id=tenant_id, endpoint=MEMBERS_LIST_SCOPE, entity="member"
         )
     clauses, params = _member_list_clauses(
         tenant_id, cursor=cursor, limit=limit, status=status, member_type=member_type
@@ -547,7 +547,7 @@ async def list_members(
     next_cursor = None
     if len(rows) > limit and items:
         next_cursor = encode_cursor(
-            items[-1].member_no, tenant_id=tenant_id, endpoint=_MEMBERS_LIST_SCOPE
+            items[-1].member_no, tenant_id=tenant_id, endpoint=MEMBERS_LIST_SCOPE
         )
     return MemberPage(items=items, next_cursor=next_cursor)
 
@@ -578,7 +578,7 @@ async def list_members_with_aggregates(
     # shape — one endpoint, one keyset, interchangeable positions.
     if cursor:
         cursor = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_MEMBERS_LIST_SCOPE, entity="member"
+            cursor, tenant_id=tenant_id, endpoint=MEMBERS_LIST_SCOPE, entity="member"
         )
     clauses, params = _member_list_clauses(
         tenant_id, cursor=cursor, limit=limit, status=status, member_type=member_type, col="m."
@@ -611,7 +611,7 @@ async def list_members_with_aggregates(
     next_cursor = None
     if len(rows) > limit and items:
         next_cursor = encode_cursor(
-            items[-1].record.member_no, tenant_id=tenant_id, endpoint=_MEMBERS_LIST_SCOPE
+            items[-1].record.member_no, tenant_id=tenant_id, endpoint=MEMBERS_LIST_SCOPE
         )
     return MemberAggregatesPage(items=items, next_cursor=next_cursor)
 
@@ -1001,7 +1001,7 @@ async def member_statement(
         # the inner '<occurred_at ISO>|<txn id>' parse stays as
         # defense-in-depth on the plaintext.
         cursor = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_STATEMENT_SCOPE, entity="statement"
+            cursor, tenant_id=tenant_id, endpoint=STATEMENT_SCOPE, entity="statement"
         )
         ts_raw, _, id_raw = cursor.partition("|")
         try:
@@ -1040,6 +1040,6 @@ async def member_statement(
     if len(rows) > limit and page_rows:
         last = page_rows[-1]
         next_cursor = encode_cursor(
-            f"{last[0].isoformat()}|{last[1]}", tenant_id=tenant_id, endpoint=_STATEMENT_SCOPE
+            f"{last[0].isoformat()}|{last[1]}", tenant_id=tenant_id, endpoint=STATEMENT_SCOPE
         )
     return StatementPage(items=items, next_cursor=next_cursor)

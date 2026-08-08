@@ -159,9 +159,9 @@ from genesis.errors import ConflictError, ForbiddenError, InvalidInputError, Not
 #: Cursor scope ids (#31 batch 13): signed cursors are bound to ONE
 #: endpoint - the three corrections registers never share positions
 #: (gate 1.6).
-_ADJUSTMENTS_SCOPE = "corrections.adjustments"
-_WRITE_OFFS_SCOPE = "corrections.write_offs"
-_WO_RECOVERIES_SCOPE = "corrections.write_off_recoveries"
+ADJUSTMENTS_SCOPE = "corrections.adjustments"
+WRITE_OFFS_SCOPE = "corrections.write_offs"
+WO_RECOVERIES_SCOPE = "corrections.write_off_recoveries"
 
 # ---------------------------------------------------------------------------
 # Misc fees (P13.15 part 2)
@@ -444,7 +444,7 @@ async def list_adjustments(
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext band parse stays as defense-in-depth.
         inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_ADJUSTMENTS_SCOPE, entity="adjustment register"
+            cursor, tenant_id=tenant_id, endpoint=ADJUSTMENTS_SCOPE, entity="adjustment register"
         )
         c_flag, c_ts, c_id = parse_band_register_cursor(inner, entity="adjustment register")
         params["c_flag"] = c_flag
@@ -461,7 +461,7 @@ async def list_adjustments(
                 last.status is AdjustmentStatus.PENDING_APPROVAL, last.created_at, last.id
             ),
             tenant_id=tenant_id,
-            endpoint=_ADJUSTMENTS_SCOPE,
+            endpoint=ADJUSTMENTS_SCOPE,
         )
     return AdjustmentPage(items=items, next_cursor=next_cursor)
 
@@ -1438,7 +1438,7 @@ async def list_write_offs(
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext band parse stays as defense-in-depth.
         inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_WRITE_OFFS_SCOPE, entity="write-off register"
+            cursor, tenant_id=tenant_id, endpoint=WRITE_OFFS_SCOPE, entity="write-off register"
         )
         c_flag, c_ts, c_id = parse_band_register_cursor(inner, entity="write-off register")
         params["c_flag"] = c_flag
@@ -1455,7 +1455,7 @@ async def list_write_offs(
                 last.status in LIVE_WRITE_OFF_STATUSES, last.created_at, last.id
             ),
             tenant_id=tenant_id,
-            endpoint=_WRITE_OFFS_SCOPE,
+            endpoint=WRITE_OFFS_SCOPE,
         )
     return WriteOffPage(items=items, next_cursor=next_cursor)
 
@@ -2266,7 +2266,7 @@ async def list_recovery_receipts(
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
         inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_WO_RECOVERIES_SCOPE, entity="recovery receipt"
+            cursor, tenant_id=tenant_id, endpoint=WO_RECOVERIES_SCOPE, entity="recovery receipt"
         )
         c_ts, c_id = parse_created_id_cursor(inner, entity="recovery receipt")
         params["c_ts"] = c_ts
@@ -2304,7 +2304,7 @@ async def list_recovery_receipts(
         next_cursor = encode_cursor(
             build_created_id_cursor(items[-1].created_at, items[-1].id),
             tenant_id=tenant_id,
-            endpoint=_WO_RECOVERIES_SCOPE,
+            endpoint=WO_RECOVERIES_SCOPE,
         )
     recovered_total = await _recovered_total(session, tenant_id, write_off_id)
     return RecoveryReceiptPage(

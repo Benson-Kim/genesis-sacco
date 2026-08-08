@@ -87,7 +87,7 @@ from genesis.errors import ConflictError, NotFoundError, UnprocessableError
 
 #: Cursor scope id (#31 batch 13): signed cursors are bound to this
 #: endpoint and this tenant - no cross-scope replay (gate 1.6).
-_DOCUMENTS_LIST_SCOPE = "member_kyc.documents"
+DOCUMENTS_LIST_SCOPE = "member_kyc.documents"
 
 
 class Unset(enum.Enum):
@@ -489,7 +489,7 @@ async def list_documents(
         # Opaque signed cursor (#31 batch 13): verify+unseal before
         # the keyset predicate; the plaintext doc_type is unchanged.
         params["cursor"] = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=_DOCUMENTS_LIST_SCOPE, entity="document"
+            cursor, tenant_id=tenant_id, endpoint=DOCUMENTS_LIST_SCOPE, entity="document"
         )
     rows = (
         await session.execute(text(documents_page_sql(with_cursor=cursor is not None)), params)
@@ -498,7 +498,7 @@ async def list_documents(
     next_cursor = None
     if len(rows) > limit and items:
         next_cursor = encode_cursor(
-            items[-1].doc_type, tenant_id=tenant_id, endpoint=_DOCUMENTS_LIST_SCOPE
+            items[-1].doc_type, tenant_id=tenant_id, endpoint=DOCUMENTS_LIST_SCOPE
         )
     await record_audit(
         session,
