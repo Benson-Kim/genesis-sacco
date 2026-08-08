@@ -66,7 +66,7 @@ async def request_member_otp(body: OtpRequestBody, request: Request) -> dict[str
     tenant_id = tenant_id_from_headers(request)
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, tenant_id) as session:
-        await member_auth_service.request_member_otp(session, tenant_id, body.email)
+        await member_auth_service.request_member_otp(session, tenant_id, body.signin_identifier)
     return {"status": "sent"}
 
 
@@ -77,7 +77,7 @@ async def verify_member_otp(body: OtpVerifyBody, request: Request) -> TokenRespo
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, tenant_id) as session:
         outcome = await member_auth_service.verify_member_otp(
-            session, tenant_id, body.email, body.code
+            session, tenant_id, body.signin_identifier, body.code
         )
     # The transaction has committed: punitive state (attempt counters)
     # is durable even though this request fails (the house gates).

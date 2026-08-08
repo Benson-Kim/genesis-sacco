@@ -3,8 +3,9 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Banner, Button, Field, Modal } from "@genesis/design-system";
+import { Banner, Button, Modal } from "@genesis/design-system";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
+import { FormField } from "@/modules/forms/FormField";
 import { KENYA_PHONE_MESSAGE, normalizeKenyaMsisdn } from "@/lib/phone";
 import { createUser, type CreateUserInput } from "../api";
 import type { Role, User } from "../schemas";
@@ -87,66 +88,79 @@ export function UserCreateDrawer({
       dismissOnOverlay={false}
     >
       <form onSubmit={submit}>
-        <Field label="Full name" htmlFor="create-name">
-          <input
-            id="create-name"
-            className={styles.input}
-            maxLength={200}
-            value={fullName}
-            onChange={(event) => setFullName(event.target.value)}
-          />
-        </Field>
-        <Field label="Email" htmlFor="create-email">
-          <input
-            id="create-email"
-            className={styles.input}
-            type="email"
-            inputMode="email"
-            maxLength={254}
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-        </Field>
-        <Field label="Role" htmlFor="create-role">
-          <select
-            id="create-role"
-            className={styles.select}
-            value={roleId}
-            onChange={(event) => setRoleId(event.target.value)}
-          >
-            <option value="">Select a role…</option>
-            {roles.map((role) => (
-              <option key={role.id} value={role.id}>
-                {role.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Phone (optional)" htmlFor="create-phone">
-          <input
-            id="create-phone"
-            className={styles.input}
-            type="tel"
-            inputMode="tel"
-            maxLength={32}
-            value={phone}
-            onChange={(event) => {
-              setPhone(event.target.value);
-              if (phoneBlurError !== null) validatePhoneBlur(event.target.value);
-            }}
-            onBlur={(event) => validatePhoneBlur(event.target.value)}
-          />
-        </Field>
-        {phoneBlurError !== null && <div role="alert">{phoneBlurError}</div>}
-        <Field label="Branch (optional)" htmlFor="create-branch">
-          <input
-            id="create-branch"
-            className={styles.input}
-            maxLength={120}
-            value={branch}
-            onChange={(event) => setBranch(event.target.value)}
-          />
-        </Field>
+        <FormField id="create-name" label="Full name">
+          {(control) => (
+              <input
+                {...control}
+                className={styles.input}
+                maxLength={200}
+                value={fullName}
+                onChange={(event) => setFullName(event.target.value)}
+              />
+          )}
+        </FormField>
+        <FormField id="create-email" label="Email">
+          {(control) => (
+              <input
+                {...control}
+                className={styles.input}
+                type="email"
+                inputMode="email"
+                maxLength={254}
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+          )}
+        </FormField>
+        <FormField id="create-role" label="Role">
+          {(control) => (
+              <select
+                {...control}
+                className={styles.select}
+                value={roleId}
+                onChange={(event) => setRoleId(event.target.value)}
+              >
+                <option value="">Select a role…</option>
+                {roles.map((role) => (
+                  <option key={role.id} value={role.id}>
+                    {role.name}
+                  </option>
+                ))}
+              </select>
+          )}
+        </FormField>
+        <FormField
+          id="create-phone"
+          label="Phone (optional)"
+          error={phoneBlurError ?? undefined}
+        >
+          {(control) => (
+              <input
+                {...control}
+                className={styles.input}
+                type="tel"
+                inputMode="tel"
+                maxLength={32}
+                value={phone}
+                onChange={(event) => {
+                  setPhone(event.target.value);
+                  if (phoneBlurError !== null) validatePhoneBlur(event.target.value);
+                }}
+                onBlur={(event) => validatePhoneBlur(event.target.value)}
+              />
+          )}
+        </FormField>
+        <FormField id="create-branch" label="Branch (optional)">
+          {(control) => (
+              <input
+                {...control}
+                className={styles.input}
+                maxLength={120}
+                value={branch}
+                onChange={(event) => setBranch(event.target.value)}
+              />
+          )}
+        </FormField>
         <div className={styles.formNote}>
           The new user signs in with an OTP sent to their registered contact. No
           credential is displayed or emailed by this screen.

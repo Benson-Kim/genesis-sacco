@@ -34,3 +34,22 @@ export const otpRequestResponseSchema = z.object({
  * stays the truth at the wire.
  */
 export const signInEmailSchema = emailSchema.pipe(z.string().email());
+
+/**
+ * Sign-in identifier classification (#35 sign-in identifier round).
+ * The msisdn VALIDATION mirror is the ONE existing copy in
+ * `@/lib/phone` (normalizeKenyaMsisdn) — never duplicated here.
+ */
+export type SignInIdentifierKind = "email" | "phone";
+
+/**
+ * Live as-you-type classification: a value consisting only of digits
+ * (with an optional leading +) is being typed as a PHONE; anything
+ * else (an '@', letters, punctuation) is being typed as an EMAIL.
+ * Empty input classifies as email so the neutral affordances hold.
+ */
+export function classifyIdentifier(value: string): SignInIdentifierKind {
+  const v = value.trim();
+  if (v === "") return "email";
+  return /^\+?\d+$/.test(v) ? "phone" : "email";
+}

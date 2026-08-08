@@ -47,7 +47,7 @@ function mountGate() {
 async function reachVerifyStage(user: ReturnType<typeof userEvent.setup>) {
   mocked.requestOtp.mockResolvedValue({ devOtp: null });
   mountGate();
-  await user.type(screen.getByLabelText("Email"), "teller@sacco.co.ke");
+  await user.type(screen.getByLabelText("Email or phone"), "teller@sacco.co.ke");
   await user.click(screen.getByRole("button", { name: "Send OTP" }));
   await screen.findByLabelText("Digit 1");
 }
@@ -79,7 +79,7 @@ test("full-code PASTE fans out SANITIZED across the six boxes and verifies with 
   await user.click(screen.getByRole("button", { name: "Verify & sign in" }));
   expect(mocked.verifyOtp).toHaveBeenCalledTimes(1);
   expect(mocked.verifyOtp.mock.calls[0]?.[0]).toMatchObject({
-    email: "teller@sacco.co.ke",
+    identifier: "teller@sacco.co.ke",
     code: "123456",
   });
   release(undefined as never);
@@ -171,7 +171,7 @@ test("honest ASCII digits still verify with exactly ONE wire call (hygiene is ex
   await user.click(screen.getByRole("button", { name: "Verify & sign in" }));
   expect(mocked.verifyOtp).toHaveBeenCalledTimes(1);
   expect(mocked.verifyOtp.mock.calls[0]?.[0]).toMatchObject({
-    email: "teller@sacco.co.ke",
+    identifier: "teller@sacco.co.ke",
     code: "123456",
   });
   release(undefined as never);

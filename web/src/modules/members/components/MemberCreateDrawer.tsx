@@ -3,8 +3,9 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Button, ErrorMessage, Field, FormControl, Hint, Modal, SelectWrap } from "@genesis/design-system";
+import { Button, Modal } from "@genesis/design-system";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
+import { FormField } from "@/modules/forms/FormField";
 import { KENYA_PHONE_MESSAGE, normalizeKenyaMsisdn } from "@/lib/phone";
 import { createMember } from "../api";
 import {
@@ -38,11 +39,9 @@ export function MemberCreateDrawer({
     const [email, setEmail] = useState("");
     const [nameError, setNameError] = useState<string | null>(null);
     const [emailError, setEmailError] = useState<string | null>(null);
-    const [formError, setFormError] = useState<string | null>(null);
-    //  item 1 — blur-time Kenya-phone validation (courtesy mirror of
-    // the server rule, which normalizes to E.164 on write and refuses
-    // invalid input with a sanitized 422). Shows on blur, clears on
-    // correction.
+    // blur-time Kenya-phone validation (courtesy mirror of the server rule,
+    // which normalizes to E.164 on write and refuses invalid input with a
+    // sanitized 422). Shows on blur, clears on correction.
     const [phoneBlurError, setPhoneBlurError] = useState<string | null>(null);
     const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
 
@@ -85,7 +84,6 @@ export function MemberCreateDrawer({
         }
         setNameError(null);
         setEmailError(null);
-        setFormError(null);
         create.mutate(parsed.data);
     }
 
@@ -99,80 +97,86 @@ export function MemberCreateDrawer({
             dismissOnOverlay={false}
         >
             <form onSubmit={submit} noValidate>
-                <Field label="Member type" htmlFor="member-type">
-                    <SelectWrap
-                        id="member-type"
-                        value={type}
-                        onChange={(event) => setType(event.target.value)}
-                    >
-                        {MEMBER_TYPES.map((memberType) => (
-                            <option key={memberType} value={memberType}>
-                                {TYPE_LABELS[memberType]}
-                            </option>
-                        ))}
-                    </SelectWrap>
-                </Field>
-                <Field label="Full name" htmlFor="member-name" required>
-                    <FormControl
-                        id="member-name"
-                        maxLength={200}
-                        value={name}
-                        onChange={(event) => setName(event.target.value)}
-                        required
-                        aria-invalid={nameError !== null ? "true" : undefined}
-                        aria-describedby={nameError !== null ? "member-name-error" : undefined}
-                    />
-                    {nameError !== null && (
-                        <ErrorMessage id="member-name-error">{nameError}</ErrorMessage>
+                <FormField id="member-type" label="Member type">
+                    {(control) => (
+                        <select
+                            {...control}
+                            className={styles.select}
+                            value={type}
+                            onChange={(event) => setType(event.target.value)}
+                        >
+                            {MEMBER_TYPES.map((memberType) => (
+                                <option key={memberType} value={memberType}>
+                                    {TYPE_LABELS[memberType]}
+                                </option>
+                            ))}
+                        </select>
                     )}
-                </Field>
-                <Field label="Phone" htmlFor="member-phone">
-                    <FormControl
-                        id="member-phone"
-                        type="tel"
-                        inputMode="tel"
-                        autoComplete="tel"
-                        maxLength={32}
-                        value={phone}
-                        onChange={(event) => {
-                            setPhone(event.target.value);
-                            if (phoneBlurError !== null) validatePhoneBlur(event.target.value);
-                        }}
-                        onBlur={(event) => validatePhoneBlur(event.target.value)}
-                        aria-describedby={
-                            phoneBlurError !== null
-                                ? "member-phone-error"
-                                : "member-phone-hint"
-                        }
-                    />
-                    {phoneBlurError !== null ? (
-                        <ErrorMessage id="member-phone-error">{phoneBlurError}</ErrorMessage>
-                    ) : (
-                        <Hint id="member-phone-hint">+254 or 07… format accepted.</Hint>
+                </FormField>
+                <FormField
+                    id="member-name"
+                    label="Full name"
+                    error={nameError ?? undefined}
+                >
+                    {(control) => (
+                        <input
+                            {...control}
+                            className={styles.input}
+                            maxLength={200}
+                            value={name}
+                            onChange={(event) => {
+                                setName(event.target.value);
+                                if (nameError !== null) setNameError(null);
+                            }}
+                        />
                     )}
-                </Field>
-                <Field label="Email (optional)" htmlFor="member-email">
-                    <FormControl
-                        id="member-email"
-                        type="email"
-                        inputMode="email"
-                        autoComplete="email"
-                        autoCapitalize="none"
-                        spellCheck={false}
-                        maxLength={254}
-                        value={email}
-                        onChange={(event) => {
-                            setEmail(event.target.value);
-                            if (emailError !== null) setEmailError(null);
-                        }}
-                        aria-invalid={emailError !== null ? "true" : undefined}
-                        aria-describedby={emailError !== null ? "member-email-error" : undefined}
-                    />
-                    {emailError !== null && (
-                        <ErrorMessage id="member-email-error">{emailError}</ErrorMessage>
+                </FormField>
+                <FormField
+                    id="member-phone"
+                    label="Phone (optional)"
+                    error={phoneBlurError ?? undefined}
+                    hint={phoneBlurError === null ? "+254 or 07… format accepted." : undefined}
+                >
+                    {(control) => (
+                        <input
+                            {...control}
+                            className={styles.input}
+                            type="tel"
+                            inputMode="tel"
+                            autoComplete="tel"
+                            maxLength={32}
+                            value={phone}
+                            onChange={(event) => {
+                                setPhone(event.target.value);
+                                if (phoneBlurError !== null) validatePhoneBlur(event.target.value);
+                            }}
+                            onBlur={(event) => validatePhoneBlur(event.target.value)}
+                        />
                     )}
-                </Field>
-                {formError !== null && <ErrorBanner error={new Error(formError)} />}
+                </FormField>
+                <FormField
+                    id="member-email"
+                    label="Email (optional)"
+                    error={emailError ?? undefined}
+                >
+                    {(control) => (
+                        <input
+                            {...control}
+                            className={styles.input}
+                            type="email"
+                            inputMode="email"
+                            autoComplete="email"
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            maxLength={254}
+                            value={email}
+                            onChange={(event) => {
+                                setEmail(event.target.value);
+                                if (emailError !== null) setEmailError(null);
+                            }}
+                        />
+                    )}
+                </FormField>
                 {create.isError && <ErrorBanner error={create.error} />}
                 <div className={styles.actions}>
                     <Button type="button" onClick={onClose} disabled={create.isPending}>
