@@ -3845,17 +3845,27 @@ export interface components {
             /** Voided Otp Challenges */
             voided_otp_challenges: number;
         };
-        /** OtpRequestBody */
+        /**
+         * OtpRequestBody
+         * @description Request a one-time password for a sign-in identifier.
+         */
         OtpRequestBody: {
             /** Email */
-            email: string;
+            email?: string | null;
+            /** Identifier */
+            identifier?: string | null;
         };
-        /** OtpVerifyBody */
+        /**
+         * OtpVerifyBody
+         * @description Verify the six-digit one-time password for a sign-in identifier.
+         */
         OtpVerifyBody: {
             /** Code */
             code: string;
             /** Email */
-            email: string;
+            email?: string | null;
+            /** Identifier */
+            identifier?: string | null;
         };
         /**
          * Par30TrendPointOut
