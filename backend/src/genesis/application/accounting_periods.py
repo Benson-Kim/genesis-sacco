@@ -1,4 +1,4 @@
-"""Accounting periods: server-side posting-date validation (issue #12, P12.5).
+"""Accounting periods: server-side posting-date validation.
 
 Every ledger posting funnels through ledger._post, which calls
 assert_open_period before writing anything: occurred_at must not be
@@ -7,14 +7,14 @@ inside a CLOSED period. Periods are resolved exclusively server-side —
 no request body anywhere accepts occurred_at (the P11 caller-input
 lesson), and even the internal parameter is now fenced.
 
-Concurrency contract (gate 1.4): closing a period must never race an
+Concurrency contract: closing a period must never race an
 in-flight posting into that period. Postings take a SHARED tenant-level
 advisory lock (concurrent postings never block each other); the close
 action takes the EXCLUSIVE lock, so it waits for in-flight postings to
 commit, and postings that start during a close wait until the close
 commits — after which they see the closed row and are refused with a
 clean 409. The transactions_closed_period trigger (0012) is the
-DB-level backstop behind this guard (gate 1.5).
+DB-level backstop behind this guard (data integrity).
 
 Only fully elapsed calendar months can be closed: closing the current
 or a future month would freeze live posting — a self-inflicted outage —
@@ -40,8 +40,8 @@ from genesis.application.period_rollups import write_period_rollups
 from genesis.application.portfolio_snapshots import write_month_snapshot
 from genesis.errors import ConflictError, InvalidInputError
 
-#: Cursor scope id (#31 batch 13): signed cursors are bound to this
-#: endpoint and this tenant - no cross-scope replay (gate 1.6).
+#: Cursor scope id: signed cursors are bound to this
+#: endpoint and this tenant - no cross-scope replay (tenant isolation).
 PERIODS_LIST_SCOPE = "accounting_periods.list"
 
 #: Advisory lock namespace for the period barrier — distinct from the
@@ -50,7 +50,7 @@ PERIODS_LIST_SCOPE = "accounting_periods.list"
 _PERIOD_NS: int = zlib.crc32(b"acct_period") & 0x7FFFFFFF
 
 #: Tolerance for clock skew between app instances before a posting
-#: counts as future-dated (gate 1.5: future postings desynchronise
+#: counts as future-dated (data integrity: future postings desynchronise
 #: statements and trial balances from created_at).
 CLOCK_SKEW = timedelta(minutes=5)
 
@@ -94,7 +94,7 @@ def month_bounds(year: int, month: int) -> tuple[date, date]:
 async def assert_open_period(
     session: AsyncSession, tenant_id: uuid.UUID, occurred_at: datetime
 ) -> None:
-    """Refuse postings outside an open period (issue #12, gates 1.4-1.6).
+    """Refuse postings outside an open period.
 
     Called by ledger._post for EVERY posting before anything is
     written. Raises InvalidInputError for future-dated timestamps and
@@ -111,7 +111,7 @@ async def assert_open_period(
 
     # SHARED period barrier: concurrent postings proceed in parallel;
     # a concurrent close_period (exclusive) serialises against them,
-    # closing the check-then-insert TOCTOU window (gate 1.4). Both
+    # closing the check-then-insert TOCTOU window (concurrency safety). Both
     # values are computed integers, never user input.
     lock_key = _tenant_lock_key(tenant_id)
     await session.execute(text(f"SELECT pg_advisory_xact_lock_shared({_PERIOD_NS}, {lock_key})"))
@@ -120,7 +120,7 @@ async def assert_open_period(
         await session.execute(
             text(
                 # Explicit tenant predicate on top of RLS (defence in
-                # depth, gate 1.6 v1.1); served by the UNIQUE
+                # depth); served by the UNIQUE
                 # (tenant_id, period_start) index.
                 "SELECT 1 FROM accounting_periods "
                 "WHERE tenant_id = CAST(:tid AS uuid) AND status = 'closed' "
@@ -144,7 +144,7 @@ async def close_period(
     year: int,
     month: int,
 ) -> PeriodRecord:
-    """Close a fully elapsed calendar month (gates 1.4, 1.5).
+    """Close a fully elapsed calendar month (the house gates).
 
     The EXCLUSIVE advisory lock waits for every in-flight posting
     (shared holders) to commit before the close claims the period, so a
@@ -190,23 +190,23 @@ async def close_period(
     if claimed.rowcount != 1:
         raise ConflictError(f"accounting period {period_start.isoformat()} is already closed")
 
-    # P13.17(a): the month-end portfolio snapshot is written in the
+    # Close step (a): the month-end portfolio snapshot is written in the
     # SAME transaction, while the exclusive barrier guarantees no
     # posting into this month is in flight — so the reconstruction the
     # snapshot stores is final the instant the close commits. The
     # writer claims atomically (ON CONFLICT, v1.1 rule 5); if a
     # backfill already wrote this month it verifies equality and 409s
-    # LOUDLY on divergence (FM1), aborting the close — a diverging
+    # LOUDLY on divergence, aborting the close — a diverging
     # snapshot is never trusted, never self-healed. No row locks are
     # taken (lock-order.md: close_period stays advisory-only + claims).
     await write_month_snapshot(session, tenant_id, actor_id, period_end, source="close_period")
 
-    # P13.17(b): the period's per-account rollups and member balances
+    # Close step (b): the period's per-account rollups and member balances
     # are written in the SAME transaction — the 0012 trigger freezes
     # the month the instant the close commits, so the rollups are
     # immutable facts. The writer claims via ON CONFLICT, verifies the
     # stored set equals the reconstruction (409 loudly on ANY
-    # divergence — FM2, never self-healed) and sets the write-once
+    # divergence — never self-healed) and sets the write-once
     # rollup_at marker that arms the DB-level late-insert fence.
     await write_period_rollups(
         session,
@@ -259,7 +259,7 @@ async def list_periods(
     cursor: str | None = None,
     limit: int = 20,
 ) -> tuple[list[PeriodRecord], str | None]:
-    """Keyset-paginated period listing, newest first, cap 100 (gate 1.3).
+    """Keyset-paginated period listing, newest first, cap 100 (scalability).
 
     period_start is unique per tenant, so it is the whole keyset. The
     cursor is its ISO date.
@@ -268,7 +268,7 @@ async def list_periods(
     clauses = ["tenant_id = CAST(:tid AS uuid)"]
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if cursor:
-        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # Opaque signed cursor: verify+unseal first;
         # the plaintext ISO-date parse stays as defense-in-depth.
         inner = decode_cursor(
             cursor, tenant_id=tenant_id, endpoint=PERIODS_LIST_SCOPE, entity="period"
