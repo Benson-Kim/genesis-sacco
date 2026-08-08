@@ -62,11 +62,18 @@ class DividendPayout(enum.StrEnum):
     (deposit-account credit — the as-built P13.11 distribution leg;
     share top-up — the prototype's SH- affordance).
 
-    REGULATORY/ACCOUNTING FENCE (batch 8): this is a stored PREFERENCE
-    ONLY. The P13.11 dividends distribution engine does NOT consume it
-    — routing money by preference is a separate, separately-authorized
-    batch. tests/test_members_domain.py pins the engine's
-    non-consumption falsifiably.
+    CONSUMED since #31 batch 12 (the batch-8 preference-only fence was
+    retired DELIBERATELY under the maintainer authorization recorded
+    on #31, 2026-08-07): the P13.11 distribution engine routes the
+    member-side credit legs of the payout posting per the code-owned
+    application.dividends.PAYOUT_CREDIT_ROUTING map. The retention
+    destinations are implementable and route; the external cash
+    channels are NOT implementable today (M-Pesa integration is #10,
+    unbuilt) and fall back honestly to the as-built default path with
+    the token recorded verbatim in the distribution audit row. NULL
+    keeps the as-built behaviour byte-for-byte. The routing map is
+    pinned set-equal to this enum falsifiably (a future token forces a
+    deliberate routing decision — see PAYOUT_FALLBACK_TOKENS).
     """
 
     DEPOSIT_ACCOUNT = "deposit_account"
