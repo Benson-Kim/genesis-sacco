@@ -925,10 +925,17 @@ test("#35 item 13 date presets compute EXPLICIT from/to params client-side — t
     expect(screen.getByLabelText("To date")).toHaveValue("2026-08-08");
 
     // All clears the date keys — the default view sends no date filter.
+    // (Switching back to the default re-uses the CACHED mount query, so
+    // the wire contract is pinned by the mount call below, and the
+    // cleared state by the visible inputs + pressed state.)
     await user.click(screen.getByRole("button", { name: "All", pressed: false }));
-    await waitFor(() =>
-      expect(lastFilters()).toMatchObject({ date_from: "", date_to: "" }),
-    );
+    await waitFor(() => expect(screen.getByLabelText("From date")).toHaveValue(""));
+    expect(screen.getByLabelText("To date")).toHaveValue("");
+    const mountFilters = mocked.fetchTransactionsPage.mock.calls[0]?.[0] as {
+      date_from: string;
+      date_to: string;
+    };
+    expect(mountFilters).toMatchObject({ date_from: "", date_to: "" });
 
     // NOTHING preset-shaped ever reached the wire: every call's date
     // params are either empty or ISO dates (falsifiable: send the
