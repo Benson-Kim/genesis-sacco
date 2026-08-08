@@ -18,8 +18,8 @@ Deep-parent endpoints reuse their module seeders instead of this file
 (the F5 lesson — no private cross-suite imports): recovery-case notes
 in test_recovery_cases.py, write-off recovery receipts in
 test_loan_recoveries.py. The dividends-module endpoints
-(/dividends/declarations, /share-transfers) join this matrix when the
-batch-12 gate clears (see the batch-13 MR phase status).
+(/dividends/declarations, /share-transfers) joined this matrix when
+the batch-12 gate cleared (!85 merged 2026-08-08; review B13-R7).
 """
 
 import asyncio
@@ -45,6 +45,7 @@ from genesis.application.corrections import (
     WO_RECOVERIES_SCOPE,
     WRITE_OFFS_SCOPE,
 )
+from genesis.application.dividends import DECLARATIONS_LIST_SCOPE, SHARE_TRANSFERS_SCOPE
 from genesis.application.loan_applications import APPLICATIONS_LIST_SCOPE
 from genesis.application.loans import LOAN_BOOK_SCOPE
 from genesis.application.member_exits import EXITS_LIST_SCOPE
@@ -86,6 +87,8 @@ ENDPOINTS = [
     ("/recovery-cases", "recovery worklist", WORKLIST_SCOPE),
     ("/corrections/repayment-adjustments", "adjustments register", ADJUSTMENTS_SCOPE),
     ("/corrections/write-offs", "write-off register", WRITE_OFFS_SCOPE),
+    ("/dividends/declarations", "dividend declarations", DECLARATIONS_LIST_SCOPE),
+    ("/share-transfers", "share transfers", SHARE_TRANSFERS_SCOPE),
 ]
 
 #: Scopes whose tamper legs live next to their module seeders (deep
