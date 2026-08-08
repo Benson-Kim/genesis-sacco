@@ -968,3 +968,50 @@ test("#35 item 13 date presets compute EXPLICIT from/to params client-side — t
     jest.useRealTimers();
   }
 });
+
+test("#35 W1: stale Custom dates never leak into a LATER real fetch — after All, the next pagination fetch carries EMPTY date params", async () => {
+  const user = userEvent.setup();
+  // Every FIRST page serves a cursor so "Load more" can force a REAL
+  // wire fetch after the cached default page is re-selected; the
+  // follow-on page carries a distinct row (no duplicate row keys).
+  mocked.fetchTransactionsPage.mockImplementation((_filters, cursor) =>
+    Promise.resolve(cursor === null ? page([debitTxn()], "w1-cursor-p2") : page([creditTxn()])),
+  );
+  mountScreen();
+  await screen.findByText("KES 8,000.10");
+
+  // Apply a Custom range through the manual drafts (the W1 scenario).
+  await user.type(screen.getByLabelText("From date"), "2026-06-01");
+  await user.type(screen.getByLabelText("To date"), "2026-06-30");
+  await user.click(screen.getByRole("button", { name: "Apply" }));
+  await waitFor(() =>
+    expect(mocked.fetchTransactionsPage).toHaveBeenCalledWith(
+      expect.objectContaining({ date_from: "2026-06-01", date_to: "2026-06-30" }),
+      null,
+    ),
+  );
+  expect(screen.getByRole("button", { name: "Custom range" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  // Back to All: react-query re-serves the CACHED default page — the
+  // cleared state is visible but no new wire fetch fires yet.
+  await user.click(screen.getByRole("button", { name: "All", pressed: false }));
+  await waitFor(() => expect(screen.getByLabelText("From date")).toHaveValue(""));
+  const callsBeforeRefetch = mocked.fetchTransactionsPage.mock.calls.length;
+
+  // Force a REAL wire fetch on the restored default key: paginate.
+  await user.click(screen.getByRole("button", { name: "Load more" }));
+  await waitFor(() =>
+    expect(mocked.fetchTransactionsPage.mock.calls.length).toBe(callsBeforeRefetch + 1),
+  );
+
+  // THE W1 ASSERTION: the later real fetch carries EMPTY date params —
+  // the stale Custom window survived nowhere in the query state
+  // (falsifiable: skip the date_from/date_to reset in the All branch
+  // of applyDatePreset and this fetch carries 2026-06-01/2026-06-30).
+  const laterCall = mocked.fetchTransactionsPage.mock.calls.at(-1);
+  expect(laterCall?.[0]).toMatchObject({ date_from: "", date_to: "" });
+  expect(laterCall?.[1]).toBe("w1-cursor-p2");
+});
