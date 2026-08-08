@@ -1,5 +1,5 @@
 /* Page grid comes from the shared responsive module
-   (src/modules/layout/grid.module.css) — one copy, gate 1.1. */
+   (src/modules/layout/grid.module.css) — one copy, reuse-first. */
 
 .title {
     font-size: 15px;

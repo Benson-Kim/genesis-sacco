@@ -1,10 +1,10 @@
-"""Shared keyset cursor helpers for (created_at, id) pagination (gate 1.3).
+"""Shared keyset cursor helpers for (created_at, id) pagination (scalability).
 
 Single source of truth for cursor encoding (DRY): the loan book and the
 applications listing paginate on the same (created_at DESC, id DESC)
 keyset and must parse cursors identically.
 
-Opaque signed cursor codec (#31 batch 13, senior review finding N4):
+Opaque signed cursor codec:
 ``encode_cursor``/``decode_cursor`` wrap EVERY wire cursor in an
 HMAC-SHA256-signed base64url token so clients can neither read nor
 forge keyset positions. Token layout::
@@ -23,7 +23,7 @@ forge keyset positions. Token layout::
   state). Retire the window by clearing the previous pair.
 * The scope is length-prefixed inside the MAC (no concatenation
   ambiguity) and binds the token to ONE tenant and ONE endpoint — a
-  cursor can never be replayed across tenants or endpoints (gate 1.6).
+  cursor can never be replayed across tenants or endpoints (least disclosure).
 * ``payload`` is the EXACT plaintext keyset string the inner
   ``parse_*``/``build_*`` helpers below already speak — pagination
   semantics (ordering, page walk, boundaries) are unchanged.
@@ -50,12 +50,12 @@ _TAG_LEN = 32
 
 #: Minimum signing-key material (bytes): an HMAC key should be at
 #: least the digest size (RFC 2104 / FIPS 198-1 guidance for
-#: HMAC-SHA256). Enforced at BOOT, fail closed (review B13-R5).
+#: HMAC-SHA256). Enforced at BOOT, fail closed.
 MIN_CURSOR_KEY_BYTES = 32
 
 
 def assert_cursor_signing_key_configured() -> None:
-    """Fail-closed BOOT guard (#31 batch 13, review B13-R5).
+    """Fail-closed BOOT guard.
 
     An empty or short ``Settings.cursor_signing_key`` is a DEPLOYMENT
     error and must abort startup — never surface at the first decode
@@ -141,7 +141,7 @@ def decode_cursor(token: str, *, tenant_id: uuid.UUID, endpoint: str, entity: st
     """
     try:
         # validate=True rejects any non-alphabet byte instead of
-        # silently discarding it (strict decode; FM4).
+        # silently discarding it (strict decode).
         # binascii.Error (bad padding/alphabet) subclasses ValueError.
         raw = base64.b64decode(token.encode() + b"=" * (-len(token) % 4), b"-_", validate=True)
     except ValueError as exc:
@@ -190,8 +190,8 @@ def parse_band_register_cursor(cursor: str, *, entity: str) -> tuple[bool, datet
     previous page; a forged flag is rejected exactly like a forged
     timestamp.
 
-    Hoisted verbatim from application/corrections.py (gate 1.1) when
-    the share-transfers register (issue #31 ledger (m), MR !83) became
+    Hoisted verbatim from application/corrections.py (reuse-first) when
+    the share-transfers register became
     the pattern's third consumer — the band registers must never
     diverge on cursor encoding.
     """

@@ -1,10 +1,9 @@
 "use client";
 
 /**
- * Shared form-field primitive (P15 Phase B — gate 1.1: the remaining
- * module screens must NOT re-implement label/error wiring).
+ * Shared form-field primitive (reuse-first: the remaining module screens must NOT re-implement label/error wiring).
  *
- * - PERSISTENT label (issue #8 — never placeholder-as-label).
+ * - PERSISTENT label (never placeholder-as-label).
  * - Inline field error (client Zod message or server 422 message from
  *   ApiError.fields via form-errors.ts) rendered as React TEXT and wired
  *   to the control with aria-describedby + aria-invalid.

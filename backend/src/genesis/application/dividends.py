@@ -1,8 +1,8 @@
-"""Dividends & share lifecycle services (P13.11, gates 1.1-1.6).
+"""Dividends & share lifecycle services.
 
 Workflow (mirrors the P12 exit machinery, reused not forked):
 
-  1. declare_dividend — resolves the config (P13.7, fail closed) and
+  1. declare_dividend — resolves the config (fail closed) and
      the last COMPLETED financial year server-side, computes every
      member's entitlement from the ledger-reconstructed average share
      and deposit balances over that year (the P11 ADB precedent via
@@ -21,7 +21,7 @@ Workflow (mirrors the P12 exit machinery, reused not forked):
      batch runner. The FIRST run re-verifies the snapshot component by
      component (recomputing count/bases/payout at the SNAPSHOT rates)
      and 409s on any drift, posting nothing (approval TOCTOU, failure
-     mode 4). A P13.7 rate change after approval never changes what is
+     mode 4). A configured-rate change after approval never changes what is
      posted: figures always derive from the snapshot rates, and the
      0020 write-once trigger makes the snapshot immutable even against
      manual SQL. Each batch: members scanned in id-keyset order FOR
@@ -32,17 +32,17 @@ Workflow (mirrors the P12 exit machinery, reused not forked):
      the entitlement is recomputed, claimed with INSERT ... ON
      CONFLICT DO NOTHING checked by rowcount (v1.1 rule 5), posted
      through the P7 contract with occurred_at at the very end of the
-     financial year (gate 1.5: dividends compound into the next
+     financial year (data integrity: dividends compound into the next
      period's basis), balances credited, and the audit row written
      with the declaration id and every figure verbatim — ONE batch
      transaction, no partial state (failure modes 3 and 9).
-     Since #31 batch 12 (human-authorized 2026-08-07) the paying scan
+     Since the recorded design decision the paying scan
      also snapshots the member's stored dividend_payout preference in
      the SAME locking statement and routes the member-side credit
      legs per PAYOUT_CREDIT_ROUTING: 'deposit_account' and
      'share_capital' retain the whole payout in the mapped account;
      the external-channel tokens in PAYOUT_FALLBACK_TOKENS ('mpesa',
-     'bank' — integrations unbuilt, issue #10) are NEVER faked and
+     'bank' — integrations unbuilt) are NEVER faked and
      fall back to the as-built default path with the token recorded
      verbatim in the audit row. A NULL preference keeps the as-built
      behaviour byte-for-byte. The unclaimed disposition below ignores
@@ -52,9 +52,9 @@ Workflow (mirrors the P12 exit machinery, reused not forked):
      drifted snapshots; refused once any claim exists (voiding a
      partially distributed declaration would let a re-declaration pay
      the same year twice).
-  5. share transfers — TWO-PHASE maker-checker since issue #31
-     ledger (l) (MR !83; the !77 human-review HIGH finding, remediated
-     with the issue-#24/0031 repayment-adjustment pattern): the
+  5. share transfers — TWO-PHASE maker-checker
+     (a human-review HIGH finding, remediated
+     with the 0031 repayment-adjustment pattern): the
      MAKER's request validates under the FULL lock set (BOTH member
      rows FOR UPDATE in global member-id order — so opposing transfers
      can never deadlock, failure mode 7 — then both share accounts in
@@ -69,16 +69,16 @@ Workflow (mirrors the P12 exit machinery, reused not forked):
      strictly ACTIVE, transferor balance identical) — 409 on drift
      posting NOTHING — then the ST- postings, both balance updates,
      the one-shot decision fill, the audit row and the outbox events
-     (operator event + member notices to BOTH members, the P13.13
+     (operator event + member notices to BOTH members, the
      detection-control precedent) commit in ONE transaction. Rejection
      is a version-pinned checker decision with a mandatory rationale
-     (the !52 F2 posture) locking the transfer row alone. The
+     (the recorded-rationale posture) locking the transfer row alone. The
      ledger-(m) register read walks the 0040 pending-first band index
      (the 0038 keyset pattern).
 
-Population rules (failure mode 5 and issue #19, all falsifiable):
+Population rules (all falsifiable):
 active, arrears AND dormant members are scanned (allow-list — the
-issue-#19 policy decision: dormant members remain shareholders and are
+recorded policy decision: dormant members remain shareholders and are
 paid on their share basis; entitlement follows the RECORD DATE, i.e.
 the persisted declaration snapshot, so a member going dormant between
 declaration and distribution is still paid). Exited members are never
@@ -94,13 +94,13 @@ no-op guarantee of the anti-join applies to every member who was paid.
 Verification-vs-rerun note (documented, deliberate): aggregate snapshot
 re-verification runs only while NO claim exists for the declaration.
 Once distribution has begun, each already-paid member's OWN posting
-(occurred_at inside the FY's last day, per gate 1.5) becomes part of
+(occurred_at inside the FY's last day, per the recognition rule) becomes part of
 their reconstructed basis, so recomputing the aggregate would no longer
 match the snapshot; unpaid members' bases are member-attributed and
 therefore unaffected, and the write-once snapshot plus the per-member
 claims carry the approved figures for the remainder of the run.
 
-Unclaimed disposition (issue #19 P3, the SACCO-standard treatment of
+Unclaimed disposition (the SACCO-standard treatment of
 mid-run exit drift): after the paying batches, the distribution job
 runs a disposition pass over members who EXITED AFTER the declaration
 was created — fenced by member_exits.settled_at > the declaration's
@@ -115,7 +115,7 @@ carries the exact figures (rule 7) and the dividend.unclaimed outbox
 event is the alert surface. Because the unclaimed claim participates
 in the snapshot reconciliation, the run COMPLETES (distributed)
 instead of pending forever. The payable is resolvable only through
-the P13.15 correction paths (forward reference — reversing entries,
+the correction paths (forward reference — reversing entries,
 never UPDATE/DELETE). An exit BEFORE any claim exists stays on the
 existing loud path instead: first-run verification 409s, the
 declaration is voided and redeclared, and the leaver is simply not on
@@ -124,7 +124,7 @@ the new register.
 Failure-mode boundaries: missing config (any of dividend rate, rebate
 rate, financial-year-end month) fails CLOSED — the declaration is
 refused with 409, never a defaulted rate; corrupted stored config
-(manual SQL past the CHECKs) raises 409 loudly (the P13.7/P13.8
+(manual SQL past the CHECKs) raises 409 loudly (the established
 parse_penalty_config precedent). Every read AND write carries an
 explicit bound tenant_id predicate on top of forced RLS (v1.1 rule 4);
 all values travel as bound parameters (rule 6); errors are least-
@@ -215,26 +215,26 @@ __all__ = [
 #: Members processed per batch transaction (the P10/P11 precedent).
 DEFAULT_BATCH_SIZE = 200
 
-#: dividend_payout token -> member-side CREDIT destination (#31 batch
-#: 12, human-authorized on #31 2026-08-07 — the recorded design
-#: decision retiring the batch-8 preference-only fence). Both credit
+#: dividend_payout token -> member-side CREDIT destination (the
+#: recorded design
+#: decision retiring the preference-only fence). Both credit
 #: legs of the member's payout posting route to the mapped retention
 #: account; the DR legs keep their expense classification, so the
 #: legs stay balanced and the declared totals conserve exactly.
 #: CODE-OWNED: keys are the enum, values are ledger accounts — never
-#: caller input (gate 1.6).
+#: caller input (least disclosure).
 PAYOUT_CREDIT_ROUTING: dict[DividendPayout, Account] = {
     DividendPayout.DEPOSIT_ACCOUNT: Account.MEMBER_DEPOSITS,
     DividendPayout.SHARE_CAPITAL: Account.MEMBER_SHARES,
 }
 
 #: Tokens with NO implementable routing in the current ledger model:
-#: external cash channels (M-Pesa B2C integration is issue #10,
+#: external cash channels (M-Pesa B2C integration is unbuilt,
 #: unbuilt; no bank disbursement integration exists either — a mass
 #: job auto-posting a cash leg would assert money left the till with
 #: no transfer executed). NEVER faked: these fall back to the as-built
 #: default posting path and the member's preference token is recorded
-#: VERBATIM in the distribution audit row; the gap is tracked on #33.
+#: VERBATIM in the distribution audit row; the gap is a recorded follow-up.
 #: Together with PAYOUT_CREDIT_ROUTING this set is pinned set-equal to
 #: the DividendPayout enum (falsifiable — a future token forces a
 #: deliberate routing decision here).
@@ -266,7 +266,7 @@ class DeclarationStatus(StrEnum):
     DISTRIBUTED = "distributed"
 
 
-#: The single allowed-transitions map (gate 1.4). rejected/distributed
+#: The single allowed-transitions map (concurrency safety). rejected/distributed
 #: are terminal; approving is the committee's, distributing the job's.
 _DECLARATION_TRANSITIONS: dict[DeclarationStatus, frozenset[DeclarationStatus]] = {
     DeclarationStatus.DECLARED: frozenset({DeclarationStatus.APPROVED, DeclarationStatus.REJECTED}),
@@ -302,9 +302,9 @@ def parse_dividend_config(
     partially configured tenant is exactly as unconfigured as one with
     no settings row. Corrupted stored values — reachable only by
     manual SQL bypassing the 0017/0020 DB CHECKs — raise ConflictError
-    (409), the P13.7/P13.8 fail-closed consumer precedent: a money
+    (409), the established fail-closed consumer precedent: a money
     guard is never silently disabled. Least disclosure: the message
-    names the defect category, never a figure (gate 1.6).
+    names the defect category, never a figure (least disclosure).
     """
     if dividend_raw is None or rebate_raw is None or month_raw is None:
         return None
@@ -397,11 +397,11 @@ def members_scan_sql(*, with_after: bool, with_claims: bool, for_update: bool) -
     """The eligible-population scan (id-keyset over active/arrears/dormant).
 
     Served by idx_members_dividend_scan (predicate widened to include
-    dormant members in 0022 per the issue-#19 policy decision, shipped
+    dormant members in 0022 per the recorded policy decision, shipped
     with this query; exited members still never widen the scan — they
     are excluded from direct payment); the claim anti-join by
     uq_dividend_distributions_claim (0020 — the index ships with this
-    query, gate 1.3). Fragments are static literals chosen in code;
+    query, scalability). Fragments are static literals chosen in code;
     every value is a bound parameter (v1.1 rule 6). Explicit tenant
     predicate on top of forced RLS (v1.1 rule 4). Exported for the
     EXPLAIN capture (tests/test_p1311_explain.py).
@@ -430,13 +430,13 @@ def members_scan_sql(*, with_after: bool, with_claims: bool, for_update: bool) -
 
 
 def unclaimed_scan_sql(*, with_after: bool) -> str:
-    """Members owed an unclaimed disposition (issue #19 P3, id-keyset).
+    """Members owed an unclaimed disposition (id-keyset).
 
     Exited members with a settled P12 exit AFTER the declaration was
     created (the record-date fence: whoever exited before the
     declaration was never on the register) and no claim yet for this
     declaration. Served by idx_members_exited_scan (0022 — shipped
-    with this query, gate 1.3); the exit probe by idx_exits_member
+    with this query, scalability); the exit probe by idx_exits_member
     (0001) and the claim anti-join by uq_dividend_distributions_claim
     (0020). FOR UPDATE SKIP LOCKED on the member row only — the ROOT
     tier of the established chain, exactly like the paying scan; the
@@ -487,11 +487,11 @@ async def compute_declaration_totals(
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> DeclarationTotals:
     """Totals over the eligible population — the declaration AND the
-    execution re-verification run this exact function (gate 1.1), so
+    execution re-verification run this exact function (reuse-first), so
     the two sides can never diverge in method.
 
     Lock-free id-keyset batches through the shared runner (short
-    transactions, gate 1.3): the FY basis is append-only history and
+    transactions, scalability): the FY basis is append-only history and
     the end-anchor is single-statement consistent (see
     period_balances), so no row locks are needed to read it. A member
     counts as eligible when their rounded total entitlement is
@@ -620,8 +620,8 @@ async def get_declaration(
     return _row_to_declaration(row)
 
 
-#: Cursor scope id (#31 batch 13): signed cursors are bound to this
-#: endpoint and this tenant — no cross-scope replay (gate 1.6).
+#: Cursor scope id: signed cursors are bound to this
+#: endpoint and this tenant — no cross-scope replay (tenant isolation).
 DECLARATIONS_LIST_SCOPE = "dividends.declarations"
 
 
@@ -632,7 +632,7 @@ async def list_declarations(
     cursor: str | None = None,
     limit: int = 20,
 ) -> tuple[list[DeclarationRecord], str | None]:
-    """Keyset-paginated declarations, newest first (gate 1.3).
+    """Keyset-paginated declarations, newest first (scalability).
 
     Backed by idx_dividend_declarations_keyset (0020, shipped with
     this query).
@@ -641,7 +641,7 @@ async def list_declarations(
     clauses = ["tenant_id = CAST(:tid AS uuid)"]
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if cursor:
-        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # Opaque signed cursor: verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
         inner = decode_cursor(
             cursor, tenant_id=tenant_id, endpoint=DECLARATIONS_LIST_SCOPE, entity="declaration"
@@ -800,13 +800,13 @@ async def cast_dividend_vote(
     declaration_id: uuid.UUID,
     vote: Vote,
 ) -> DividendVoteTally:
-    """Record a committee vote on a declaration (gate 1.4).
+    """Record a committee vote on a declaration (concurrency safety).
 
     The declaration row lock serialises voters; the DB UNIQUE makes
     double-voting impossible outside this path too. Separation of
     duties: the declaring user can never vote on their own
     declaration. The quorum is read from tenant configuration AT VOTE
-    TIME under the row lock (P13.7): a quorum change between votes
+    TIME under the row lock: a quorum change between votes
     governs the next tally only, never retroactively.
     """
     row = (
@@ -926,7 +926,7 @@ async def void_declaration(
     *,
     version: int,
 ) -> DeclarationRecord:
-    """Void an open declaration (declared/approved -> rejected; gate 1.4).
+    """Void an open declaration (declared/approved -> rejected; concurrency safety).
 
     The escape hatch when an approved snapshot has drifted (execution
     returned 409): voiding frees the one-live-declaration-per-FY slot
@@ -1012,7 +1012,7 @@ class DistributionRunResult:
     skipped_zero: int
     skipped_claimed: int
     #: Mid-run-exited members disposed as unclaimed by THIS run
-    #: (issue #19 P3); the claim rows/audit carry the exact figures.
+    #:; the claim rows/audit carry the exact figures.
     unclaimed: int
     dividend_total: Decimal
     rebate_total: Decimal
@@ -1049,14 +1049,14 @@ async def _verify_snapshot(
 
     Recomputes eligible count, bases and payout AT THE SNAPSHOT RATES
     via the exact function the declaration used, and 409s on any
-    component drift, posting nothing. A P13.7 rate change is NOT
+    component drift, posting nothing. A configured-rate change is NOT
     drift: figures always derive from the snapshot rates, so a rate
     change applies to future declarations only. Basis or population
     drift (a backdated posting into the FY, a member exiting right
     after approval) means the committee approved different totals —
     refuse; void and redeclare. A PRE-distribution exit therefore
     never needs the unclaimed disposition: the redeclared snapshot
-    simply excludes the leaver (issue #19 — 'exited stays excluded
+    simply excludes the leaver (the recorded policy: 'exited stays excluded
     from direct payment').
     """
     fy = FinancialYear(start=snapshot.fy_start, end=snapshot.fy_end)
@@ -1108,14 +1108,14 @@ async def _distribute_one(
 
     `preference` is the member's stored dividend_payout token, read by
     the batch scan in the SAME statement that took the member row lock
-    (#31 batch 12 — consistent snapshot, no TOCTOU window). Routing:
+    (consistent snapshot, no TOCTOU window). Routing:
     PAYOUT_CREDIT_ROUTING tokens send BOTH credit legs (and the one
     balance update) to the mapped retention account;
-    PAYOUT_FALLBACK_TOKENS (external channels, unbuilt — issue #10)
+    PAYOUT_FALLBACK_TOKENS (external channels, unbuilt)
     and None keep the as-built default byte-for-byte. When a
     preference is set, the audit row records the token VERBATIM plus
     the routing actually applied; a NULL-preference member's audit row
-    stays byte-identical to its pre-batch-12 form.
+    stays byte-identical to its original form.
     """
     deposit_account_id: uuid.UUID | None = None
     share_account_id: uuid.UUID | None = None
@@ -1183,7 +1183,7 @@ async def _distribute_one(
         # A concurrent runner claimed this member between the anti-join
         # scan and the insert; idempotency wins (failure mode 3).
         return 0, 1, ZERO, ZERO
-    # #31 batch 12: the preference token routes the member-side credit
+    # The preference token routes the member-side credit
     # legs. Fallback tokens (external channels, unbuilt) and None keep
     # routed_account=None — the as-built default path byte-for-byte.
     routed_account = PAYOUT_CREDIT_ROUTING.get(preference) if preference is not None else None
@@ -1264,11 +1264,11 @@ async def _distribute_one(
         "txn_ref": posting.txn_ref,
     }
     if preference is not None:
-        # #31 batch 12: the preference token VERBATIM plus the routing
+        # The preference token VERBATIM plus the routing
         # actually applied — 'default' means the honest fallback (the
         # external channel is unbuilt; the money took the as-built
         # path). Keys are ABSENT for NULL-preference members so their
-        # audit rows stay byte-identical to the pre-batch-12 form.
+        # audit rows stay byte-identical to the original form.
         audit_after["dividend_payout"] = preference.value
         audit_after["applied_routing"] = (
             preference.value if routed_account is not None else "default"
@@ -1310,7 +1310,7 @@ async def _dispose_unclaimed_one(
     disposition='unclaimed' (v1.1 rule 5: exactly-once even against a
     concurrent runner), the posting parks the money as the
     liability.unclaimed_dividends payable, and claim + posting + audit
-    + outbox commit atomically with the batch (issue #19 P3).
+    + outbox commit atomically with the batch.
     """
     entitlement = await compute_member_entitlement(
         session,
@@ -1380,7 +1380,7 @@ async def _dispose_unclaimed_one(
     )
     # Exact figures live here (rule 7): the payable is reconstructable
     # to the cent, and the disposition is resolvable only through the
-    # P13.15 correction paths (forward reference).
+    # Correction paths (forward reference).
     await record_audit(
         session,
         tenant_id,
@@ -1404,7 +1404,7 @@ async def _dispose_unclaimed_one(
             "txn_ref": posting.txn_ref,
         },
     )
-    # The alert surface (issue #19 P3): operators subscribe to the
+    # The alert surface: operators subscribe to the
     # unclaimed disposition exactly like other money events.
     await enqueue_event(
         session,
@@ -1433,14 +1433,14 @@ async def distribute_dividend(
     """Distribute an approved declaration (idempotent, batched, atomic).
 
     Postings carry occurred_at at the very end of the financial year
-    (gate 1.5): the dividend sorts after the year's real activity and
+    (data integrity): the dividend sorts after the year's real activity and
     compounds into the next period's basis. SKIP LOCKED members (a
     concurrent exit settlement or share transfer holds their lock) are
     picked up by an idempotent re-run (failure mode 8). The
     declaration is marked distributed only when nothing is pending and
     the claims reconcile exactly with the approved snapshot. Mid-run
     exits are settled by the unclaimed disposition pass after the
-    paying batches (issue #19 P3 — see the module docstring), so an
+    paying batches (see the module docstring), so an
     exit never strands the declaration in a permanent pending state.
     """
     async with session_scope() as session:
@@ -1476,7 +1476,7 @@ async def distribute_dividend(
         await _verify_snapshot(session_scope, tenant_id, snapshot, batch_size=batch_size)
 
     fy = FinancialYear(start=snapshot.fy_start, end=snapshot.fy_end)
-    # The end of the period the payout recognises (gate 1.5; the P11
+    # The end of the period the payout recognises (data integrity; the P11
     # review-finding-5 convention).
     posted_at = datetime.combine(fy.end, time.max, tzinfo=UTC)
 
@@ -1536,7 +1536,7 @@ async def distribute_dividend(
             # outside it is unreachable past the 0039 DB CHECK, so a
             # ValueError here means catalog-level corruption — the
             # batch aborts loudly posting nothing, never a silent
-            # misroute (the P13.7/P13.8 precedent).
+            # misroute (the established precedent).
             preference = DividendPayout(str(payout_raw)) if payout_raw is not None else None
             one_claimed, one_conflict, dividend, rebate = await _distribute_one(
                 session,
@@ -1571,7 +1571,7 @@ async def distribute_dividend(
     async def process_unclaimed(
         session: AsyncSession, after_id: uuid.UUID | None
     ) -> tuple[int, uuid.UUID | None, int]:
-        # Unclaimed disposition pass (issue #19 P3): members who EXITED
+        # Unclaimed disposition pass: members who EXITED
         # after the declaration was created and hold no claim yet. Runs
         # AFTER the paying batches so a member who exits mid-run is
         # caught in the same run; a member merely SKIP LOCKED-skipped
@@ -1657,7 +1657,7 @@ async def distribute_dividend(
         # whose claim is still missing was SKIP LOCKED-skipped (an
         # idempotent re-run picks them up); a member who EXITED mid-run
         # was disposed as an 'unclaimed' claim by the disposition pass
-        # above (issue #19 P3), so exits count against the snapshot
+        # above, so exits count against the snapshot
         # exactly like paid members and the run can COMPLETE instead of
         # pending forever. Zero-entitlement members are not part of the
         # eligible count and never hold the declaration open.
@@ -1731,15 +1731,15 @@ async def distribute_dividend(
 
 
 # ---------------------------------------------------------------------------
-# Share transfers — TWO-PHASE maker-checker workflow (issue #31 ledger
-# (l), MR !83: the !77 human-review HIGH finding, remediated with the
-# issue-#24/0031 repayment-adjustment pattern) + the ledger-(m) keyset
+# Share transfers — TWO-PHASE maker-checker workflow (a
+# human-review HIGH finding, remediated with the
+# 0031 repayment-adjustment pattern) + the transfer-history keyset
 # history register (the 0038 band pattern, served by the 0040 index).
 # ---------------------------------------------------------------------------
 
 
 class ShareTransferStatus(StrEnum):
-    """The 0040 transfer workflow machine (issue #31 (l))."""
+    """The 0040 transfer workflow machine."""
 
     PENDING = "pending"
     POSTED = "posted"
@@ -1756,7 +1756,7 @@ _TRANSFER_ALLOWED: dict[ShareTransferStatus, frozenset[ShareTransferStatus]] = {
 
 
 def share_transfer_transition(current: ShareTransferStatus, target: ShareTransferStatus) -> None:
-    """THE single gatekeeper for transfer status moves (gate 1.4).
+    """THE single gatekeeper for transfer status moves (concurrency safety).
 
     The only writers are approve/reject below; the 0040 write-once
     trigger enforces the same machine at the database, so a terminal
@@ -1875,15 +1875,15 @@ async def _lock_transfer_chain(
         an arrears member may not move equity out from under their
         debt; exited members cannot transact),
       * transferee must be strictly ACTIVE (dormant/exited/arrears
-        refused — the documented allow-list, owned by the P13.13
+        refused — the documented allow-list, owned by the
         member_may capability map).
     """
     statuses: dict[uuid.UUID, str] = {}
     for member_id in sorted((from_member_id, to_member_id)):
         statuses[member_id] = await _lock_member_status(session, tenant_id, member_id)
-    # Code-owned capability map (P13.13 FM2): both transfer sides are
+    # Code-owned capability map: both transfer sides are
     # strictly active-only, so arrears/dormant/exited (and any future
-    # status) are refused by construction — the !30 strictly-active
+    # status) are refused by construction — the strictly-active
     # rule, owned by the single domain gatekeeper.
     if not member_may(MemberStatus(statuses[from_member_id]), MoneyOperation.SHARE_TRANSFER_OUT):
         raise ConflictError(
@@ -1917,7 +1917,7 @@ async def request_share_transfer(
     to_member_id: uuid.UUID,
     amount: Decimal,
 ) -> ShareTransferRecord:
-    """Phase 1 — the MAKER requests a transfer (issue #31 (l)).
+    """Phase 1 — the MAKER requests a transfer.
 
     Creates a PENDING share_transfers row capturing the persisted
     approval SNAPSHOT (the transferor's share balance at request —
@@ -2000,7 +2000,7 @@ async def approve_share_transfer(
     transfer_id: uuid.UUID,
 ) -> ShareTransferResult:
     """Phase 2 — a DISTINCT CHECKER approves and executes, atomically
-    (issue #31 (l); gates 1.4, 1.5).
+    (the house gates).
 
     Snapshot-bind-reverify (v1.1 rule 3, the P12/0031 pattern —
     sequence-snapshot-bind-reverify.md): lock the pending transfer row
@@ -2018,8 +2018,8 @@ async def approve_share_transfer(
     status/approver/decided_at/transaction fill, the in-transaction
     audit row, and the outbox events — the existing operator event
     (ledger.share_transfer_posted, enqueued by post_share_transfer)
-    plus a member NOTICE to EACH of the two members (issue #31 (l)(ii):
-    the P13.13 dormancy-reactivation precedent records member
+    plus a member NOTICE to EACH of the two members (the
+    dormancy-reactivation precedent records member
     notification as the insider-fraud DETECTION control — the victim
     of a colluding maker/checker pair sees their equity move). ONE
     transaction; an abort at any point leaves zero partial state
@@ -2136,9 +2136,9 @@ async def approve_share_transfer(
             "in_txn_ref": in_posting.txn_ref,
         },
     )
-    # Member NOTICES to BOTH members (issue #31 (l)(ii) — the P13.13
+    # Member NOTICES to BOTH members (the established
     # detection control; the guarantee.consented notify_member_id
-    # shape). Ids and the amount only — never names (gate 1.6). ONE
+    # shape). Ids and the amount only — never names (least disclosure). ONE
     # event per member so the dispatcher can address each recipient;
     # removing either enqueue fails the outbox-count test (FM11).
     for notify_member_id, role, counterparty in (
@@ -2178,18 +2178,18 @@ async def reject_share_transfer(
     version: int,
     reason: str,
 ) -> ShareTransferRecord:
-    """Reject a pending transfer — optimistic-locked (issue #31 (l);
-    the 0031 reject shape).
+    """Reject a pending transfer — optimistic-locked (the
+    0031 reject shape).
 
     Locks the transfer row ALONE (a single-node locker — the DECL/WOFF
     void pattern; no money lock is taken because nothing posts). The
     rejection is a CHECKER decision: the maker cannot decide their own
     request (server-side SoD + the 0040 DB CHECK; a maker withdrawing
     a mistaken request asks a checker to reject it) and assurance
-    roles are excluded (the !47 B2 principle). The rejected row is
+    roles are excluded (the B2 principle). The rejected row is
     terminal, write-once workflow history (0040 trigger).
 
-    The checker's rejection RATIONALE is required (the !52 F2 posture:
+    The checker's rejection RATIONALE is required (the recorded-rationale posture:
     the four-eyes record must show WHY). It is workflow metadata —
     never a money parameter — and lands in the audit ``after``
     payload; the outbox payload stays ids-only and no error envelope
@@ -2260,7 +2260,7 @@ async def reject_share_transfer(
         after={
             "status": ShareTransferStatus.REJECTED.value,
             "approved_by": str(actor_id),
-            # !52 F2: the checker's rationale, on the record.
+            # The checker's rationale, on the record.
             "reason": reason,
         },
     )
@@ -2292,7 +2292,7 @@ async def get_share_transfer(
 
 
 def share_transfers_register_sql(*, with_cursor: bool) -> str:
-    """The share-transfer history register (issue #31 ledger (m)).
+    """The share-transfer history register.
 
     ORDER BY (status = 'pending') DESC, created_at DESC, id DESC — the
     checker's job order: PENDING FIRST, newest first inside each band;
@@ -2324,8 +2324,8 @@ class ShareTransferPage:
     next_cursor: str | None
 
 
-#: Cursor scope id (#31 batch 13): signed cursors are bound to this
-#: endpoint and this tenant — no cross-scope replay (gate 1.6).
+#: Cursor scope id: signed cursors are bound to this
+#: endpoint and this tenant — no cross-scope replay (tenant isolation).
 SHARE_TRANSFERS_SCOPE = "dividends.share_transfers"
 
 
@@ -2336,10 +2336,10 @@ async def list_share_transfers(
     cursor: str | None,
     limit: int,
 ) -> ShareTransferPage:
-    """Keyset transfer register, pending-first (issue #31 ledger (m))."""
+    """Keyset transfer register, pending-first."""
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if cursor is not None:
-        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # Opaque signed cursor: verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
         inner = decode_cursor(
             cursor,

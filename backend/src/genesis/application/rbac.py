@@ -1,6 +1,6 @@
-"""RBAC use-cases: seeding, queries, and audited updates (gates 1.5, 1.6).
+"""RBAC use-cases: seeding, queries, and audited updates (the house gates).
 
-Tenant-predicate exemption (documented per issue #17, gate 1.6 v1.1):
+Tenant-predicate exemption (documented per, least disclosure v1.1):
 role/permission queries here filter by role_id — an unguessable UUID
 taken from the authenticated caller's JWT (or resolved via a name
 lookup inside the tenant session), never from request input that could
@@ -57,7 +57,7 @@ _ACTION_QUERIES: dict[Action, TextClause] = {
 }
 
 # Column names are code-owned literals chosen by Action, never caller
-# input, so the f-string assembly below is injection-safe (v1.1 rule 6).
+# input, so the f-string assembly below is injection-safe.
 _ACTION_COLUMNS: dict[Action, str] = {
     Action.VIEW: "can_view",
     Action.CREATE: "can_create",
@@ -78,7 +78,7 @@ _ACCESS_QUERIES: dict[Action, TextClause] = {
 
 @dataclass(frozen=True)
 class ActorAccess:
-    """Per-request authorization facts, fetched in one round-trip (F3)."""
+    """Per-request authorization facts, fetched in one round-trip."""
 
     is_active: bool
     allowed: bool
@@ -94,14 +94,14 @@ async def actor_access(
 ) -> ActorAccess | None:
     """Permission check + users.status verification, one round-trip.
 
-    Review F3: stateless access tokens outlive a suspension by up to 15
+    stateless access tokens outlive a suspension by up to 15
     minutes, so authorization must also verify the actor's COMMITTED
     status. RequirePermission already pays a DB round-trip per request;
     the status rides along in the same query. Returns None when the
     user row is gone (refused as unauthenticated by the caller). Deny
-    by default: a missing permission row is `allowed=False` (gate 1.6).
+    by default: a missing permission row is `allowed=False` (least disclosure).
     The users lookup carries an explicit bound tenant predicate on top
-    of forced RLS (v1.1 rule 4); role_id keeps the documented issue #17
+    of forced RLS; role_id keeps the documented
     exemption (unguessable, JWT-scoped).
     """
     row = (
@@ -166,7 +166,7 @@ async def seed_permissions(session: AsyncSession, tenant_id: uuid.UUID) -> dict[
 async def has_permission(
     session: AsyncSession, role_id: uuid.UUID, module: Module, action: Action
 ) -> bool:
-    """Deny by default: a missing row means no access (gate 1.6)."""
+    """Deny by default: a missing row means no access (least disclosure)."""
     row = (
         await session.execute(
             _ACTION_QUERIES[action],
@@ -219,13 +219,13 @@ async def update_permission(
     can_edit: bool,
     can_approve: bool,
 ) -> ModulePermissions:
-    """Audited permission change under a row lock (gates 1.4, 1.5).
+    """Audited permission change under a row lock (the house gates).
 
-    #35 item 2 (permission-matrix save bug): a missing permission row is
+     item 2 (permission-matrix save bug): a missing permission row is
     NOT an error — RBAC treats it as deny-by-default (has_permission /
     actor_access read a missing row as all-false), and tenants whose
-    rows predate a later-added Module member (corrections @ P13.15,
-    member_identity @ P14.5) legitimately have such holes. The old
+    rows predate a later-added Module member (corrections @, member_identity @) legitimately have
+    such holes. The old
     update-only path 404ed on them deterministically, which is exactly
     the user-reported "save failed 3 times". The write now MATERIALIZES
     the deny-by-default row first (insert-or-skip on the

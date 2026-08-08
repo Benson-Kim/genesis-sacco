@@ -1,13 +1,12 @@
 "use client";
 
 /**
- * User detail drawer (P15; salvaged from
- * duo/feature/p13-5-frontend-followthrough @ 198a238):
+ * User detail drawer (salvaged from duo/feature/p13-5-frontend-followthrough @ 198a238):
  * profile view, optimistic-locked edit with the
  * explicit 409 "record changed — reload" flow (never a silent overwrite,
  * exactly one write attempt per submission), confirmed activate/suspend,
  * audited role assignment and OTP lifecycle actions that surface
- * side-effect COUNTS only — zero OTP disclosure anywhere (gate 1.6).
+ * side-effect COUNTS only — zero OTP disclosure anywhere (least disclosure).
  */
 import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -210,7 +209,7 @@ function EditForm({
   const [email, setEmail] = useState(user.email);
   const [phone, setPhone] = useState(user.phone ?? "");
   const [branch, setBranch] = useState(user.branch ?? "");
-  // #35 item 1 — blur-time Kenya-phone validation (courtesy mirror of
+  //  item 1 — blur-time Kenya-phone validation (courtesy mirror of
   // the server's E.164 normalization rule). Shows on blur, clears on
   // correction. Legacy-format saved values only warn once touched.
   const [phoneBlurError, setPhoneBlurError] = useState<string | null>(null);
@@ -267,7 +266,7 @@ function EditForm({
 
   return (
     <form onSubmit={submit}>
-      {/* One copy of the 409 reload-and-re-enter flow (gate 1.1). */}
+      {/* One copy of the 409 reload-and-re-enter flow (reuse-first). */}
       <ConflictBanner error={update.error} onReload={() => void reloadRecord()} />
       {update.isError && !conflict && <ErrorBanner error={update.error} />}
       <Field label="Full name" htmlFor="edit-name">
@@ -318,7 +317,7 @@ function EditForm({
       <div className={styles.formNote}>
         Optimistic lock: saving against record version {user.version}. Leaving an
         optional field blank keeps its saved value — clearing a saved value is not
-        yet supported by the API (!24 review note).
+        yet supported by the API.
       </div>
       <Button variant="primary" type="submit" className={styles.wide} disabled={update.isPending}>
         {update.isPending ? "Saving…" : "Save changes"}
@@ -504,7 +503,7 @@ function ConfirmActionDialog({
             </>
           )}
           {action.isError && !conflict && <ErrorBanner error={action.error} />}
-          {/* Explicit reload flow (one copy — gate 1.1): fetch the current
+          {/* Explicit reload flow (one copy — reuse-first): fetch the current
               record, then the operator re-initiates the action from fresh
               state. The stale action is never replayed. */}
           <ConflictBanner

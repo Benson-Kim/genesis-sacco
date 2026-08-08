@@ -11,12 +11,11 @@ import type { Role, User } from "../schemas";
 import styles from "./Users.module.css";
 
 /**
- * Create-user drawer (P15; salvaged from
- * duo/feature/p13-5-frontend-followthrough @ 198a238). No credential is
+ * Create-user drawer (salvaged from duo/feature/p13-5-frontend-followthrough @ 198a238). No credential is
  * displayed or sent from this
  * console — the new user signs in through the P3 OTP flow. The
  * Idempotency-Key stays stable across retries of an identical submission
- * and rotates when the form content changes (gate 1.4).
+ * and rotates when the form content changes (concurrency safety).
  */
 export function UserCreateDrawer({
   roles,
@@ -34,7 +33,7 @@ export function UserCreateDrawer({
   const [phone, setPhone] = useState("");
   const [branch, setBranch] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
-  // #35 item 1 — blur-time Kenya-phone validation (courtesy mirror of
+  //  item 1 — blur-time Kenya-phone validation (courtesy mirror of
   // the server's E.164 normalization rule). Shows on blur, clears on
   // correction.
   const [phoneBlurError, setPhoneBlurError] = useState<string | null>(null);

@@ -1,8 +1,8 @@
 """Transactions endpoints: deposits, withdrawals, share top-ups, ledger, interest (P11).
 
 Every route carries a RequirePermission dependency (deny-by-default,
-gate 1.6); mutations are idempotent via the Idempotency-Key middleware
-(gate 1.4). Money moves only through the P11 services wrapping the P7
+least disclosure); mutations are idempotent via the Idempotency-Key middleware
+(concurrency safety). Money moves only through the P11 services wrapping the P7
 posting contract — no posting logic lives here.
 """
 
@@ -42,7 +42,7 @@ TxnEditCtx = Annotated[AuthContext, Depends(_txn_edit)]
 class MoneyBody(BaseModel):
     """extra="forbid": a caller-sent occurred_at (or any money field this
     contract does not own) is a 422, never silently ignored — the
-    posting date is resolved server-side (issue #12, gate 1.6).
+    posting date is resolved server-side (least disclosure).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -51,7 +51,7 @@ class MoneyBody(BaseModel):
     #: of silently rounding them into the ledger (P10 precedent).
     amount: Decimal = Field(gt=0, le=1_000_000_000, decimal_places=2)
     channel: Channel
-    #: External receipt reference (#35 item 6): REQUIRED for the
+    #: External receipt reference: REQUIRED for the
     #: external channels (mpesa, bank — every channel this teller
     #: boundary accepts) and enforced by require_external_ref with a
     #: sanitized 422 (the value is never echoed). Wire-OPTIONAL for
@@ -91,18 +91,18 @@ class TransactionOut(BaseModel):
     direction: str
     occurred_at: str
     is_reversal: bool
-    #: Posting-actor attribution (issue #30 R3, Hat 2 A3; migration
+    #: Posting-actor attribution (migration
     #: 0036): the staff principal who posted this transaction, now on
     #: the ledger read model itself instead of only the access_control-
     #: gated audit log. Gated exactly like every other field here by
     #: transactions:view (the P4 matrix — no extra grant discloses it).
-    #: Least disclosure (gate 1.6): the bare user UUID only — never a
+    #: Least disclosure: the bare user UUID only — never a
     #: name or email; resolving it stays behind access_control:view.
     #: null for system/job postings (interest, dormancy) and for
     #: pre-0036 rows without unambiguous audit history — attribution is
     #: never invented. Immutable by the 0004 append-only fence.
     created_by: str | None
-    #: External receipt reference (#35 item 6, migration 0043) —
+    #: External receipt reference (migration 0043) —
     #: expand-only NULLABLE field: the operator-entered M-Pesa code /
     #: bank slip ref on external-channel teller postings; null is the
     #: honest state for system postings and pre-0043 history.
@@ -115,7 +115,7 @@ class TransactionListResponse(BaseModel):
 
 
 class LedgerLegOut(BaseModel):
-    """One DR or CR leg of a posting (#31 ledger (g), audit #30 A3).
+    """One DR or CR leg of a posting.
 
     Verbatim ledger_entries facts: the chart-of-accounts key, the side
     and the leg amount as a canonical decimal string — one row per leg,
@@ -130,7 +130,7 @@ class LedgerLegOut(BaseModel):
     amount: str
 
 
-# NOTE (#31 remediation N3, kept OUT of the docstring so the OpenAPI
+# NOTE (kept OUT of the docstring so the OpenAPI
 # snapshot stays byte-identical — zero wire-contract change): the
 # "bounded by construction" claim below is now ALSO enforced by the
 # service's hard MAX_TRANSACTION_LEGS defensive cap
@@ -264,9 +264,9 @@ async def list_ledger(
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> TransactionListResponse:
-    """Ledger listing with the prototype filters (date, ref, member, type, DR/CR, channel).
+    """Ledger listing with filters (date, ref, member, type, DR/CR, channel).
 
-    search (#35 item 13): expand-only declared free-text probe —
+    search: expand-only declared free-text probe —
     txn_ref PREFIX, or member match (member_no exact / name prefix)
     via an EXISTS on members. Bound parameters only; LIKE
     metacharacters are escaped code-side; keyset order preserved; the
@@ -298,14 +298,14 @@ async def list_transaction_legs(
 ) -> TransactionLegsResponse:
     """The double-entry DR/CR legs of one posting (transactions:view).
 
-    Expand-only read model (#31 ledger (g), audit #30 A3): the
+    Expand-only read model: the
     append-only ledger_entries truth behind a TransactionOut row, one
     item per leg, each amount a canonical decimal string rendered
-    verbatim by clients — never summed or netted (P15 blocker (a)).
+    verbatim by clients — never summed or netted (no client-side money math).
     404-BEFORE-FACTS: the existence probe runs before any leg is read,
     so unknown and cross-tenant ids (hidden by RLS) surface 404 with no
     account or amount echoed; 403 rejections carry no figures either
-    (least disclosure, gate 1.6).
+    (least disclosure).
     """
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
@@ -324,7 +324,7 @@ async def run_deposit_interest(body: InterestRunBody, ctx: TxnEditCtx) -> Intere
 
     The quarterly scheduler calls the same service per tenant; this
     route exists for operations and catch-up. Each batch commits its
-    own short transaction (gate 1.3).
+    own short transaction (scalability).
 
     Rate and period are resolved server-side (review finding 2): the
     annual rate comes from tenant_settings (409 when unconfigured) and
