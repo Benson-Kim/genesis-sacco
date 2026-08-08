@@ -2771,7 +2771,7 @@
         "type": "object"
       },
       "FeeType": {
-        "description": "Code-owned fee vocabulary: each member maps to the P13.7 settings\nkey its amount is resolved from (v1.1 rule 1). A caller can only\never name a type from this enum \u2014 never an amount.",
+        "description": "Code-owned fee vocabulary: each member maps to the tenant-settings\nkey its amount is resolved from (v1.1 rule 1). A caller can only\never name a type from this enum \u2014 never an amount.",
         "enum": [
           "registration"
         ],
@@ -3158,7 +3158,7 @@
         "type": "object"
       },
       "LedgerLegOut": {
-        "description": "One DR or CR leg of a posting (#31 ledger (g), audit #30 A3).\n\nVerbatim ledger_entries facts: the chart-of-accounts key, the side\nand the leg amount as a canonical decimal string \u2014 one row per leg,\nNOTHING derived (no netting, no totals; the 0004/0014 constraint\ntrigger proved balance at commit time). Least disclosure (gate\n1.6): no member, actor or channel rides on a leg row \u2014 those live\non the transaction the caller already holds.",
+        "description": "One DR or CR leg of a posting.\n\nVerbatim ledger_entries facts: the chart-of-accounts key, the side\nand the leg amount as a canonical decimal string \u2014 one row per leg,\nNOTHING derived (no netting, no totals; the 0004/0014 constraint\ntrigger proved balance at commit time). Least disclosure (gate\n1.6): no member, actor or channel rides on a leg row \u2014 those live\non the transaction the caller already holds.",
         "properties": {
           "account": {
             "title": "Account",
@@ -3366,7 +3366,7 @@
         "type": "object"
       },
       "MemberAggregatesOut": {
-        "description": "Advisory financial aggregates on the single-member read (#31).\n\nAll four figures are canonical decimal strings scaled by the\ndatabase (numeric(18,2)); clients render them verbatim and never\ncompute money (P15 blocker (a)). Advisory only: every BINDING money\ndecision recomputes under the established row locks.",
+        "description": "Advisory financial aggregates on the single-member read.\n\nAll four figures are canonical decimal strings scaled by the\ndatabase (numeric(18,2)); clients render them verbatim and never\ncompute money (no client-side money math). Advisory only: every BINDING money\ndecision recomputes under the established row locks.",
         "properties": {
           "deposits_total": {
             "title": "Deposits Total",
@@ -3396,7 +3396,7 @@
       },
       "MemberCreateBody": {
         "additionalProperties": false,
-        "description": "extra=\"forbid\" (gate 1.6): unknown fields are a 422, never\nsilently dropped. dividend_payout (#31 ledger (c)) is typed as a\nbounded STRING, deliberately not the enum: the service resolves it\nagainst the CODE-OWNED vocabulary and an unknown value surfaces as\nthe sanitized 422 category ONLY \u2014 a pydantic enum here would echo\nthe permitted values in FastAPI's structural 422 (least\ndisclosure). Stored PREFERENCE only; nothing routes money by it\n(batch-8 fence).",
+        "description": "extra=\"forbid\" (least disclosure): unknown fields are a 422, never\nsilently dropped. dividend_payout is typed as a\nbounded STRING, deliberately not the enum: the service resolves it\nagainst the CODE-OWNED vocabulary and an unknown value surfaces as\nthe sanitized 422 category ONLY \u2014 a pydantic enum here would echo\nthe permitted values in FastAPI's structural 422 (least\ndisclosure). Stored PREFERENCE only; nothing routes money by it\n(the preference-only fence).",
         "properties": {
           "dividend_payout": {
             "anyOf": [
@@ -3452,7 +3452,7 @@
         "type": "object"
       },
       "MemberDetailOut": {
-        "description": "MemberOut expanded with aggregates \u2014 always on the DETAIL read.\n\nExpand-only contract: every MemberOut field is unchanged. The\nregister LIST serves the same object per row ONLY when the request\nopts in with include=aggregates (one set-based statement per page,\nnever a per-row fan-out \u2014 gate 1.3); without the parameter list\nrows stay flat.",
+        "description": "MemberOut expanded with aggregates \u2014 always on the DETAIL read.\n\nExpand-only contract: every MemberOut field is unchanged. The\nregister LIST serves the same object per row ONLY when the request\nopts in with include=aggregates (one set-based statement per page,\nnever a per-row fan-out \u2014 scalability); without the parameter list\nrows stay flat.",
         "properties": {
           "aggregates": {
             "$ref": "#/components/schemas/MemberAggregatesOut"
@@ -3543,7 +3543,7 @@
         "type": "object"
       },
       "MemberListDetailResponse": {
-        "description": "Register page whose rows carry the advisory aggregates (#31).\n\nServed ONLY when the request opts in with include=aggregates; the\nflat MemberListResponse stays byte-identical otherwise.",
+        "description": "Register page whose rows carry the advisory aggregates.\n\nServed ONLY when the request opts in with include=aggregates; the\nflat MemberListResponse stays byte-identical otherwise.",
         "properties": {
           "items": {
             "items": {
@@ -3906,7 +3906,7 @@
       },
       "MoneyBody": {
         "additionalProperties": false,
-        "description": "extra=\"forbid\": a caller-sent occurred_at (or any money field this\ncontract does not own) is a 422, never silently ignored \u2014 the\nposting date is resolved server-side (issue #12, gate 1.6).",
+        "description": "extra=\"forbid\": a caller-sent occurred_at (or any money field this\ncontract does not own) is a 422, never silently ignored \u2014 the\nposting date is resolved server-side (least disclosure).",
         "properties": {
           "amount": {
             "anyOf": [
@@ -9984,7 +9984,7 @@
     },
     "/jobs/deposit-interest": {
       "post": {
-        "description": "Accrue deposit interest for the next unaccrued quarter (batched, idempotent).\n\nThe quarterly scheduler calls the same service per tenant; this\nroute exists for operations and catch-up. Each batch commits its\nown short transaction (gate 1.3).\n\nRate and period are resolved server-side (review finding 2): the\nannual rate comes from tenant_settings (409 when unconfigured) and\nthe period advances in strict order \u2014 the earliest quarter not yet\nfully accrued, never past the most recent completed quarter, and\nnever an arbitrary caller-chosen historical period. Re-running a\nfully accrued tenant is an idempotent no-op (DB UNIQUE); a\nconcurrent run at worst re-resolves an already finished period,\nwhich the UNIQUE claim turns into skips.\n\nPermission (P4 matrix, verified): transactions x EDIT. Posting\ninterest is back-office ledger maintenance, so it belongs to the\nroles the matrix grants transactions:edit (System Admin, Branch\nManager, Accountant) \u2014 deliberately not transactions:create, which\nwould let counter Tellers trigger tenant-wide accrual runs.",
+        "description": "Accrue deposit interest for the next unaccrued quarter (batched, idempotent).\n\nThe quarterly scheduler calls the same service per tenant; this\nroute exists for operations and catch-up. Each batch commits its\nown short transaction (scalability).\n\nRate and period are resolved server-side (review finding 2): the\nannual rate comes from tenant_settings (409 when unconfigured) and\nthe period advances in strict order \u2014 the earliest quarter not yet\nfully accrued, never past the most recent completed quarter, and\nnever an arbitrary caller-chosen historical period. Re-running a\nfully accrued tenant is an idempotent no-op (DB UNIQUE); a\nconcurrent run at worst re-resolves an already finished period,\nwhich the UNIQUE claim turns into skips.\n\nPermission (P4 matrix, verified): transactions x EDIT. Posting\ninterest is back-office ledger maintenance, so it belongs to the\nroles the matrix grants transactions:edit (System Admin, Branch\nManager, Accountant) \u2014 deliberately not transactions:create, which\nwould let counter Tellers trigger tenant-wide accrual runs.",
         "operationId": "run_deposit_interest_jobs_deposit_interest_post",
         "requestBody": {
           "content": {
@@ -11099,7 +11099,7 @@
     },
     "/members": {
       "get": {
-        "description": "Keyset member register page (members:view).\n\nOPT-IN aggregates (#31 batch 3 review): with include=aggregates\nevery row carries the same four advisory decimal-string figures as\nthe detail read, computed by ONE set-based statement per page (the\nkeyset page drives, LEFT JOIN LATERAL supplies the probes \u2014 never\na per-row fan-out). Without the parameter the response is\nbyte-identical to the flat register. No rejection path (403, 422)\ncomputes or echoes an amount.\n\nmember_no (#35 item 14 \u2014 the posting-drawer unique-identifier\nlookup): expand-only EXACT-match filter served by the 0001 UNIQUE\n(tenant_id, member_no) key. An unknown number is an EMPTY page,\nnever a 404 \u2014 no existence oracle beyond the members:view grant.",
+        "description": "Keyset member register page (members:view).\n\nOPT-IN aggregates: with include=aggregates\nevery row carries the same four advisory decimal-string figures as\nthe detail read, computed by ONE set-based statement per page (the\nkeyset page drives, LEFT JOIN LATERAL supplies the probes \u2014 never\na per-row fan-out). Without the parameter the response is\nbyte-identical to the flat register. No rejection path (403, 422)\ncomputes or echoes an amount.\n\nmember_no (the posting-drawer unique-identifier\nlookup): expand-only EXACT-match filter served by the 0001 UNIQUE\n(tenant_id, member_no) key. An unknown number is an EMPTY page,\nnever a 404 \u2014 no existence oracle beyond the members:view grant.",
         "operationId": "list_members_members_get",
         "parameters": [
           {
@@ -11275,7 +11275,7 @@
     },
     "/members/jobs/dormancy": {
       "post": {
-        "description": "Run the dormancy job for the caller's tenant (batched, idempotent).\n\nThe nightly cycle (infrastructure/dormancy_worker.py) drives the\nsame service per tenant; this route exists for operations and\nbackfills (the P10/P13.8 /jobs/arrears precedent). Members with no\nMEMBER-INITIATED ledger activity inside the tenant-configured\nwindow transition Active -> Dormant under their row lock; each\nbatch commits its own short transaction (gate 1.3).\n\nConfiguration (dormancy_period_months) is resolved server-side\nfrom tenant settings only \u2014 this body accepts none of it\n(extra=\"forbid\"; v1.1 rule 1) \u2014 and an unconfigured or corrupt\nperiod REFUSES the run with 409 and zero transitions (fail closed,\nP13.13 FM8; never a silent default).\n\nPermission (P4 matrix): members x EDIT \u2014 the job rewrites member\nstatus rows, the same power the manual status route carries; no\nledger posting happens here.",
+        "description": "Run the dormancy job for the caller's tenant (batched, idempotent).\n\nThe nightly cycle (infrastructure/dormancy_worker.py) drives the\nsame service per tenant; this route exists for operations and\nbackfills (the /jobs/arrears precedent). Members with no\nMEMBER-INITIATED ledger activity inside the tenant-configured\nwindow transition Active -> Dormant under their row lock; each\nbatch commits its own short transaction (scalability).\n\nConfiguration (dormancy_period_months) is resolved server-side\nfrom tenant settings only \u2014 this body accepts none of it\n(extra=\"forbid\"; v1.1 rule 1) \u2014 and an unconfigured or corrupt\nperiod REFUSES the run with 409 and zero transitions (fail closed,\nnever a silent default).\n\nPermission (P4 matrix): members x EDIT \u2014 the job rewrites member\nstatus rows, the same power the manual status route carries; no\nledger posting happens here.",
         "operationId": "run_dormancy_members_jobs_dormancy_post",
         "requestBody": {
           "content": {
@@ -11317,7 +11317,7 @@
     },
     "/members/{member_id}": {
       "get": {
-        "description": "Single-member read with advisory aggregates (#31, members:view).\n\nThe existence check runs FIRST: unknown ids (including cross-tenant\nids hidden by RLS) surface 404 before any aggregate is computed, so\nno rejection path ever echoes an amount (least disclosure, gate\n1.6).",
+        "description": "Single-member read with advisory aggregates (members:view).\n\nThe existence check runs FIRST: unknown ids (including cross-tenant\nids hidden by RLS) surface 404 before any aggregate is computed, so\nno rejection path ever echoes an amount (least disclosure, gate\n1.6).",
         "operationId": "get_member_members__member_id__get",
         "parameters": [
           {
@@ -13087,7 +13087,7 @@
     },
     "/transactions": {
       "get": {
-        "description": "Ledger listing with the prototype filters (date, ref, member, type, DR/CR, channel).\n\nsearch (#35 item 13): expand-only declared free-text probe \u2014\ntxn_ref PREFIX, or member match (member_no exact / name prefix)\nvia an EXISTS on members. Bound parameters only; LIKE\nmetacharacters are escaped code-side; keyset order preserved; the\n0043 idx_txns_ref_prefix serves the ref-prefix branch portably.",
+        "description": "Ledger listing with filters (date, ref, member, type, DR/CR, channel).\n\nsearch: expand-only declared free-text probe \u2014\ntxn_ref PREFIX, or member match (member_no exact / name prefix)\nvia an EXISTS on members. Bound parameters only; LIKE\nmetacharacters are escaped code-side; keyset order preserved; the\n0043 idx_txns_ref_prefix serves the ref-prefix branch portably.",
         "operationId": "list_ledger_transactions_get",
         "parameters": [
           {
@@ -13283,7 +13283,7 @@
     },
     "/transactions/{transaction_id}/legs": {
       "get": {
-        "description": "The double-entry DR/CR legs of one posting (transactions:view).\n\nExpand-only read model (#31 ledger (g), audit #30 A3): the\nappend-only ledger_entries truth behind a TransactionOut row, one\nitem per leg, each amount a canonical decimal string rendered\nverbatim by clients \u2014 never summed or netted (P15 blocker (a)).\n404-BEFORE-FACTS: the existence probe runs before any leg is read,\nso unknown and cross-tenant ids (hidden by RLS) surface 404 with no\naccount or amount echoed; 403 rejections carry no figures either\n(least disclosure, gate 1.6).",
+        "description": "The double-entry DR/CR legs of one posting (transactions:view).\n\nExpand-only read model: the\nappend-only ledger_entries truth behind a TransactionOut row, one\nitem per leg, each amount a canonical decimal string rendered\nverbatim by clients \u2014 never summed or netted (no client-side money math).\n404-BEFORE-FACTS: the existence probe runs before any leg is read,\nso unknown and cross-tenant ids (hidden by RLS) surface 404 with no\naccount or amount echoed; 403 rejections carry no figures either\n(least disclosure).",
         "operationId": "list_transaction_legs_transactions__transaction_id__legs_get",
         "parameters": [
           {
