@@ -23,6 +23,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application.accounting_periods import assert_open_period
@@ -149,6 +150,7 @@ async def _post(
     *,
     occurred_at: datetime | None = None,
     reversal_of_id: uuid.UUID | None = None,
+    external_ref: str | None = None,
 ) -> PostingResult:
     """Write one transaction + its ledger lines atomically.
 
@@ -179,29 +181,45 @@ async def _post(
     # is recorded as absent, never fabricated. The 0004 append-only
     # triggers pin the attribution immutable the moment the row
     # commits: it can never be rewritten after the fact.
-    await session.execute(
-        text(
-            "INSERT INTO transactions "
-            "(id, tenant_id, txn_ref, member_id, type, amount, channel, "
-            " occurred_at, reversal_of_id, created_by) "
-            "VALUES "
-            "(CAST(:id AS uuid), CAST(:tid AS uuid), :ref, "
-            " CAST(:mid AS uuid), :type, :amount, :channel, :ts, "
-            " CAST(:rev_of AS uuid), CAST(:actor AS uuid))"
-        ),
-        {
-            "id": str(txn_id),
-            "tid": str(tenant_id),
-            "ref": txn_ref,
-            "mid": str(member_id) if member_id else None,
-            "type": spec.txn_type.value,
-            "amount": str(spec.amount),
-            "channel": spec.channel.value,
-            "ts": ts,
-            "rev_of": str(reversal_of_id) if reversal_of_id else None,
-            "actor": str(actor_id) if actor_id else None,
-        },
-    )
+    # external_ref (#35 item 6, migration 0043): the operator-entered
+    # external receipt reference on external-channel teller postings;
+    # NULL for every system posting and every legacy path. The partial
+    # UNIQUE uq_txns_external_ref makes the per-tenant per-channel
+    # dedupe claim ATOMIC at this INSERT (never SELECT-then-INSERT,
+    # v1.1 rule 5): a duplicate reference is a 409, sanitized — the
+    # submitted value is never echoed (gate 1.6).
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO transactions "
+                "(id, tenant_id, txn_ref, member_id, type, amount, channel, "
+                " occurred_at, reversal_of_id, created_by, external_ref) "
+                "VALUES "
+                "(CAST(:id AS uuid), CAST(:tid AS uuid), :ref, "
+                " CAST(:mid AS uuid), :type, :amount, :channel, :ts, "
+                " CAST(:rev_of AS uuid), CAST(:actor AS uuid), :ext_ref)"
+            ),
+            {
+                "id": str(txn_id),
+                "tid": str(tenant_id),
+                "ref": txn_ref,
+                "mid": str(member_id) if member_id else None,
+                "type": spec.txn_type.value,
+                "amount": str(spec.amount),
+                "channel": spec.channel.value,
+                "ts": ts,
+                "rev_of": str(reversal_of_id) if reversal_of_id else None,
+                "actor": str(actor_id) if actor_id else None,
+                "ext_ref": external_ref,
+            },
+        )
+    except IntegrityError as exc:
+        # Constraint name from the 0043 migration — code-owned literal.
+        if "uq_txns_external_ref" in str(exc.orig):
+            raise ConflictError(
+                "an external transaction with this reference was already recorded"
+            ) from exc
+        raise
 
     # Insert all ledger lines.
     await _insert_lines(session, tenant_id, txn_id, spec.lines)
@@ -265,10 +283,19 @@ async def post_deposit(
     channel: Channel,
     actor_id: uuid.UUID | None = None,
     occurred_at: datetime | None = None,
+    external_ref: str | None = None,
 ) -> PostingResult:
     """Post a member deposit and enqueue a notification event."""
     spec = build_deposit_posting(amount, channel)
-    result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
+    result = await _post(
+        session,
+        tenant_id,
+        member_id,
+        spec,
+        actor_id,
+        occurred_at=occurred_at,
+        external_ref=external_ref,
+    )
     await enqueue_event(
         session,
         tenant_id,
@@ -292,10 +319,19 @@ async def post_withdrawal(
     channel: Channel,
     actor_id: uuid.UUID | None = None,
     occurred_at: datetime | None = None,
+    external_ref: str | None = None,
 ) -> PostingResult:
     """Post a member withdrawal."""
     spec = build_withdrawal_posting(amount, channel)
-    result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
+    result = await _post(
+        session,
+        tenant_id,
+        member_id,
+        spec,
+        actor_id,
+        occurred_at=occurred_at,
+        external_ref=external_ref,
+    )
     await enqueue_event(
         session,
         tenant_id,
@@ -319,10 +355,19 @@ async def post_share_topup(
     channel: Channel,
     actor_id: uuid.UUID | None = None,
     occurred_at: datetime | None = None,
+    external_ref: str | None = None,
 ) -> PostingResult:
     """Post a share top-up."""
     spec = build_share_topup_posting(amount, channel)
-    result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
+    result = await _post(
+        session,
+        tenant_id,
+        member_id,
+        spec,
+        actor_id,
+        occurred_at=occurred_at,
+        external_ref=external_ref,
+    )
     await enqueue_event(
         session,
         tenant_id,

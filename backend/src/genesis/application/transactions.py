@@ -47,7 +47,10 @@ from genesis.errors import (
 #: taken from this mapping (never from user input) before interpolation.
 _ACCOUNT_TABLES = {"deposit": "deposit_accounts", "share": "share_accounts"}
 
-_TXN_COLS = "id, txn_ref, member_id, type, amount, channel, occurred_at, reversal_of_id, created_by"
+_TXN_COLS = (
+    "id, txn_ref, member_id, type, amount, channel, occurred_at, "
+    "reversal_of_id, created_by, external_ref"
+)
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,12 @@ class TransactionRecord:
     #: postings and for pre-0036 rows without unambiguous audit history
     #: — attribution is never invented.
     created_by: uuid.UUID | None
+    #: External receipt reference (#35 item 6, migration 0043): the
+    #: operator-entered M-Pesa confirmation code / bank slip ref on
+    #: external-channel teller postings. None is the honest state for
+    #: every system posting and every pre-0043 row — history is never
+    #: backfilled with invented references.
+    external_ref: str | None
 
 
 async def _require_member(
@@ -179,6 +188,7 @@ async def record_deposit(
     *,
     amount: Decimal,
     channel: Channel,
+    external_ref: str | None = None,
 ) -> AccountTxnResult:
     """Post a deposit and credit the account atomically (gates 1.4, 1.5).
 
@@ -202,7 +212,9 @@ async def record_deposit(
     account_id, balance = await _lock_account(
         session, tenant_id, kind="deposit", member_id=member_id
     )
-    posting = await post_deposit(session, tenant_id, member_id, amount, channel, actor_id)
+    posting = await post_deposit(
+        session, tenant_id, member_id, amount, channel, actor_id, external_ref=external_ref
+    )
     balance_after = to_cents(balance + amount)
     await _set_balance(
         session, tenant_id, kind="deposit", account_id=account_id, balance=balance_after
@@ -234,6 +246,7 @@ async def record_withdrawal(
     *,
     amount: Decimal,
     channel: Channel,
+    external_ref: str | None = None,
 ) -> AccountTxnResult:
     """Withdraw under the account row lock; never overdraws (gate 1.4).
 
@@ -258,7 +271,9 @@ async def record_withdrawal(
         raise ConflictError(
             "insufficient available funds: the requested amount exceeds the withdrawable balance"
         )
-    posting = await post_withdrawal(session, tenant_id, member_id, amount, channel, actor_id)
+    posting = await post_withdrawal(
+        session, tenant_id, member_id, amount, channel, actor_id, external_ref=external_ref
+    )
     balance_after = to_cents(balance - amount)
     await _set_balance(
         session, tenant_id, kind="deposit", account_id=account_id, balance=balance_after
@@ -288,6 +303,7 @@ async def record_share_topup(
     *,
     amount: Decimal,
     channel: Channel,
+    external_ref: str | None = None,
 ) -> AccountTxnResult:
     """Post a share top-up and credit the share account atomically.
 
@@ -300,7 +316,9 @@ async def record_share_topup(
         raise InvalidInputError("share top-up amount must be positive")
     await _require_member(session, tenant_id, member_id, operation=MoneyOperation.SHARE_TOPUP)
     account_id, balance = await _lock_account(session, tenant_id, kind="share", member_id=member_id)
-    posting = await post_share_topup(session, tenant_id, member_id, amount, channel, actor_id)
+    posting = await post_share_topup(
+        session, tenant_id, member_id, amount, channel, actor_id, external_ref=external_ref
+    )
     balance_after = to_cents(balance + amount)
     await _set_balance(
         session, tenant_id, kind="share", account_id=account_id, balance=balance_after
@@ -332,6 +350,7 @@ def _row_to_txn(row: object) -> TransactionRecord:
         direction=member_direction(txn_type, is_reversal=is_reversal),
         is_reversal=is_reversal,
         created_by=uuid.UUID(str(row[8])) if row[8] is not None else None,  # type: ignore[index]
+        external_ref=str(row[9]) if row[9] is not None else None,  # type: ignore[index]
     )
 
 

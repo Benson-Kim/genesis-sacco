@@ -7,20 +7,58 @@ no-future-dates rule for as_of style parameters.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, date, datetime
 
 from genesis.domain.ledger import Channel
-from genesis.errors import InvalidInputError
+from genesis.errors import InvalidInputError, UnprocessableError
 
 #: Channels on which money physically moves. Accrual/internal postings
 #: are made by jobs through their dedicated services, never by routes.
 CASH_CHANNELS = frozenset({Channel.MPESA, Channel.BANK})
+
+#: Channels whose money movement happens OUTSIDE this system (#35 item
+#: 6): an M-Pesa transfer or a bank deposit each mint an external
+#: receipt reference that reconciliation needs verbatim. Today this
+#: set equals CASH_CHANNELS (both teller channels are external money
+#: movements); it is a separate code-owned vocabulary because the
+#: requirement is "external channels", not "teller channels" — a
+#: future physical-cash channel would join CASH_CHANNELS but not this
+#: set.
+EXTERNAL_CHANNELS = frozenset({Channel.MPESA, Channel.BANK})
+
+#: Code-owned shape for operator-entered external references (M-Pesa
+#: confirmation code / bank slip ref): 2..40 chars, alphanumeric with
+#: the common separator characters, alphanumeric at both edges.
+#: Validated AFTER uppercase normalization, so the partial UNIQUE
+#: (tenant_id, channel, external_ref) dedupe (0043) is
+#: case-insensitive by construction.
+EXTERNAL_REF_RE = re.compile(r"^[A-Z0-9][A-Z0-9 /\-]{0,38}[A-Z0-9]$")
 
 
 def require_cash_channel(channel: Channel) -> Channel:
     if channel not in CASH_CHANNELS:
         raise InvalidInputError(f"channel must be one of: mpesa, bank; got '{channel.value}'")
     return channel
+
+
+def require_external_ref(channel: Channel, external_ref: str | None) -> str | None:
+    """Mandatory external reference on EXTERNAL-channel postings (#35 item 6).
+
+    Missing or malformed references are a sanitized 422 — the category
+    only, the submitted value is NEVER echoed (least disclosure, gate
+    1.6; the stored/audited row carries it for entitled staff).
+    Non-external channels return None: system postings keep their
+    system-generated txn_ref and never carry an external reference.
+    """
+    if channel not in EXTERNAL_CHANNELS:
+        return None
+    if external_ref is None or external_ref.strip() == "":
+        raise UnprocessableError("external channel postings require a transaction reference")
+    normalized = external_ref.strip().upper()
+    if EXTERNAL_REF_RE.fullmatch(normalized) is None:
+        raise UnprocessableError("invalid external transaction reference format")
+    return normalized
 
 
 def resolve_as_of(as_of: date | None) -> date:
