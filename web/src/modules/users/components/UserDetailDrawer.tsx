@@ -20,6 +20,7 @@ import { can } from "@/modules/authz/schemas";
 import { getOwnUserId } from "@/modules/auth/session";
 import { isConflict } from "@/lib/errors";
 import { fmtDateTime, initials } from "@/lib/format";
+import { KENYA_PHONE_MESSAGE, normalizeKenyaMsisdn } from "@/lib/phone";
 import {
   assignUserRole,
   changeUserStatus,
@@ -209,7 +210,17 @@ function EditForm({
   const [email, setEmail] = useState(user.email);
   const [phone, setPhone] = useState(user.phone ?? "");
   const [branch, setBranch] = useState(user.branch ?? "");
+  // #35 item 1 — blur-time Kenya-phone validation (courtesy mirror of
+  // the server's E.164 normalization rule). Shows on blur, clears on
+  // correction. Legacy-format saved values only warn once touched.
+  const [phoneBlurError, setPhoneBlurError] = useState<string | null>(null);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
+
+  function validatePhoneBlur(value: string) {
+    const trimmed = value.trim();
+    const ok = trimmed === "" || normalizeKenyaMsisdn(trimmed) !== null;
+    setPhoneBlurError(ok ? null : KENYA_PHONE_MESSAGE);
+  }
 
   const update = useMutation({
     mutationFn: (input: UpdateUserInput) =>
@@ -243,7 +254,13 @@ function EditForm({
     const mail = email.trim();
     if (name !== "") input.full_name = name;
     if (mail !== "") input.email = mail;
-    if (phone.trim() !== "") input.phone = phone.trim();
+    if (phone.trim() !== "") {
+      if (normalizeKenyaMsisdn(phone.trim()) === null) {
+        setPhoneBlurError(KENYA_PHONE_MESSAGE);
+        return;
+      }
+      input.phone = phone.trim();
+    }
     if (branch.trim() !== "") input.branch = branch.trim();
     update.mutate(input);
   }
@@ -267,6 +284,7 @@ function EditForm({
           id="edit-email"
           className={styles.input}
           type="email"
+          inputMode="email"
           maxLength={254}
           value={email}
           onChange={(event) => setEmail(event.target.value)}
@@ -276,11 +294,18 @@ function EditForm({
         <input
           id="edit-phone"
           className={styles.input}
+          type="tel"
+          inputMode="tel"
           maxLength={32}
           value={phone}
-          onChange={(event) => setPhone(event.target.value)}
+          onChange={(event) => {
+            setPhone(event.target.value);
+            if (phoneBlurError !== null) validatePhoneBlur(event.target.value);
+          }}
+          onBlur={(event) => validatePhoneBlur(event.target.value)}
         />
       </Field>
+      {phoneBlurError !== null && <div role="alert">{phoneBlurError}</div>}
       <Field label="Branch" htmlFor="edit-branch">
         <input
           id="edit-branch"

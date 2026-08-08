@@ -126,6 +126,10 @@ export function TransactionsScreen() {
   const [fromDraft, setFromDraft] = useState("");
   const [toDraft, setToDraft] = useState("");
   const [draftError, setDraftError] = useState("");
+  // #35 item 13 — date presets. Presets are a CLIENT-SIDE convenience
+  // that compute the two existing declared params (date_from/date_to);
+  // the server never sees a preset token. "" (All) sends no date keys.
+  const [datePreset, setDatePreset] = useState<"" | "today" | "7d" | "30d" | "custom">("");
   const [drawer, setDrawer] = useState<DrawerState>(null);
 
   const list = useKeysetList<Transaction>({
@@ -154,12 +158,39 @@ export function TransactionsScreen() {
       return;
     }
     setDraftError("");
+    // Manual dates supersede any preset: the pressed state moves to
+    // Custom (or All when both are empty) so the UI never lies.
+    setDatePreset(fromValue === "" && toValue === "" ? "" : "custom");
     setFilters((current) => ({
       ...current,
       ref: refDraft.trim(),
       date_from: fromValue,
       date_to: toValue,
     }));
+  }
+
+  function applyDatePreset(preset: "" | "today" | "7d" | "30d" | "custom") {
+    setDatePreset(preset);
+    if (preset === "custom") return; // manual from/to inputs take over
+    if (preset === "") {
+      setFromDraft("");
+      setToDraft("");
+      setFilters((current) => ({ ...current, date_from: "", date_to: "" }));
+      return;
+    }
+    // Hand-computable window: [today - (N-1) days, today], local clock.
+    const spanDays = preset === "today" ? 1 : preset === "7d" ? 7 : 30;
+    const to = new Date();
+    const from = new Date(to);
+    from.setDate(to.getDate() - (spanDays - 1));
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const fromValue = iso(from);
+    const toValue = iso(to);
+    setFromDraft(fromValue);
+    setToDraft(toValue);
+    setDraftError("");
+    setFilters((current) => ({ ...current, date_from: fromValue, date_to: toValue }));
   }
 
   const columns: Column<Transaction>[] = [
@@ -309,6 +340,30 @@ export function TransactionsScreen() {
               }
             />
           )}
+          <div className={styles.filterGroup}>
+            <span className={styles.filterLabel}>Date</span>
+            <div className={styles.segment} role="group" aria-label="Date preset">
+              {(
+                [
+                  ["", "All"],
+                  ["today", "Today"],
+                  ["7d", "Last 7 days"],
+                  ["30d", "Last 30 days"],
+                  ["custom", "Custom range"],
+                ] as const
+              ).map(([preset, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  className={styles.segmentButton}
+                  aria-pressed={datePreset === preset}
+                  onClick={() => applyDatePreset(preset)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <form className={styles.filters} onSubmit={applyDrafts} noValidate>
             <div className={styles.filterGroup}>
               <label className={styles.filterLabel} htmlFor="txn-filter-ref">
@@ -316,6 +371,7 @@ export function TransactionsScreen() {
               </label>
               <input
                 id="txn-filter-ref"
+                inputMode="search"
                 className={`${styles.input} ${styles.filterControl}`}
                 maxLength={32}
                 value={refDraft}

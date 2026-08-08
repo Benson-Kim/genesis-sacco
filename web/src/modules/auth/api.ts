@@ -3,18 +3,23 @@
  * (request -> 6-digit verify) and the backend contract (P3).
  */
 import { newIdempotencyKey, toApiError } from "@genesis/api-client";
-import { tokenResponseSchema, type TokenResponse } from "./schemas";
+import { otpRequestResponseSchema, tokenResponseSchema, type TokenResponse } from "./schemas";
 import { clearSession, getRefreshToken, setSession } from "./session";
 import { clearSessionScopedStores } from "./sessionScopedStores";
 import { api } from "@/lib/api";
 
-export async function requestOtp(email: string): Promise<void> {
-  const { error, response } = await api.POST("/auth/otp/request", {
+export async function requestOtp(email: string): Promise<{ devOtp: string | null }> {
+  const { data, error, response } = await api.POST("/auth/otp/request", {
     body: { email },
   });
   if (error !== undefined) {
     throw toApiError(error, response);
   }
+  // DEV-ONLY (#35 item 11, REMOVE BEFORE STAGING): the server includes
+  // dev_otp only behind its fail-closed flag; absent means null here —
+  // the note simply does not render.
+  const parsed = otpRequestResponseSchema.safeParse(data);
+  return { devOtp: parsed.success ? (parsed.data.dev_otp ?? null) : null };
 }
 
 export async function verifyOtp(input: {
