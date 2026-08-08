@@ -259,7 +259,7 @@ async def _classify_loan(
     stored_cls: str,
     stored_prov: Decimal,
 ) -> int:
-    """ classification write for one locked loan; returns 0 or 1.
+    """classification write for one locked loan; returns 0 or 1.
 
     Idempotency: identical stored state is never rewritten, so a
     re-run for the same as_of changes nothing.

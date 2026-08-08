@@ -1,4 +1,4 @@
-""" report registry expansion: register keyset index + report
+"""report registry expansion: register keyset index + report
 vocabulary CHECK widening (the house gates)
 
 Revision ID: 0023
