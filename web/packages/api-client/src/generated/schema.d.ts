@@ -3592,7 +3592,7 @@ export interface components {
          *
          *     All four figures are canonical decimal strings scaled by the
          *     database (numeric(18,2)); clients render them verbatim and never
-         *     compute money (P15 blocker (a)). Advisory only: every BINDING money
+         *     compute money (no client-side money math). Advisory only: every BINDING money
          *     decision recomputes under the established row locks.
          */
         MemberAggregatesOut: {
@@ -3607,14 +3607,14 @@ export interface components {
         };
         /**
          * MemberCreateBody
-         * @description extra="forbid" (gate 1.6): unknown fields are a 422, never
-         *     silently dropped. dividend_payout (#31 ledger (c)) is typed as a
+         * @description extra="forbid" (least disclosure): unknown fields are a 422, never
+         *     silently dropped. dividend_payout is typed as a
          *     bounded STRING, deliberately not the enum: the service resolves it
          *     against the CODE-OWNED vocabulary and an unknown value surfaces as
          *     the sanitized 422 category ONLY — a pydantic enum here would echo
          *     the permitted values in FastAPI's structural 422 (least
          *     disclosure). Stored PREFERENCE only; nothing routes money by it
-         *     (batch-8 fence).
+         *     (the preference-only fence).
          */
         MemberCreateBody: {
             /** Dividend Payout */
@@ -3634,7 +3634,7 @@ export interface components {
          *     Expand-only contract: every MemberOut field is unchanged. The
          *     register LIST serves the same object per row ONLY when the request
          *     opts in with include=aggregates (one set-based statement per page,
-         *     never a per-row fan-out — gate 1.3); without the parameter list
+         *     never a per-row fan-out — scalability); without the parameter list
          *     rows stay flat.
          */
         MemberDetailOut: {
@@ -3662,7 +3662,7 @@ export interface components {
         };
         /**
          * MemberListDetailResponse
-         * @description Register page whose rows carry the advisory aggregates (#31).
+         * @description Register page whose rows carry the advisory aggregates.
          *
          *     Served ONLY when the request opts in with include=aggregates; the
          *     flat MemberListResponse stays byte-identical otherwise.
@@ -3788,7 +3788,7 @@ export interface components {
          * MoneyBody
          * @description extra="forbid": a caller-sent occurred_at (or any money field this
          *     contract does not own) is a 422, never silently ignored — the
-         *     posting date is resolved server-side (issue #12, gate 1.6).
+         *     posting date is resolved server-side (least disclosure).
          */
         MoneyBody: {
             /** Amount */
