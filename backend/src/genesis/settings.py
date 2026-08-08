@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     # (1-255). Rotation: deploy a new key WITH a bumped version;
     # tokens minted under the old version fail closed as sanitized
     # 400s (cursors are short-lived pagination state).
+    # LENGTH REQUIREMENT (review B13-R5): at least 32 bytes of key
+    # material — an HMAC-SHA256 key should be no shorter than the
+    # digest (RFC 2104). Boot FAILS CLOSED on an empty or shorter key
+    # (application.pagination.assert_cursor_signing_key_configured,
+    # called from api.app.create_app) — never a first-decode surprise.
     cursor_signing_key: str = ""
     cursor_key_version: int = 1
 

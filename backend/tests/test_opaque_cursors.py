@@ -17,6 +17,7 @@ import uuid
 
 import pytest
 
+from genesis.api.app import create_app
 from genesis.application import pagination
 from genesis.application.branches import BRANCH_MEMBERS_SCOPE
 from genesis.application.members import MEMBERS_LIST_SCOPE
@@ -170,3 +171,24 @@ def test_unconfigured_key_is_a_server_error_not_a_400(
     monkeypatch.setattr(pagination, "get_settings", lambda: unconfigured)
     with pytest.raises(RuntimeError, match="cursor signing key not configured"):
         encode_cursor("GP-0042", tenant_id=TENANT, endpoint=ENDPOINT)
+
+
+@pytest.mark.parametrize("bad", ["", "short", "x" * 31], ids=["empty", "tiny", "31-bytes"])
+def test_boot_rejects_missing_or_short_cursor_signing_key(
+    bad: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B13-R5 fail-closed BOOT guard: an empty or <32-byte signing key
+    aborts ``create_app`` — the misconfiguration can never wait for the
+    first decode. Falsifiable: drop the guard call from create_app (or
+    weaken the length check) and this boots a weakly-keyed app."""
+    weak = get_settings().model_copy(update={"cursor_signing_key": bad})
+    monkeypatch.setattr(pagination, "get_settings", lambda: weak)
+    with pytest.raises(RuntimeError, match="cursor_signing_key must be configured"):
+        create_app()
+
+
+def test_boot_accepts_a_32_byte_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The guard's exact boundary: 32 bytes of key material boots."""
+    ok = get_settings().model_copy(update={"cursor_signing_key": "x" * 32})
+    monkeypatch.setattr(pagination, "get_settings", lambda: ok)
+    create_app()  # must not raise

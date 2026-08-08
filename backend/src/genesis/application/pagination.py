@@ -44,6 +44,28 @@ from genesis.settings import get_settings
 #: HMAC-SHA256 digest length; the token's trailing tag is exactly this.
 _TAG_LEN = 32
 
+#: Minimum signing-key material (bytes): an HMAC key should be at
+#: least the digest size (RFC 2104 / FIPS 198-1 guidance for
+#: HMAC-SHA256). Enforced at BOOT, fail closed (review B13-R5).
+MIN_CURSOR_KEY_BYTES = 32
+
+
+def assert_cursor_signing_key_configured() -> None:
+    """Fail-closed BOOT guard (#31 batch 13, review B13-R5).
+
+    An empty or short ``Settings.cursor_signing_key`` is a DEPLOYMENT
+    error and must abort startup — never surface at the first decode
+    (where it would blame a caller) or, worse, sign every cursor in
+    the fleet with guessable key material. Called by
+    ``genesis.api.app.create_app`` before any router is wired.
+    """
+    key = get_settings().cursor_signing_key.encode()
+    if len(key) < MIN_CURSOR_KEY_BYTES:
+        raise RuntimeError(
+            "cursor_signing_key must be configured with at least "
+            f"{MIN_CURSOR_KEY_BYTES} bytes of key material"
+        )
+
 
 def _cursor_signing_key() -> bytes:
     """Environment-provided secret (the jwt_signing_key house pattern).
