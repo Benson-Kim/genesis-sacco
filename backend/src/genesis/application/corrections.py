@@ -136,6 +136,8 @@ from genesis.application.outbox import enqueue_event
 from genesis.application.pagination import (
     build_band_register_cursor,
     build_created_id_cursor,
+    decode_cursor,
+    encode_cursor,
     parse_band_register_cursor,
     parse_created_id_cursor,
 )
@@ -153,6 +155,13 @@ from genesis.domain.members import MemberStatus, MoneyOperation
 from genesis.domain.money import ZERO, to_cents
 from genesis.domain.tenant_config import SETTINGS_REGISTRY
 from genesis.errors import ConflictError, ForbiddenError, InvalidInputError, NotFoundError
+
+#: Cursor scope ids (#31 batch 13): signed cursors are bound to ONE
+#: endpoint - the three corrections registers never share positions
+#: (gate 1.6).
+ADJUSTMENTS_SCOPE = "corrections.adjustments"
+WRITE_OFFS_SCOPE = "corrections.write_offs"
+WO_RECOVERIES_SCOPE = "corrections.write_off_recoveries"
 
 # ---------------------------------------------------------------------------
 # Misc fees (P13.15 part 2)
@@ -432,7 +441,12 @@ async def list_adjustments(
     """Keyset adjustments register, pending-first (ledger (a).1)."""
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if cursor is not None:
-        c_flag, c_ts, c_id = parse_band_register_cursor(cursor, entity="adjustment register")
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the plaintext band parse stays as defense-in-depth.
+        inner = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=ADJUSTMENTS_SCOPE, entity="adjustment register"
+        )
+        c_flag, c_ts, c_id = parse_band_register_cursor(inner, entity="adjustment register")
         params["c_flag"] = c_flag
         params["c_ts"] = c_ts
         params["c_id"] = c_id
@@ -442,8 +456,12 @@ async def list_adjustments(
     next_cursor = None
     if len(rows) > limit and items:
         last = items[-1]
-        next_cursor = build_band_register_cursor(
-            last.status is AdjustmentStatus.PENDING_APPROVAL, last.created_at, last.id
+        next_cursor = encode_cursor(
+            build_band_register_cursor(
+                last.status is AdjustmentStatus.PENDING_APPROVAL, last.created_at, last.id
+            ),
+            tenant_id=tenant_id,
+            endpoint=ADJUSTMENTS_SCOPE,
         )
     return AdjustmentPage(items=items, next_cursor=next_cursor)
 
@@ -1417,7 +1435,12 @@ async def list_write_offs(
     """Keyset write-off register, live-first (ledger (a).2)."""
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if cursor is not None:
-        c_flag, c_ts, c_id = parse_band_register_cursor(cursor, entity="write-off register")
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the plaintext band parse stays as defense-in-depth.
+        inner = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=WRITE_OFFS_SCOPE, entity="write-off register"
+        )
+        c_flag, c_ts, c_id = parse_band_register_cursor(inner, entity="write-off register")
         params["c_flag"] = c_flag
         params["c_ts"] = c_ts
         params["c_id"] = c_id
@@ -1427,8 +1450,12 @@ async def list_write_offs(
     next_cursor = None
     if len(rows) > limit and items:
         last = items[-1]
-        next_cursor = build_band_register_cursor(
-            last.status in LIVE_WRITE_OFF_STATUSES, last.created_at, last.id
+        next_cursor = encode_cursor(
+            build_band_register_cursor(
+                last.status in LIVE_WRITE_OFF_STATUSES, last.created_at, last.id
+            ),
+            tenant_id=tenant_id,
+            endpoint=WRITE_OFFS_SCOPE,
         )
     return WriteOffPage(items=items, next_cursor=next_cursor)
 
@@ -2236,7 +2263,12 @@ async def list_recovery_receipts(
     }
     cursor_clause = ""
     if cursor is not None:
-        c_ts, c_id = parse_created_id_cursor(cursor, entity="recovery receipt")
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the plaintext parse stays as defense-in-depth.
+        inner = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=WO_RECOVERIES_SCOPE, entity="recovery receipt"
+        )
+        c_ts, c_id = parse_created_id_cursor(inner, entity="recovery receipt")
         params["c_ts"] = c_ts
         params["c_id"] = c_id
         cursor_clause = "AND (created_at, id) > (CAST(:c_ts AS timestamptz), CAST(:c_id AS uuid)) "
@@ -2269,7 +2301,11 @@ async def list_recovery_receipts(
     ]
     next_cursor = None
     if len(rows) > limit and items:
-        next_cursor = build_created_id_cursor(items[-1].created_at, items[-1].id)
+        next_cursor = encode_cursor(
+            build_created_id_cursor(items[-1].created_at, items[-1].id),
+            tenant_id=tenant_id,
+            endpoint=WO_RECOVERIES_SCOPE,
+        )
     recovered_total = await _recovered_total(session, tenant_id, write_off_id)
     return RecoveryReceiptPage(
         items=items,

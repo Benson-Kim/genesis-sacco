@@ -35,9 +35,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application.audit import record_audit
 from genesis.application.outbox import enqueue_event
+from genesis.application.pagination import decode_cursor, encode_cursor
 from genesis.application.period_rollups import write_period_rollups
 from genesis.application.portfolio_snapshots import write_month_snapshot
 from genesis.errors import ConflictError, InvalidInputError
+
+#: Cursor scope id (#31 batch 13): signed cursors are bound to this
+#: endpoint and this tenant - no cross-scope replay (gate 1.6).
+PERIODS_LIST_SCOPE = "accounting_periods.list"
 
 #: Advisory lock namespace for the period barrier — distinct from the
 #: ledger reference namespace (int4 range; the ledger._advisory_key
@@ -263,8 +268,13 @@ async def list_periods(
     clauses = ["tenant_id = CAST(:tid AS uuid)"]
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if cursor:
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the plaintext ISO-date parse stays as defense-in-depth.
+        inner = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=PERIODS_LIST_SCOPE, entity="period"
+        )
         try:
-            params["c_ps"] = date.fromisoformat(cursor)
+            params["c_ps"] = date.fromisoformat(inner)
         except ValueError as exc:
             raise InvalidInputError("malformed period cursor") from exc
         clauses.append("period_start < :c_ps")
@@ -284,5 +294,9 @@ async def list_periods(
     items = [_row_to_period(r) for r in page_rows]
     next_cursor = None
     if len(rows) > limit and page_rows:
-        next_cursor = items[-1].period_start.isoformat()
+        next_cursor = encode_cursor(
+            items[-1].period_start.isoformat(),
+            tenant_id=tenant_id,
+            endpoint=PERIODS_LIST_SCOPE,
+        )
     return items, next_cursor

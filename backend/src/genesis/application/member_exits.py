@@ -80,7 +80,12 @@ from genesis.application.ledger import post_exit_settlement
 from genesis.application.loans import _close_loan, _interest_due
 from genesis.application.members import mark_member_exited
 from genesis.application.outbox import enqueue_event
-from genesis.application.pagination import build_created_id_cursor, parse_created_id_cursor
+from genesis.application.pagination import (
+    build_created_id_cursor,
+    decode_cursor,
+    encode_cursor,
+    parse_created_id_cursor,
+)
 from genesis.application.tenant_settings import committee_quorum
 from genesis.application.transactions import _lock_account, _set_balance
 from genesis.domain.committee import Decision, Vote, decide
@@ -101,6 +106,10 @@ _EXIT_COLS = (
     "loan_balance, fees, net_payable, requested_by, decided_at, settled_at, "
     "settlement_transaction_id, version, created_at"
 )
+
+#: Cursor scope id (#31 batch 13): signed cursors are bound to this
+#: endpoint and this tenant — no cross-scope replay (gate 1.6).
+EXITS_LIST_SCOPE = "member_exits.list"
 
 #: Application stages that block an exit (P8 blocker set, single list).
 _OPEN_STAGES = "('submitted', 'appraisal', 'committee', 'approved')"
@@ -633,7 +642,10 @@ async def list_exits(
         clauses.append("status = :status")
         params["status"] = status.value
     if cursor:
-        params["c_ts"], params["c_id"] = parse_created_id_cursor(cursor, entity="exit")
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the plaintext parse stays as defense-in-depth.
+        inner = decode_cursor(cursor, tenant_id=tenant_id, endpoint=EXITS_LIST_SCOPE, entity="exit")
+        params["c_ts"], params["c_id"] = parse_created_id_cursor(inner, entity="exit")
         clauses.append("(created_at, id) < (:c_ts, CAST(:c_id AS uuid))")
     where = f"WHERE {' AND '.join(clauses)} "
     # Static fragments chosen in code; all values are bound parameters.
@@ -652,7 +664,11 @@ async def list_exits(
     next_cursor = None
     if len(rows) > limit and page_rows:
         last = page_rows[-1]
-        next_cursor = build_created_id_cursor(last[14], last[0])
+        next_cursor = encode_cursor(
+            build_created_id_cursor(last[14], last[0]),
+            tenant_id=tenant_id,
+            endpoint=EXITS_LIST_SCOPE,
+        )
     return items, next_cursor
 
 
