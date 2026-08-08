@@ -30,8 +30,37 @@ from __future__ import annotations
 import calendar
 import datetime
 import enum
+import re
 
 MEMBER_NO_PREFIX = "GP-"
+
+#: Kenya mobile identifiers (#35 item 1). Accepted INPUT formats are
+#: exactly the maintainer-declared four: 07XXXXXXXX / 01XXXXXXXX and
+#: their E.164 twins +2547XXXXXXXX / +2541XXXXXXXX. Storage is ALWAYS
+#: E.164 (+254…) — the canonical form every downstream system accepts.
+_KENYA_MSISDN_LOCAL = re.compile(r"^0([17])(\d{8})$")
+_KENYA_MSISDN_E164 = re.compile(r"^\+254([17])\d{8}$")
+
+
+def normalize_kenya_msisdn(raw: str) -> str | None:
+    """Normalize a Kenya mobile number to E.164, or None when invalid.
+
+    Pure and total: surrounding whitespace is tolerated (a courtesy for
+    hand-typed input), everything else must match one of the four
+    accepted formats EXACTLY — no digit-harvesting from free text, so
+    a typo can never silently become a different number. Every accepted
+    spelling of the same number maps to the SAME E.164 string
+    (falsifiable oracles in tests/test_members_domain.py). The caller
+    decides how a None surfaces (the API layer raises a sanitized 422
+    that never echoes the input — gate 1.6).
+    """
+    value = raw.strip()
+    if _KENYA_MSISDN_E164.match(value):
+        return value
+    match = _KENYA_MSISDN_LOCAL.match(value)
+    if match:
+        return f"+254{match.group(1)}{match.group(2)}"
+    return None
 
 
 class MemberType(enum.StrEnum):

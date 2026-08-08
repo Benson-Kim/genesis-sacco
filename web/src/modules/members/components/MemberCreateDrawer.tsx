@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
 import { Button, Field, Modal } from "@genesis/design-system";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
+import { KENYA_PHONE_MESSAGE, normalizeKenyaMsisdn } from "@/lib/phone";
 import { createMember } from "../api";
 import {
     MEMBER_TYPES,
@@ -36,7 +37,18 @@ export function MemberCreateDrawer({
     const [phone, setPhone] = useState("");
     const [email, setEmail] = useState("");
     const [formError, setFormError] = useState<string | null>(null);
+    // #35 item 1 — blur-time Kenya-phone validation (courtesy mirror of
+    // the server rule, which normalizes to E.164 on write and refuses
+    // invalid input with a sanitized 422). Shows on blur, clears on
+    // correction.
+    const [phoneBlurError, setPhoneBlurError] = useState<string | null>(null);
     const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
+
+    function validatePhoneBlur(value: string) {
+        const trimmed = value.trim();
+        const ok = trimmed === "" || normalizeKenyaMsisdn(trimmed) !== null;
+        setPhoneBlurError(ok ? null : KENYA_PHONE_MESSAGE);
+    }
 
     const create = useMutation({
         mutationFn: (input: MemberCreateInput) =>
@@ -61,6 +73,10 @@ export function MemberCreateDrawer({
         });
         if (!parsed.success) {
             setFormError("Enter a member name (and a valid email if provided).");
+            return;
+        }
+        if (parsed.data.phone !== null && normalizeKenyaMsisdn(parsed.data.phone) === null) {
+            setPhoneBlurError(KENYA_PHONE_MESSAGE);
             return;
         }
         setFormError(null);
@@ -105,16 +121,23 @@ export function MemberCreateDrawer({
                         id="member-phone"
                         className={styles.input}
                         type="tel"
+                        inputMode="tel"
                         maxLength={32}
                         value={phone}
-                        onChange={(event) => setPhone(event.target.value)}
+                        onChange={(event) => {
+                            setPhone(event.target.value);
+                            if (phoneBlurError !== null) validatePhoneBlur(event.target.value);
+                        }}
+                        onBlur={(event) => validatePhoneBlur(event.target.value)}
                     />
                 </Field>
+                {phoneBlurError !== null && <div role="alert">{phoneBlurError}</div>}
                 <Field label="Email (optional)" htmlFor="member-email">
                     <input
                         id="member-email"
                         className={styles.input}
                         type="email"
+                        inputMode="email"
                         maxLength={254}
                         value={email}
                         onChange={(event) => setEmail(event.target.value)}

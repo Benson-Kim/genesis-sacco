@@ -68,6 +68,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application.audit import record_audit
+from genesis.application.members import parse_phone
 from genesis.application.outbox import enqueue_event
 from genesis.application.pagination import (
     build_created_id_cursor,
@@ -204,6 +205,9 @@ async def create_user(
     role_name = await _role_name(session, tenant_id, role_id)
     if role_name is None:
         raise NotFoundError(f"role {role_id} not found")
+    # E.164 storage normalization on write (#35 item 1) — sanitized 422
+    # on invalid input, never echoed (gate 1.6).
+    phone = parse_phone(phone)
     user_id = uuid.uuid4()
     claimed = (
         await session.execute(
@@ -325,7 +329,10 @@ async def update_user(
     current = await get_user(session, tenant_id, user_id)
     new_name = full_name if full_name is not None else current.full_name
     new_email = email if email is not None else current.email
-    new_phone = phone if phone is not None else current.phone
+    # E.164 normalization on write (#35 item 1); untouched fields keep
+    # their stored value (legacy formats are read-tolerated — the 0042
+    # backfill migrates them).
+    new_phone = parse_phone(phone) if phone is not None else current.phone
     new_branch = branch if branch is not None else current.branch
     email_changed = email is not None and email != current.email
     if email_changed:
