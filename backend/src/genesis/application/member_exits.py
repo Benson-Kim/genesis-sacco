@@ -644,9 +644,7 @@ async def list_exits(
     if cursor:
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
-        inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=EXITS_LIST_SCOPE, entity="exit"
-        )
+        inner = decode_cursor(cursor, tenant_id=tenant_id, endpoint=EXITS_LIST_SCOPE, entity="exit")
         params["c_ts"], params["c_id"] = parse_created_id_cursor(inner, entity="exit")
         clauses.append("(created_at, id) < (:c_ts, CAST(:c_id AS uuid))")
     where = f"WHERE {' AND '.join(clauses)} "

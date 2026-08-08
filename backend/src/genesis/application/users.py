@@ -275,9 +275,7 @@ async def list_users(
     if cursor:
         # Opaque signed cursor (#31 batch 13): verify+unseal first;
         # the plaintext parse stays as defense-in-depth.
-        inner = decode_cursor(
-            cursor, tenant_id=tenant_id, endpoint=USERS_LIST_SCOPE, entity="user"
-        )
+        inner = decode_cursor(cursor, tenant_id=tenant_id, endpoint=USERS_LIST_SCOPE, entity="user")
         c_ts, c_id = parse_created_id_cursor(inner, entity="user")
         params["c_ts"] = c_ts
         params["c_id"] = c_id

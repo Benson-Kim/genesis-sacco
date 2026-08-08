@@ -468,10 +468,7 @@ async def list_branch_members(
             endpoint=BRANCH_MEMBERS_SCOPE,
             entity="branch member roster",
         )
-        if (
-            len(inner) > _MEMBER_NO_CURSOR_MAX_LEN
-            or _MEMBER_NO_CURSOR_RE.fullmatch(inner) is None
-        ):
+        if len(inner) > _MEMBER_NO_CURSOR_MAX_LEN or _MEMBER_NO_CURSOR_RE.fullmatch(inner) is None:
             raise InvalidInputError("invalid branch member roster cursor")
         params["cursor"] = inner
     rows = (
