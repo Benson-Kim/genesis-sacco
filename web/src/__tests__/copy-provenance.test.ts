@@ -38,7 +38,7 @@ const EXTENSIONS = [".ts", ".tsx"];
  *  - `GP-` is the member-number format, NOT a plan code — never ban it.
  */
 const BANNED: readonly { name: string; regex: RegExp }[] = [
-    { name: "work-item reference", regex: /(?<![\w&#])#\d{1,2}(?!\d)|\bissue\s*#\d+/i },
+    { name: "work-item reference", regex: /(?<![\w&#])#\d{1,2}(?![\dA-Fa-f])|\bissue\s*#\d+/i },
     { name: "merge-request reference", regex: /(?<![\w!])!\d{1,3}(?!\d)/ },
     { name: "batch number", regex: /\bbatch[ -]\d+\b/i },
     { name: "audit finding code", regex: /\bDA-\d+|\bB13-R\d\b|\bFM\d\b|\bN[1-9]\b|\bU[1-6]\b|\bT5\b|\bW[1-4]\b|\bX[34]\b/ },
