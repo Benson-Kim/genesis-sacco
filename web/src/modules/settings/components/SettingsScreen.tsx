@@ -20,9 +20,11 @@ import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 import { Banner, Card } from "@genesis/design-system";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
+import { usePermissions } from "@/modules/authz/usePermissions";
+import { can } from "@/modules/authz/schemas";
 import { STALE_TIME } from "@/lib/query";
 import { fetchSettings } from "../api";
-import { SETTINGS_QUERY_KEY } from "./SettingsSaveFlow";
+import { SETTINGS_QUERY_KEY, SettingsViewMode } from "./SettingsSaveFlow";
 import styles from "./Settings.module.css";
 
 const InterestPanel = dynamic(
@@ -62,6 +64,11 @@ export function useSettings() {
 export function SettingsScreen() {
   const [tab, setTab] = useState<TabId>("interest");
   const settings = useSettings();
+  // Read-only-by-default (#35 item 3): the Edit affordance mounts only
+  // for settings:edit holders — pure UX, the server enforces the grant
+  // and the optimistic version regardless (gate 1.6).
+  const permissions = usePermissions();
+  const mayEdit = can(permissions.data, "settings", "edit");
   const tabRefs = useRef<Map<TabId, HTMLButtonElement>>(new Map());
 
   // Conforming ARIA tabs pattern (W57-4, issue #8): roving tabindex —
@@ -137,23 +144,35 @@ export function SettingsScreen() {
               Re-save them to repair the stored value.
             </Banner>
           )}
+          {/* Read-only-by-default (#35 item 3): ONE shared shell per
+              tab (gate 1.1); the version key remounts the shell after
+              every save, landing back in read-only view. */}
           {tab === "interest" && (
-            <InterestPanel
+            <SettingsViewMode
               key={`interest:${settings.data.version}`}
-              settings={settings.data}
-            />
+              mayEdit={mayEdit}
+              panelName="interest rules"
+            >
+              {(editing) => <InterestPanel settings={settings.data!} editing={editing} />}
+            </SettingsViewMode>
           )}
           {tab === "parameters" && (
-            <ParametersPanel
+            <SettingsViewMode
               key={`parameters:${settings.data.version}`}
-              settings={settings.data}
-            />
+              mayEdit={mayEdit}
+              panelName="parameters"
+            >
+              {(editing) => <ParametersPanel settings={settings.data!} editing={editing} />}
+            </SettingsViewMode>
           )}
           {tab === "approval" && (
-            <ApprovalPanel
+            <SettingsViewMode
               key={`approval:${settings.data.version}`}
-              settings={settings.data}
-            />
+              mayEdit={mayEdit}
+              panelName="approval matrix"
+            >
+              {(editing) => <ApprovalPanel settings={settings.data!} editing={editing} />}
+            </SettingsViewMode>
           )}
         </>
       )}
