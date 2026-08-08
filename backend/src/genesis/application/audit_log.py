@@ -32,8 +32,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application import rbac as rbac_service
+from genesis.application.pagination import decode_cursor, encode_cursor
 from genesis.domain.rbac import Module
 from genesis.errors import InvalidInputError
+
+#: Cursor scope id (#31 batch 13): signed cursors are bound to this
+#: endpoint and this tenant — no cross-scope replay (gate 1.6).
+AUDIT_LIST_SCOPE = "audit_log.list"
 
 # Code-owned entity -> owning module map (deny-by-default: unmapped
 # entities are redacted for every caller). Values mirror the module
@@ -199,7 +204,12 @@ async def list_audit_log(
     limit = max(1, min(limit, 100))
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
     if cursor:
-        c_ts, c_id = _parse_cursor(cursor)
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the plaintext parse stays as defense-in-depth.
+        inner = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=AUDIT_LIST_SCOPE, entity="audit-log"
+        )
+        c_ts, c_id = _parse_cursor(inner)
         params["c_ts"] = c_ts
         params["c_id"] = c_id
     if entity is not None:
@@ -255,5 +265,9 @@ async def list_audit_log(
     next_cursor = None
     if len(rows) > limit and page_rows:
         last = page_rows[-1]
-        next_cursor = f"{last[1].isoformat()}|{int(last[0])}"
+        next_cursor = encode_cursor(
+            f"{last[1].isoformat()}|{int(last[0])}",
+            tenant_id=tenant_id,
+            endpoint=AUDIT_LIST_SCOPE,
+        )
     return AuditLogPage(items=items, next_cursor=next_cursor)
