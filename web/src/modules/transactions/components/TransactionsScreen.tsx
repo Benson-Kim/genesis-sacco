@@ -1,20 +1,20 @@
 "use client";
 
 /**
- * Transactions ledger register (P15 module 6 — prototype `vTxn`).
+ * Transactions ledger register (prototype `vTxn`).
  *
  * Security posture (loans/applications precedent):
  * - Every rendered string (txn refs, ids) is attacker-influenced data;
  *   it renders exclusively through React text interpolation — no
  *   parser sink exists in this module (gate-tested).
  * - UI affordances follow the P4 matrix via /me/permissions — pure UX;
- *   the server enforces every call (gate 1.6). "Post transaction"
+ *   the server enforces every call (least disclosure). "Post transaction"
  *   mounts only with transactions:create AND members:view (the drawer
  *   cannot pick or fresh-read the member without the members grant —
  *   hidden, and ZERO member fetches otherwise). "Run deposit interest"
  *   mounts only with transactions:edit. The member filter mounts only
  *   with members:view.
- * - Keyset pagination only (opaque cursors — gate 1.3); every filter
+ * - Keyset pagination only (opaque cursors — scalability); every filter
  *   (member, type, channel, direction, exact ref, date range) is a
  *   SERVER query parameter — nothing is filtered locally.
  * - MONEY (blocker (a)): each amount is an API decimal STRING rendered
@@ -48,7 +48,7 @@ import {
 import { reversalPill, txnTypePill } from "./pills";
 import styles from "./Transactions.module.css";
 
-// Drawer-level code splitting (P15 Phase B speed): drawer chunks load
+// Drawer-level code splitting: drawer chunks load
 // on first open, not with the list route.
 const TransactionDetailDrawer = dynamic(
   () => import("./TransactionDetailDrawer").then((m) => m.TransactionDetailDrawer),
@@ -72,7 +72,7 @@ type DrawerState =
 /**
  * Member filter — a separate component so its keyset hook mounts ONLY
  * for operators holding members:view (a stripped role fetches NOTHING;
- * the useKeysetList primitive is consumed unmodified, gate 1.1).
+ * the useKeysetList primitive is consumed unmodified, reuse-first).
  */
 function MemberFilter({
   value,
@@ -123,14 +123,14 @@ export function TransactionsScreen() {
   // Text/date filters stage locally and apply on submit (one server
   // round-trip per applied filter set, not per keystroke).
   const [refDraft, setRefDraft] = useState("");
-  // #35 item 13: free-text search (ref prefix / member number / name
+  // Free-text search (ref prefix / member number / name
   // prefix) — a SERVER query parameter, staged and applied like the
   // other drafts; nothing is filtered locally.
   const [searchDraft, setSearchDraft] = useState("");
   const [fromDraft, setFromDraft] = useState("");
   const [toDraft, setToDraft] = useState("");
   const [draftError, setDraftError] = useState("");
-  // #35 item 13 — date presets. Presets are a CLIENT-SIDE convenience
+  // Date presets. Presets are a CLIENT-SIDE convenience
   // that compute the two existing declared params (date_from/date_to);
   // the server never sees a preset token. "" (All) sends no date keys.
   const [datePreset, setDatePreset] = useState<"" | "today" | "7d" | "30d" | "custom">("");
@@ -207,7 +207,7 @@ export function TransactionsScreen() {
     {
       key: "ref",
       header: "Ref",
-      // external_ref (#35 item 6): the operator-entered external
+      // external_ref: the operator-entered external
       // receipt reference, muted next to the system ref; attacker-
       // influenced data — React text interpolation only.
       render: (txn) => (
@@ -224,7 +224,7 @@ export function TransactionsScreen() {
       header: "Member",
       render: (txn) =>
         // The P11 list carries member_id only (no joined name) — the
-        // detail drawer resolves the member record (!58 precedent).
+        // detail drawer resolves the member record.
         txn.member_id === null ? (
           <span className={styles.muted}>—</span>
         ) : (

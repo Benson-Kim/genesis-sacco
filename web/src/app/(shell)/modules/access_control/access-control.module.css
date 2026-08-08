@@ -1,9 +1,9 @@
 /*
- * Access control page — tab row + panel layout (P15).
+ * Access control page — tab row + panel layout.
  * Salvaged from duo/feature/p13-5-frontend-followthrough @ 198a238;
  * adapted to this branch's token set (--fs-*, --duration-*, --touch-target;
  * the salvage --font-sans, --font-size-*, --ease-standard, --focus-ring
- * tokens do not exist here) with issue-#8 focus rings and targets.
+ * tokens do not exist here) with issue- focus rings and targets.
  */
 
 .page {
@@ -57,7 +57,7 @@
   color: var(--navy);
 }
 
-/* Focus ring replaced, never removed (issue #8). */
+/* Focus ring replaced, never removed. */
 .tab:focus-visible {
   outline: 2px solid var(--navy);
   outline-offset: -2px;

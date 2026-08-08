@@ -1,31 +1,27 @@
 "use client";
 
 /**
- * Recovery worklist (P15 follow-on batch 1, issue #31 — audit #30
- * finding R1; the P13.16 recovery-officer worklist the prototype's
- * "Initiate recovery" promised): open cases, most delinquent first —
+ * Recovery worklist (follow-on, —; the recovery-officer worklist the prototype's "Initiate recovery" promised): open cases, most delinquent first —
  * the server's order, never re-sorted locally.
  *
  * Security posture:
- * - Route guard is loan_book:view (RequireModule — the P13.16 read
- *   grant); "Initiate recovery" mounts only with loan_book:create;
+ * - Route guard is loan_book:view (RequireModule — the read grant); "Initiate recovery" mounts only with loan_book:create;
  *   case writes mount in the drawer only with loan_book:edit. Pure UX;
- *   the server enforces every call (gate 1.6).
- * - LEAST DISCLOSURE (addendum A5): the worklist exposes workflow
+ *   the server enforces every call (least disclosure).
+ * - LEAST DISCLOSURE (addendum): the worklist exposes workflow
  *   facts, days-past-due and the classification pill ONLY — NO
  *   balance, penalty or provision column exists on the contract or
  *   this screen; the loan's money lives behind the Loan book, for the
  *   entitled.
- * - Keyset pagination only (opaque cursors — gate 1.3). The worklist
- *   offers exactly the contract's two DECLARED filters (issue #31
- *   ledger (a).3 — the human-authorized read-contract expansion):
+ * - Keyset pagination only (opaque cursors — scalability). The worklist
+ *   offers exactly the contract's two DECLARED filters (the human-authorized read-contract expansion):
  *   status (one LIVE posture, segmented control) and classification
  *   (one stored LoanClass label, labelled select — 5 values + All
  *   exceeds the ≤5 segment rule). Every value is a code-owned
  *   vocabulary member bound server-side; the server keeps its
  *   most-delinquent-first default order and NOTHING is filtered or
  *   re-sorted locally.
- * - Staff UUIDs (assignees) render via the !70 short-id convention;
+ * - Staff UUIDs (assignees) render via the short-id convention;
  *   NULL is the honest "unassigned"; a suspended-after-assignment
  *   officer renders the honest flag pill (assignee_unassignable) — the
  *   case is never silently orphaned.
@@ -52,7 +48,7 @@ import {
 } from "../schemas";
 import styles from "./Recovery.module.css";
 
-// Drawer-level code splitting (P15 Phase B speed).
+// Drawer-level code splitting (speed).
 const OpenCaseDrawer = dynamic(() => import("./OpenCaseDrawer").then((m) => m.OpenCaseDrawer), {
   ssr: false,
 });
@@ -67,7 +63,7 @@ type DrawerState = null | { mode: "open" } | { mode: "detail"; caseId: string };
  * sends NO status param at all — the server's as-built default (OPEN
  * cases) is preserved byte-identically, never re-requested as an
  * explicit status=open (the declared value stays contract-valid and
- * is exercised by the network suite). ≤5 options per issue #8. */
+ * is exercised by the network suite). ≤5 options per. */
 const STATUS_SEGMENTS = WORKLIST_STATUS_FILTERS.filter((option) => option !== "open");
 
 function StatusFilter({
@@ -112,7 +108,7 @@ export function RecoveryScreen() {
   const [classification, setClassification] = useState<WorklistClass | "">("");
   const ownId = getOwnUserId();
 
-  // The two DECLARED contract filters ONLY (issue #31 ledger (a).3):
+  // The two DECLARED contract filters ONLY:
   // code-owned vocabulary values, bound server-side; the filters are
   // part of the query key so each combination is its own keyset walk
   // (never a locally filtered view of another one).

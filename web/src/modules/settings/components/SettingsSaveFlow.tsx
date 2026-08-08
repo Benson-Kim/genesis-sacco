@@ -1,14 +1,14 @@
 "use client";
 
 /**
- * Shared save flow for the tenant-settings panels (P15 — one copy,
- * gate 1.1): every settings tab commits through this hook + UI pair.
+ * Shared save flow for the tenant-settings panels (one copy,
+ * reuse-first): every settings tab commits through this hook + UI pair.
  *
  * - Settings ARE the money parameters, so EVERY save is money-adjacent
  *   and flows through ConfirmDangerModal's typed confirmation (Phase B
  *   blocker (f)).
  * - One Idempotency-Key slot per panel: identical retries reuse the
- *   key, changed content rotates it (gate 1.4); mutations run with the
+ *   key, changed content rotates it (concurrency safety); mutations run with the
  *   global retry: 0 — exactly one write attempt per confirmation.
  * - Optimistic-lock 409 renders the shared ConflictBanner's explicit
  *   reload-and-re-enter flow (panels remount keyed on the fresh
@@ -93,8 +93,8 @@ export function useSettingsSaveFlow(panel: string): SettingsSaveFlow {
 }
 
 /**
- * Read-only-by-default shell for the settings panels (#35 item 3 —
- * ONE copy, gate 1.1: every panel that consumes SettingsSaveFlow is
+ * Read-only-by-default shell for the settings panels (
+ * ONE copy: every panel that consumes SettingsSaveFlow is
  * wrapped by this shell in SettingsScreen).
  *
  * - VIEW MODE is the default: every control inside is disabled
@@ -104,7 +104,7 @@ export function useSettingsSaveFlow(panel: string): SettingsSaveFlow {
  *   construction, not by convention).
  * - The Edit affordance is PERMISSION-GATED (pure UX — the server
  *   enforces settings:edit and the optimistic version regardless,
- *   gate 1.6).
+ *   least disclosure).
  * - Cancel discards by REMOUNT (the epoch key): the panel
  *   re-initializes from the loaded server record — server truth
  *   restored, no draft survives.
@@ -192,7 +192,7 @@ export function SettingsSaveControls({
 
   return (
     <>
-      {/* Explicit reload flow (one copy — gate 1.1): refetch the record;
+      {/* Explicit reload flow (one copy — reuse-first): refetch the record;
           the panel remounts keyed on the fresh version. The stale
           submission is NEVER replayed. */}
       <ConflictBanner

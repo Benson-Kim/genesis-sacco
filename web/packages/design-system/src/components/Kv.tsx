@@ -12,8 +12,7 @@ export interface KvProps {
    */
   variant?: "default" | "quiet";
   /**
-   * Optional extra class APPENDED to the value span's class list (#31
-   * batch 11, ledger (o)): the residual raw-markup rows composed a
+   * Optional extra class APPENDED to the value span's class list: the residual raw-markup rows composed a
    * per-value module class (the audit drawer's `tnum`) that the
    * primitive could not express — this keeps their rendered class
    * sets EQUIVALENT after folding in. Callers pass CSS-module tokens
@@ -25,8 +24,7 @@ export interface KvProps {
 
 /**
  * Labelled key/value detail row (the exits/loans drawer convention),
- * promoted from 28 module-local copies (#31 batch 9, drift-audit
- * DA-72.2, gate 1.1). Label and value render exclusively through React
+ * promoted from 28 module-local copies (drift-audit, reuse-first). Label and value render exclusively through React
  * text interpolation — attacker-influenced strings stay inert (no HTML
  * parsing, no React parser sink).
  */

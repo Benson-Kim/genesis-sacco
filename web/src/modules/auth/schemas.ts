@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** Zod-validated response boundary (MASTER_PROMPT §2.3). */
+/** Zod-validated response boundary (the house doctrine). */
 export const tokenResponseSchema = z.object({
   access_token: z.string().min(1),
   refresh_token: z.string().min(1),
@@ -19,8 +19,7 @@ export const emailSchema = z.string().min(3).max(254);
 
 /**
  * /auth/otp/request response boundary. `dev_otp` appears ONLY when the
- * server's fail-closed dev_otp_display flag is on (#35 item 11 —
- * dev-mode tester affordance, REMOVE before staging).
+ * server's fail-closed dev_otp_display flag is on (item 11 — dev-mode tester affordance, REMOVE before staging).
  */
 export const otpRequestResponseSchema = z.object({
   status: z.string(),
@@ -28,7 +27,7 @@ export const otpRequestResponseSchema = z.object({
 });
 
 /**
- * Sign-in identifier blur mirror (#35 item 1): staff sign in with an
+ * Sign-in identifier blur mirror (item 1): staff sign in with an
  * EMAIL (OtpRequestBody, api/auth.py); the blur check is a courtesy
  * mirror — structural email format on top of the server's 3–254
  * length rule — so the operator corrects immediately. The server

@@ -40,13 +40,13 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
   const [identifier, setIdentifier] = useState("");
   const [digits, setDigits] = useState<string[]>(Array.from({ length: OTP_LENGTH }, () => ""));
   const [formError, setFormError] = useState<string | null>(null);
-  // #35 sign-in identifier — live AS-YOU-TYPE classification (email vs
+  // Sign-in identifier — live AS-YOU-TYPE classification (email vs
   // phone) with the matching validation rule, a courtesy mirror of the
   // server's one-rule classifier; the server stays the truth at the
   // wire. The message shows on blur and clears the moment the value is
   // corrected while typing.
   const [identifierError, setIdentifierError] = useState<string | null>(null);
-  // DEV-ONLY (#35 item 11, REMOVE BEFORE STAGING): the server sends
+  // DEV-ONLY (REMOVE BEFORE STAGING): the server sends
   // dev_otp only behind its fail-closed flag; null renders NOTHING.
   const [devOtp, setDevOtp] = useState<string | null>(null);
 
@@ -111,7 +111,7 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
     }
     setFormError(null);
     // One Idempotency-Key per submission: a double-submit of the same code
-    // replays the stored response instead of a second effect (gate 1.4).
+    // replays the stored response instead of a second effect (concurrency safety).
     verify.mutate({
       identifier: wireIdentifier(),
       code: parsed.data,
@@ -133,7 +133,7 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
     }
   }
 
-  // #35 item 12 — sanitized full-code paste: digits are harvested from
+  //  item 12 — sanitized full-code paste: digits are harvested from
   // the clipboard (non-digits stripped), fanned out from box 1, and
   // focus lands on the next empty box. A digit-free paste is inert —
   // hostile clipboard content never enters any box.
@@ -205,7 +205,7 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
           <div className={styles.subtitle}>
             Enter the 6-digit code sent to <b>{identifier.trim()}</b>
           </div>
-          {/* DEV-ONLY (#35 item 11): renders ONLY when the server's
+          {/* DEV-ONLY (item 11): renders ONLY when the server's
               fail-closed dev flag returned a code. REMOVE BEFORE STAGING. */}
           {devOtp !== null && (
             <div className={styles.notice} data-testid="dev-otp-display">

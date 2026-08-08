@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Interest tab (P15 Settings): loan interest method/basis, penalty
+ * Interest tab: loan interest method/basis, penalty
  * rules, deposit/dividend/rebate rates and the tiered loan-rate bands.
  *
  * WYSIWYG per-tab write: the full displayed field set is submitted with

@@ -1,4 +1,4 @@
-"""Authentication endpoints: OTP step-up, refresh rotation, logout (gate 1.6)."""
+"""Authentication endpoints: OTP step-up, refresh rotation, logout (least disclosure)."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ async def request_otp(body: OtpRequestBody, request: Request) -> dict[str, str]:
     async with tenant_session(factory, tenant_id) as session:
         code = await auth_service.request_otp(session, tenant_id, body.signin_identifier)
     payload = {"status": "sent"}
-    # DEV-ONLY (#35 item 11, REMOVE BEFORE STAGING): with SMS/email
+    # DEV-ONLY (item 11, REMOVE BEFORE STAGING): with SMS/email
     # delivery unbuilt, testers read the OTP from this response. The
     # dev_otp_display flag is FAIL-CLOSED (off by default); the code is
     # never logged and never appears in any error path. The declared
@@ -109,7 +109,7 @@ async def verify_otp(body: OtpVerifyBody, request: Request) -> TokenResponse:
             session, tenant_id, body.signin_identifier, body.code
         )
     # The transaction has committed: punitive state (attempt counters) is
-    # durable even though this request fails (gates 1.4, 1.6).
+    # durable even though this request fails (the house gates).
     if isinstance(outcome, auth_service.AuthFailure):
         raise UnauthenticatedError(outcome.reason)
     return TokenResponse(
@@ -126,7 +126,7 @@ async def refresh(body: RefreshBody, request: Request) -> TokenResponse:
     async with tenant_session(factory, tenant_id) as session:
         outcome = await auth_service.rotate_refresh_token(session, tenant_id, body.refresh_token)
     # Family revocation on reuse must survive the failed request, so the
-    # 401 is raised only after the transaction has committed (gate 1.4).
+    # 401 is raised only after the transaction has committed (concurrency safety).
     if isinstance(outcome, auth_service.AuthFailure):
         raise UnauthenticatedError(outcome.reason)
     return TokenResponse(
