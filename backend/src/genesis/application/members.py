@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from genesis.application.guarantees import live_guarantee_params
 from genesis.application.ledger import _ADVISORY_NS, _advisory_key
 from genesis.application.outbox import enqueue_event
+from genesis.application.pagination import decode_cursor, encode_cursor
 from genesis.domain.lending import LoanStatus
 from genesis.domain.members import (
     MEMBER_NO_PREFIX,
@@ -37,6 +38,12 @@ from genesis.domain.members import (
     transition,
 )
 from genesis.errors import ConflictError, InvalidInputError, NotFoundError, UnprocessableError
+
+#: Cursor scope ids (#31 batch 13): every signed cursor is bound to ONE
+#: endpoint — the two shapes of GET /members (plain / aggregates) share
+#: one scope because they share one endpoint and one keyset.
+MEMBERS_LIST_SCOPE = "members.list"
+STATEMENT_SCOPE = "members.statement"
 
 
 def parse_phone(raw: str | None) -> str | None:
@@ -542,6 +549,12 @@ async def list_members(
     expression index).
     """
     limit = max(1, min(limit, 100))
+    # Opaque signed cursor (#31 batch 13): verify+unseal BEFORE the
+    # keyset predicate; the plaintext member_no keyset is unchanged.
+    if cursor:
+        cursor = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=MEMBERS_LIST_SCOPE, entity="member"
+        )
     clauses, params = _member_list_clauses(
         tenant_id, cursor=cursor, limit=limit, status=status, member_type=member_type
     )
@@ -554,7 +567,11 @@ async def list_members(
     )
     rows = result.mappings().all()
     items = [_row_to_record(r) for r in rows[:limit]]
-    next_cursor = items[-1].member_no if len(rows) > limit and items else None
+    next_cursor = None
+    if len(rows) > limit and items:
+        next_cursor = encode_cursor(
+            items[-1].member_no, tenant_id=tenant_id, endpoint=MEMBERS_LIST_SCOPE
+        )
     return MemberPage(items=items, next_cursor=next_cursor)
 
 
@@ -580,6 +597,12 @@ async def list_members_with_aggregates(
     rejection path echoes an amount.
     """
     limit = max(1, min(limit, 100))
+    # Opaque signed cursor (#31 batch 13): same scope as the plain
+    # shape — one endpoint, one keyset, interchangeable positions.
+    if cursor:
+        cursor = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=MEMBERS_LIST_SCOPE, entity="member"
+        )
     clauses, params = _member_list_clauses(
         tenant_id, cursor=cursor, limit=limit, status=status, member_type=member_type, col="m."
     )
@@ -608,7 +631,11 @@ async def list_members_with_aggregates(
         )
         for row in page_rows
     ]
-    next_cursor = items[-1].record.member_no if len(rows) > limit and items else None
+    next_cursor = None
+    if len(rows) > limit and items:
+        next_cursor = encode_cursor(
+            items[-1].record.member_no, tenant_id=tenant_id, endpoint=MEMBERS_LIST_SCOPE
+        )
     return MemberAggregatesPage(items=items, next_cursor=next_cursor)
 
 
@@ -996,6 +1023,12 @@ async def member_statement(
     }
     keyset = ""
     if cursor:
+        # Opaque signed cursor (#31 batch 13): verify+unseal first;
+        # the inner '<occurred_at ISO>|<txn id>' parse stays as
+        # defense-in-depth on the plaintext.
+        cursor = decode_cursor(
+            cursor, tenant_id=tenant_id, endpoint=STATEMENT_SCOPE, entity="statement"
+        )
         ts_raw, _, id_raw = cursor.partition("|")
         try:
             params["c_ts"] = datetime.fromisoformat(ts_raw)
@@ -1032,5 +1065,7 @@ async def member_statement(
     next_cursor = None
     if len(rows) > limit and page_rows:
         last = page_rows[-1]
-        next_cursor = f"{last[0].isoformat()}|{last[1]}"
+        next_cursor = encode_cursor(
+            f"{last[0].isoformat()}|{last[1]}", tenant_id=tenant_id, endpoint=STATEMENT_SCOPE
+        )
     return StatementPage(items=items, next_cursor=next_cursor)

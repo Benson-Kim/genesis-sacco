@@ -31,6 +31,7 @@ from genesis.api.reports import router as reports_router
 from genesis.api.tenant_settings import router as tenant_settings_router
 from genesis.api.transactions import router as transactions_router
 from genesis.api.users import router as users_router
+from genesis.application.pagination import assert_cursor_signing_key_configured
 from genesis.errors import AppError, ErrorCategory
 from genesis.logging import configure_logging, correlation_id_var
 
@@ -43,6 +44,10 @@ def _envelope(category: ErrorCategory) -> dict[str, str]:
 
 def create_app() -> FastAPI:
     configure_logging()
+    # Fail-closed boot guard (#31 batch 13, review B13-R5): a missing
+    # or short cursor-signing key aborts startup here, never at the
+    # first decode.
+    assert_cursor_signing_key_configured()
     app = FastAPI(title="Genesis Prestige API", version="0.1.0")
     app.include_router(health_router)
     app.include_router(auth_router)
