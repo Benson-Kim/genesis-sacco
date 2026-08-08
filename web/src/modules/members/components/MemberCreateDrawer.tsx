@@ -3,7 +3,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { idempotencyKeyFor, type IdempotencyKeySlot } from "@genesis/api-client";
-import { Button, Field, Modal } from "@genesis/design-system";
+import { Button, ErrorMessage, Field, FormControl, Hint, Modal, SelectWrap } from "@genesis/design-system";
 import { ErrorBanner } from "@/modules/layout/ErrorBanner";
 import { KENYA_PHONE_MESSAGE, normalizeKenyaMsisdn } from "@/lib/phone";
 import { createMember } from "../api";
@@ -36,6 +36,8 @@ export function MemberCreateDrawer({
     const [name, setName] = useState("");
     const [phone, setPhone] = useState("");
     const [email, setEmail] = useState("");
+    const [nameError, setNameError] = useState<string | null>(null);
+    const [emailError, setEmailError] = useState<string | null>(null);
     const [formError, setFormError] = useState<string | null>(null);
     // #35 item 1 — blur-time Kenya-phone validation (courtesy mirror of
     // the server rule, which normalizes to E.164 on write and refuses
@@ -72,13 +74,17 @@ export function MemberCreateDrawer({
             email: email.trim() === "" ? null : email.trim(),
         });
         if (!parsed.success) {
-            setFormError("Enter a member name (and a valid email if provided).");
+            const fieldErrors = parsed.error.flatten().fieldErrors;
+            setNameError(fieldErrors.name?.[0] ?? null);
+            setEmailError(fieldErrors.email?.[0] ?? null);
             return;
         }
         if (parsed.data.phone !== null && normalizeKenyaMsisdn(parsed.data.phone) === null) {
             setPhoneBlurError(KENYA_PHONE_MESSAGE);
             return;
         }
+        setNameError(null);
+        setEmailError(null);
         setFormError(null);
         create.mutate(parsed.data);
     }
@@ -94,9 +100,8 @@ export function MemberCreateDrawer({
         >
             <form onSubmit={submit} noValidate>
                 <Field label="Member type" htmlFor="member-type">
-                    <select
+                    <SelectWrap
                         id="member-type"
-                        className={styles.select}
                         value={type}
                         onChange={(event) => setType(event.target.value)}
                     >
@@ -105,23 +110,28 @@ export function MemberCreateDrawer({
                                 {TYPE_LABELS[memberType]}
                             </option>
                         ))}
-                    </select>
+                    </SelectWrap>
                 </Field>
-                <Field label="Full name" htmlFor="member-name">
-                    <input
+                <Field label="Full name" htmlFor="member-name" required>
+                    <FormControl
                         id="member-name"
-                        className={styles.input}
                         maxLength={200}
                         value={name}
                         onChange={(event) => setName(event.target.value)}
+                        required
+                        aria-invalid={nameError !== null ? "true" : undefined}
+                        aria-describedby={nameError !== null ? "member-name-error" : undefined}
                     />
+                    {nameError !== null && (
+                        <ErrorMessage id="member-name-error">{nameError}</ErrorMessage>
+                    )}
                 </Field>
-                <Field label="Phone (optional)" htmlFor="member-phone">
-                    <input
+                <Field label="Phone" htmlFor="member-phone">
+                    <FormControl
                         id="member-phone"
-                        className={styles.input}
                         type="tel"
                         inputMode="tel"
+                        autoComplete="tel"
                         maxLength={32}
                         value={phone}
                         onChange={(event) => {
@@ -129,21 +139,40 @@ export function MemberCreateDrawer({
                             if (phoneBlurError !== null) validatePhoneBlur(event.target.value);
                         }}
                         onBlur={(event) => validatePhoneBlur(event.target.value)}
+                        aria-describedby={
+                            phoneBlurError !== null
+                                ? "member-phone-error"
+                                : "member-phone-hint"
+                        }
                     />
+                    {phoneBlurError !== null ? (
+                        <ErrorMessage id="member-phone-error">{phoneBlurError}</ErrorMessage>
+                    ) : (
+                        <Hint id="member-phone-hint">+254 or 07… format accepted.</Hint>
+                    )}
                 </Field>
-                {phoneBlurError !== null && <div role="alert">{phoneBlurError}</div>}
                 <Field label="Email (optional)" htmlFor="member-email">
-                    <input
+                    <FormControl
                         id="member-email"
-                        className={styles.input}
                         type="email"
                         inputMode="email"
+                        autoComplete="email"
+                        autoCapitalize="none"
+                        spellCheck={false}
                         maxLength={254}
                         value={email}
-                        onChange={(event) => setEmail(event.target.value)}
+                        onChange={(event) => {
+                            setEmail(event.target.value);
+                            if (emailError !== null) setEmailError(null);
+                        }}
+                        aria-invalid={emailError !== null ? "true" : undefined}
+                        aria-describedby={emailError !== null ? "member-email-error" : undefined}
                     />
+                    {emailError !== null && (
+                        <ErrorMessage id="member-email-error">{emailError}</ErrorMessage>
+                    )}
                 </Field>
-                {formError !== null && <div role="alert">{formError}</div>}
+                {formError !== null && <ErrorBanner error={new Error(formError)} />}
                 {create.isError && <ErrorBanner error={create.error} />}
                 <div className={styles.actions}>
                     <Button type="button" onClick={onClose} disabled={create.isPending}>

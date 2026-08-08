@@ -41,6 +41,8 @@
 
 .headRow {
   background: var(--panel);
+  border-top-left-radius: var(--radius-md);
+  border-top-right-radius: var(--radius-md);
 }
 
 .th,
