@@ -32,6 +32,7 @@ import { useKeysetList } from "@/modules/table/useKeysetList";
 import { usePermissions } from "@/modules/authz/usePermissions";
 import { can } from "@/modules/authz/schemas";
 import { fmtDateTime, fmtKes } from "@/lib/format";
+import { FormField } from "@/modules/forms/FormField";
 import { fetchMembersPage } from "@/modules/members/api";
 import type { Member } from "@/modules/members/schemas";
 import { EMPTY_TXN_FILTERS, fetchTransactionsPage, type TxnListFilters } from "../api";
@@ -88,22 +89,23 @@ function MemberFilter({
   const options = members.data?.pages.flatMap((page) => page.items) ?? [];
   return (
     <div className={styles.filterGroup}>
-      <label className={styles.filterLabel} htmlFor="txn-filter-member">
-        Member
-      </label>
-      <select
-        id="txn-filter-member"
-        className={`${styles.select} ${styles.filterControl}`}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        <option value="">All members</option>
-        {options.map((member) => (
-          <option key={member.id} value={member.id}>
-            {member.name} · {member.member_no}
-          </option>
-        ))}
-      </select>
+      <FormField id="txn-filter-member" label="Member">
+        {(control) => (
+          <select
+            {...control}
+            className={`${styles.select} ${styles.filterControl}`}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+          >
+            <option value="">All members</option>
+            {options.map((member) => (
+              <option key={member.id} value={member.id}>
+                {member.name} · {member.member_no}
+              </option>
+            ))}
+          </select>
+        )}
+      </FormField>
       {members.hasNextPage && (
         <Button
           type="button"
@@ -277,52 +279,50 @@ export function TransactionsScreen() {
     <div>
       <div className={styles.toolbar}>
         <div className={styles.filters}>
-          <div className={styles.filterGroup}>
-            <label className={styles.filterLabel} htmlFor="txn-filter-type">
-              Type
-            </label>
-            <select
-              id="txn-filter-type"
-              className={`${styles.select} ${styles.filterControl}`}
-              value={filters.type}
-              onChange={(event) =>
-                setFilters((current) => ({
-                  ...current,
-                  type: event.target.value as TxnListFilters["type"],
-                }))
-              }
-            >
-              <option value="">All types</option>
-              {TXN_TYPES.map((option) => (
-                <option key={option} value={option}>
-                  {TXN_TYPE_LABELS[option]}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className={styles.filterGroup}>
-            <label className={styles.filterLabel} htmlFor="txn-filter-channel">
-              Channel
-            </label>
-            <select
-              id="txn-filter-channel"
-              className={`${styles.select} ${styles.filterControl}`}
-              value={filters.channel}
-              onChange={(event) =>
-                setFilters((current) => ({
-                  ...current,
-                  channel: event.target.value as TxnListFilters["channel"],
-                }))
-              }
-            >
-              <option value="">All channels</option>
-              {CHANNELS.map((option) => (
-                <option key={option} value={option}>
-                  {CHANNEL_LABELS[option]}
-                </option>
-              ))}
-            </select>
-          </div>
+          <FormField id="txn-filter-type" label="Type">
+            {(control) => (
+              <select
+                {...control}
+                className={`${styles.select} ${styles.filterControl}`}
+                value={filters.type}
+                onChange={(event) =>
+                  setFilters((current) => ({
+                    ...current,
+                    type: event.target.value as TxnListFilters["type"],
+                  }))
+                }
+              >
+                <option value="">All types</option>
+                {TXN_TYPES.map((option) => (
+                  <option key={option} value={option}>
+                    {TXN_TYPE_LABELS[option]}
+                  </option>
+                ))}
+              </select>
+            )}
+          </FormField>
+          <FormField id="txn-filter-channel" label="Channel">
+            {(control) => (
+              <select
+                {...control}
+                className={`${styles.select} ${styles.filterControl}`}
+                value={filters.channel}
+                onChange={(event) =>
+                  setFilters((current) => ({
+                    ...current,
+                    channel: event.target.value as TxnListFilters["channel"],
+                  }))
+                }
+              >
+                <option value="">All channels</option>
+                {CHANNELS.map((option) => (
+                  <option key={option} value={option}>
+                    {CHANNEL_LABELS[option]}
+                  </option>
+                ))}
+              </select>
+            )}
+          </FormField>
           <div className={styles.filterGroup}>
             <span className={styles.filterLabel}>Direction</span>
             <div className={styles.segment} role="group" aria-label="Direction">
@@ -380,56 +380,52 @@ export function TransactionsScreen() {
             </div>
           </div>
           <form className={styles.filters} onSubmit={applyDrafts} noValidate>
-            <div className={styles.filterGroup}>
-              <label className={styles.filterLabel} htmlFor="txn-filter-search">
-                Search (ref or member)
-              </label>
-              <input
-                id="txn-filter-search"
+            <FormField id="txn-filter-search" label="Search (ref or member)">
+              {(control) => (
+                <input
+                  {...control}
                 inputMode="search"
-                className={`${styles.input} ${styles.filterControl}`}
-                maxLength={64}
-                value={searchDraft}
-                onChange={(event) => setSearchDraft(event.target.value)}
-              />
-            </div>
-            <div className={styles.filterGroup}>
-              <label className={styles.filterLabel} htmlFor="txn-filter-ref">
-                Reference (exact)
-              </label>
-              <input
-                id="txn-filter-ref"
+                  className={`${styles.input} ${styles.filterControl}`}
+                  maxLength={64}
+                  value={searchDraft}
+                  onChange={(event) => setSearchDraft(event.target.value)}
+                />
+              )}
+            </FormField>
+            <FormField id="txn-filter-ref" label="Reference (exact)">
+              {(control) => (
+                <input
+                  {...control}
                 inputMode="search"
-                className={`${styles.input} ${styles.filterControl}`}
-                maxLength={32}
-                value={refDraft}
-                onChange={(event) => setRefDraft(event.target.value)}
-              />
-            </div>
-            <div className={styles.filterGroup}>
-              <label className={styles.filterLabel} htmlFor="txn-filter-from">
-                From date
-              </label>
-              <input
-                id="txn-filter-from"
+                  className={`${styles.input} ${styles.filterControl}`}
+                  maxLength={32}
+                  value={refDraft}
+                  onChange={(event) => setRefDraft(event.target.value)}
+                />
+              )}
+            </FormField>
+            <FormField id="txn-filter-from" label="From date">
+              {(control) => (
+                <input
+                  {...control}
                 type="date"
-                className={`${styles.input} ${styles.filterControl}`}
-                value={fromDraft}
-                onChange={(event) => setFromDraft(event.target.value)}
-              />
-            </div>
-            <div className={styles.filterGroup}>
-              <label className={styles.filterLabel} htmlFor="txn-filter-to">
-                To date
-              </label>
-              <input
-                id="txn-filter-to"
+                  className={`${styles.input} ${styles.filterControl}`}
+                  value={fromDraft}
+                  onChange={(event) => setFromDraft(event.target.value)}
+                />
+              )}
+            </FormField>
+            <FormField id="txn-filter-to" label="To date">
+              {(control) => (
+                <input
+                  {...control}
                 type="date"
-                className={`${styles.input} ${styles.filterControl}`}
-                value={toDraft}
-                onChange={(event) => setToDraft(event.target.value)}
-              />
-            </div>
+                  className={`${styles.input} ${styles.filterControl}`}
+                  value={toDraft}
+                  onChange={(event) => setToDraft(event.target.value)}
+                />
+              )}
+            </FormField>
             <Button type="submit">Apply</Button>
             {draftError !== "" && (
               <span className={styles.formNote} role="alert">
