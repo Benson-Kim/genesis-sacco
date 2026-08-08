@@ -19,12 +19,20 @@ Falsifiable (§4, hand-computed oracles in comments):
 - FM-ER3 duplicate (tenant, channel, ref) => 409 with EXACTLY ONE
   ledger row and ONE balance credit (drop uq_txns_external_ref and
   the second posting lands 201, failing this leg);
-- FM-ER4 case variants collide (dedupe cannot be evaded by casing);
+- FM-ER4 case AND whitespace variants collide (dedupe cannot be
+  evaded by casing or padding — review R3);
 - FM-ER5 the same ref on the OTHER channel and in ANOTHER tenant both
   post fine (the dedupe key is per tenant per channel, exactly as
   declared);
 - FM-ER6 refless system postings still work and read back
-  external_ref null (legacy/NULL tolerance).
+  external_ref null (legacy/NULL tolerance);
+- FM-ER7 the shape is PER-CHANNEL (review R3): a bank-shaped ref
+  (separator characters / off-length) is refused on mpesa at the
+  boundary, and the pure-unit divergence leg pins the same string as
+  bank-valid + mpesa-invalid — collapse EXTERNAL_REF_SHAPES back to
+  one regex and both fail; the shape-map totality over
+  EXTERNAL_CHANNELS is pinned alongside (a channel without a shape
+  would KeyError at the boundary).
 """
 
 import asyncio
@@ -93,6 +101,13 @@ def test_missing_or_malformed_ref_is_sanitized_422_with_zero_side_effects() -> N
                 {"amount": "100.00", "channel": "mpesa", "external_ref": "   "},  # blank
                 {"amount": "100.00", "channel": "bank", "external_ref": hostile},  # shape
                 {"amount": "100.00", "channel": "bank", "external_ref": "X"},  # too short
+                # FM-ER7 (review R3): mpesa's shape is EXACTLY 10
+                # alphanumerics — off-length and separator-carrying
+                # values that the BANK shape would accept are refused.
+                {"amount": "100.00", "channel": "mpesa", "external_ref": "SGH3KLM9Q"},  # 9
+                {"amount": "100.00", "channel": "mpesa", "external_ref": "SGH3KLM9QTX"},  # 11
+                # bank-shaped (separators) — see FM-ER7:
+                {"amount": "100.00", "channel": "mpesa", "external_ref": "SLIP-90/22"},
             ):
                 res = await client.post(
                     f"/members/{mid}/deposits", json=body, headers=_headers(token)
@@ -105,6 +120,28 @@ def test_missing_or_malformed_ref_is_sanitized_422_with_zero_side_effects() -> N
         assert await _balance(tid, mid) == Decimal("0")
 
     asyncio.run(run())
+
+
+def test_per_channel_shape_map_is_total_and_divergent() -> None:
+    """FM-ER7 pure-unit legs (review R3).
+
+    Totality: every EXTERNAL channel has a code-owned shape — a channel
+    joining EXTERNAL_CHANNELS without a shape entry would KeyError at
+    require_external_ref, and this leg names it first. Divergence:
+    'SLIP-90/22' (a 10-char separator-carrying bank slip ref) is
+    bank-valid and mpesa-invalid; 'SGH3KLM9QT' is valid on both (the
+    formats genuinely overlap on plain 10-char alphanumerics — FM-ER5's
+    cross-channel dedupe leg rides exactly that overlap). Collapse the
+    shapes to one regex and the divergence pair fails.
+    """
+    from genesis.api.params import EXTERNAL_CHANNELS, EXTERNAL_REF_SHAPES
+
+    assert set(EXTERNAL_REF_SHAPES) == EXTERNAL_CHANNELS
+    bank, mpesa = EXTERNAL_REF_SHAPES[Channel.BANK], EXTERNAL_REF_SHAPES[Channel.MPESA]
+    assert bank.fullmatch("SLIP-90/22") is not None
+    assert mpesa.fullmatch("SLIP-90/22") is None
+    assert bank.fullmatch("SGH3KLM9QT") is not None
+    assert mpesa.fullmatch("SGH3KLM9QT") is not None
 
 
 def test_ref_stored_uppercase_served_in_the_list_read_and_deduped() -> None:
@@ -125,12 +162,13 @@ def test_ref_stored_uppercase_served_in_the_list_read_and_deduped() -> None:
             )
             assert first.status_code == 201, first.text
 
-            # FM-ER4: the case-variant replay collides (normalization
-            # is what makes the dedupe casing-proof — drop it and this
-            # 409 becomes a 201).
+            # FM-ER4: the case-AND-whitespace-variant replay collides
+            # (trim + uppercase is what makes the dedupe evasion-proof
+            # — drop either normalization and this 409 becomes a 201;
+            # review R3: ' SGH3klm9QT ' claims the SAME slot).
             dup = await client.post(
                 f"/members/{mid}/deposits",
-                json={"amount": "250.00", "channel": "mpesa", "external_ref": "SGH3klm9QT"},
+                json={"amount": "250.00", "channel": "mpesa", "external_ref": " SGH3klm9QT "},
                 headers=_headers(token),
                 # A NEW idempotency intent, so only the ref dedupe can
                 # refuse it (the middleware never sees a replayed key).

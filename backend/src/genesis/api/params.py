@@ -27,13 +27,24 @@ CASH_CHANNELS = frozenset({Channel.MPESA, Channel.BANK})
 #: set.
 EXTERNAL_CHANNELS = frozenset({Channel.MPESA, Channel.BANK})
 
-#: Code-owned shape for operator-entered external references (M-Pesa
-#: confirmation code / bank slip ref): 2..40 chars, alphanumeric with
-#: the common separator characters, alphanumeric at both edges.
-#: Validated AFTER uppercase normalization, so the partial UNIQUE
-#: (tenant_id, channel, external_ref) dedupe (0043) is
-#: case-insensitive by construction.
-EXTERNAL_REF_RE = re.compile(r"^[A-Z0-9][A-Z0-9 /\-]{0,38}[A-Z0-9]$")
+#: Code-owned PER-CHANNEL shapes for operator-entered external
+#: references (#35 review R3): the dedupe is only as strong as its
+#: canonical form, so each channel pins the exact shape its receipts
+#: actually carry. Validated AFTER trim + uppercase normalization, so
+#: the partial UNIQUE (tenant_id, channel, external_ref) dedupe (0043)
+#: is case- and whitespace-insensitive by construction.
+#:
+#: * M-Pesa confirmation codes: EXACTLY 10 uppercase alphanumerics
+#:   (e.g. SGH3KLM9QT) — no separator characters exist in the format.
+#: * Bank slip/EFT refs: 2..40 chars, alphanumeric with the common
+#:   separator characters, alphanumeric at both edges.
+#:
+#: Every EXTERNAL_CHANNELS member MUST have a shape here (totality is
+#: pinned by a test leg in tests/test_external_ref.py).
+EXTERNAL_REF_SHAPES: dict[Channel, re.Pattern[str]] = {
+    Channel.MPESA: re.compile(r"^[A-Z0-9]{10}$"),
+    Channel.BANK: re.compile(r"^[A-Z0-9][A-Z0-9 /\-]{0,38}[A-Z0-9]$"),
+}
 
 
 def require_cash_channel(channel: Channel) -> Channel:
@@ -56,7 +67,7 @@ def require_external_ref(channel: Channel, external_ref: str | None) -> str | No
     if external_ref is None or external_ref.strip() == "":
         raise UnprocessableError("external channel postings require a transaction reference")
     normalized = external_ref.strip().upper()
-    if EXTERNAL_REF_RE.fullmatch(normalized) is None:
+    if EXTERNAL_REF_SHAPES[channel].fullmatch(normalized) is None:
         raise UnprocessableError("invalid external transaction reference format")
     return normalized
 

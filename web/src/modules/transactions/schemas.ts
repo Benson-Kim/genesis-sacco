@@ -220,12 +220,15 @@ export const TXN_WRITE_KIND_LABELS: Record<TxnWriteKind, string> = {
 const DECIMAL_RE = /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/;
 const ALL_ZERO_RE = /^0(?:\.0{1,2})?$/;
 
-/** External-reference shape (#35 item 6) — a courtesy mirror of the
- * server's require_external_ref rule (2–40 chars, alphanumeric with
- * space / - separators, alphanumeric at both edges; the server
- * normalizes UPPERCASE and enforces the per-tenant per-channel dedupe
- * regardless — gate 1.6). */
-export const EXTERNAL_REF_RE = /^[A-Za-z0-9][A-Za-z0-9 /-]{0,38}[A-Za-z0-9]$/;
+/** External-reference shapes (#35 item 6, review R3) — a courtesy
+ * mirror of the server's PER-CHANNEL require_external_ref shapes
+ * (M-Pesa confirmation code: exactly 10 letters/digits; bank slip
+ * ref: 2–40 chars, alphanumeric with space / - separators,
+ * alphanumeric at both edges). The server trims, normalizes
+ * UPPERCASE and enforces both the shape and the per-tenant
+ * per-channel dedupe regardless — gate 1.6. */
+export const MPESA_REF_RE = /^[A-Za-z0-9]{10}$/;
+export const BANK_REF_RE = /^[A-Za-z0-9][A-Za-z0-9 /-]{0,38}[A-Za-z0-9]$/;
 
 /**
  * Client-side pre-validation of the post-transaction form (the server
@@ -249,13 +252,24 @@ export const moneyEntrySchema = z.object({
     errorMap: () => ({ message: "Select a channel." }),
   }),
   /** REQUIRED on every teller posting: both offered channels are
-   * EXTERNAL money movements (#35 item 6). */
-  external_ref: z
-    .string()
-    .regex(
-      EXTERNAL_REF_RE,
-      "Enter the M-Pesa code or bank reference (2–40 letters/digits).",
-    ),
+   * EXTERNAL money movements (#35 item 6); the shape is validated
+   * per channel in the superRefine below (review R3). */
+  external_ref: z.string(),
+}).superRefine((entry, ctx) => {
+  const valid =
+    entry.channel === "mpesa"
+      ? MPESA_REF_RE.test(entry.external_ref)
+      : BANK_REF_RE.test(entry.external_ref);
+  if (!valid) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["external_ref"],
+      message:
+        entry.channel === "mpesa"
+          ? "Enter the 10-character M-Pesa confirmation code (letters/digits)."
+          : "Enter the bank reference (2–40 letters/digits).",
+    });
+  }
 });
 
 export type MoneyEntryInput = z.infer<typeof moneyEntrySchema>;
