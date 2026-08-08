@@ -36,6 +36,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application.outbox import enqueue_event
+from genesis.domain.members import normalize_kenya_msisdn
 from genesis.domain.otp import (
     OTP_LENGTH,
     OTP_TTL_SECONDS,
@@ -58,6 +59,42 @@ _JWT_ALGORITHM = "HS256"
 #: member principal gate (both directions falsifiably tested).
 STAFF_AUDIENCE = "genesis-staff"
 MEMBER_AUDIENCE = "genesis-member"
+
+#: Sign-in user resolution (#35 sign-in identifier round) as module-level
+#: constants so the EXPLAIN structural gate exercises the production
+#: statements (house convention). The documented tenant-predicate
+#: exemption above applies to all four: forced RLS supplies the tenant
+#: fence. The phone probes ride 0044's partial idx_users_phone
+#: (tenant_id, phone) WHERE phone IS NOT NULL under that qual; the email
+#: probes keep riding the 0001 UNIQUE (tenant_id, email). The identifier
+#: is ALWAYS a bound parameter (gate 1.6), never interpolated.
+USER_ID_BY_EMAIL_SQL = "SELECT id FROM users WHERE email = :ident AND status = 'active'"
+USER_ID_BY_PHONE_SQL = "SELECT id FROM users WHERE phone = :ident AND status = 'active'"
+USER_LOCK_BY_EMAIL_SQL = "SELECT id, role_id FROM users WHERE email = :ident FOR UPDATE"
+USER_LOCK_BY_PHONE_SQL = "SELECT id, role_id FROM users WHERE phone = :ident FOR UPDATE"
+
+#: Code-owned identifier kinds (the classifier returns one of these two).
+IDENTIFIER_PHONE = "phone"
+IDENTIFIER_EMAIL = "email"
+
+
+def resolve_signin_identifier(identifier: str) -> tuple[str, str]:
+    """Classify a sign-in identifier as phone or email — ONE rule (#35).
+
+    A value the maintainer-declared Kenya msisdn rule accepts IS a
+    phone: it is normalized through the single existing normalizer
+    (domain/members.py:normalize_kenya_msisdn — never a second
+    normalizer) and resolves by its E.164 form against stored
+    users.phone (E.164 by the 0042 backfill). Everything else takes
+    the email path byte-identically — including malformed phone-ish
+    strings, which simply resolve no user and surface the same
+    non-disclosing outcome as any unknown email (gate 1.6: no
+    existence oracle, no echoed identifier).
+    """
+    normalized = normalize_kenya_msisdn(identifier)
+    if normalized is not None:
+        return (IDENTIFIER_PHONE, normalized)
+    return (IDENTIFIER_EMAIL, identifier)
 
 
 @dataclass(frozen=True)
@@ -212,21 +249,35 @@ def decode_member_access_token(token: str) -> MemberAuthContext:
     return principal
 
 
-async def request_otp(session: AsyncSession, tenant_id: uuid.UUID, email: str) -> str | None:
+async def request_otp(
+    session: AsyncSession, tenant_id: uuid.UUID, identifier: str
+) -> str | None:
     """Issue a single-use, 5-minute OTP; never reveals whether the user exists.
+
+    The identifier may be an email address or a Kenya mobile number
+    (#35 sign-in identifier): classification and normalization go
+    through resolve_signin_identifier — one rule, one normalizer.
 
     Returns the issued code IN-PROCESS ONLY (None when no challenge was
     issued): the API layer surfaces it exclusively behind the
     fail-closed dev_otp_display flag (#35 item 11 — REMOVE before
     staging) and it is never logged.
     """
-    row = (
-        await session.execute(
-            text("SELECT id FROM users WHERE email = :email AND status = 'active'"),
-            {"email": email},
-        )
-    ).first()
+    kind, value = resolve_signin_identifier(identifier)
+    lookup_sql = USER_ID_BY_PHONE_SQL if kind == IDENTIFIER_PHONE else USER_ID_BY_EMAIL_SQL
+    row = (await session.execute(text(lookup_sql), {"ident": value})).first()
     if row is None:
+        # Equal-work non-disclosure (gate 1.6): burn the same hash cost
+        # the issue path pays before returning, so a rejected identifier
+        # matches an accepted one in response shape AND in the work the
+        # request performs (the falsifiable legs assert the shape and
+        # the zero-challenge side effect; wall-clock timing is
+        # deliberately not asserted — it flakes on loaded CI runners).
+        hash_code(
+            f"{secrets.randbelow(10**OTP_LENGTH):0{OTP_LENGTH}d}",
+            salt=str(uuid.uuid4()),
+            pepper=_otp_pepper(),
+        )
         return None
     user_id = str(row[0])
     challenge_id = uuid.uuid4()
@@ -254,9 +305,13 @@ async def request_otp(session: AsyncSession, tenant_id: uuid.UUID, email: str) -
 
 
 async def verify_otp(
-    session: AsyncSession, tenant_id: uuid.UUID, email: str, code: str
+    session: AsyncSession, tenant_id: uuid.UUID, identifier: str, code: str
 ) -> TokenPair | AuthFailure:
     """Verify the newest challenge under a row lock (gate 1.4).
+
+    The identifier may be an email address or a Kenya mobile number
+    (#35 sign-in identifier), resolved by the same one-rule classifier
+    as the request path.
 
     Failures are returned (not raised) so the attempt-counter increment
     commits with the surrounding transaction; the API layer raises the
@@ -266,13 +321,12 @@ async def verify_otp(
     # row, matching the suspension writer (application/users.py), which
     # holds the user row while voiding challenges. Locking in the other
     # order (the pre-P13.5 join) would deadlock verify-vs-suspend.
-    user_row = (
-        await session.execute(
-            text("SELECT id, role_id FROM users WHERE email = :email FOR UPDATE"),
-            {"email": email},
-        )
-    ).first()
+    kind, value = resolve_signin_identifier(identifier)
+    lock_sql = USER_LOCK_BY_PHONE_SQL if kind == IDENTIFIER_PHONE else USER_LOCK_BY_EMAIL_SQL
+    user_row = (await session.execute(text(lock_sql), {"ident": value})).first()
     if user_row is None:
+        # Same sanitized category as a known user with no challenge —
+        # the wire carries no existence oracle (gate 1.6).
         return AuthFailure("no otp challenge")
     user_id, role_id = user_row
     row = (
