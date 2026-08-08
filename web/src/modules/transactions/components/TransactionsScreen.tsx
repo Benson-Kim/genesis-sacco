@@ -123,6 +123,10 @@ export function TransactionsScreen() {
   // Text/date filters stage locally and apply on submit (one server
   // round-trip per applied filter set, not per keystroke).
   const [refDraft, setRefDraft] = useState("");
+  // #35 item 13: free-text search (ref prefix / member number / name
+  // prefix) — a SERVER query parameter, staged and applied like the
+  // other drafts; nothing is filtered locally.
+  const [searchDraft, setSearchDraft] = useState("");
   const [fromDraft, setFromDraft] = useState("");
   const [toDraft, setToDraft] = useState("");
   const [draftError, setDraftError] = useState("");
@@ -157,6 +161,7 @@ export function TransactionsScreen() {
     setFilters((current) => ({
       ...current,
       ref: refDraft.trim(),
+      search: searchDraft.trim(),
       date_from: fromValue,
       date_to: toValue,
     }));
@@ -171,7 +176,17 @@ export function TransactionsScreen() {
     {
       key: "ref",
       header: "Ref",
-      render: (txn) => <span className={styles.mono}>{txn.txn_ref}</span>,
+      // external_ref (#35 item 6): the operator-entered external
+      // receipt reference, muted next to the system ref; attacker-
+      // influenced data — React text interpolation only.
+      render: (txn) => (
+        <span className={styles.mono}>
+          {txn.txn_ref}
+          {txn.external_ref !== null && (
+            <span className={styles.muted}> · {txn.external_ref}</span>
+          )}
+        </span>
+      ),
     },
     {
       key: "member",
@@ -310,6 +325,19 @@ export function TransactionsScreen() {
             />
           )}
           <form className={styles.filters} onSubmit={applyDrafts} noValidate>
+            <div className={styles.filterGroup}>
+              <label className={styles.filterLabel} htmlFor="txn-filter-search">
+                Search (ref or member)
+              </label>
+              <input
+                id="txn-filter-search"
+                inputMode="search"
+                className={`${styles.input} ${styles.filterControl}`}
+                maxLength={64}
+                value={searchDraft}
+                onChange={(event) => setSearchDraft(event.target.value)}
+              />
+            </div>
             <div className={styles.filterGroup}>
               <label className={styles.filterLabel} htmlFor="txn-filter-ref">
                 Reference (exact)

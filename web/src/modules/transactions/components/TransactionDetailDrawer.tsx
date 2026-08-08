@@ -79,6 +79,13 @@ export function TransactionDetailDrawer({
         <Kv label="Reference">
           <span className={styles.mono}>{txn.txn_ref}</span>
         </Kv>
+        <Kv label="External reference">
+          {txn.external_ref === null ? (
+            <span className={styles.muted}>— (system posting or pre-0043 row)</span>
+          ) : (
+            <span className={styles.mono}>{txn.external_ref}</span>
+          )}
+        </Kv>
         <Kv label="Type">{txnTypePill(txn.type, txn.direction)}</Kv>
         <Kv label="Direction">{directionPill(txn.direction)}</Kv>
         <Kv label={`Amount (${SIDE_LABELS[txn.direction]})`}>{fmtKes(txn.amount)}</Kv>

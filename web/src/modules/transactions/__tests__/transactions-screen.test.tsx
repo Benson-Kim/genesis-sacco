@@ -42,6 +42,7 @@ jest.mock("../api", () => {
 jest.mock("@/modules/members/api", () => ({
   fetchMembersPage: jest.fn(),
   fetchMember: jest.fn(),
+  lookupMemberByNo: jest.fn(),
 }));
 
 jest.mock("@/modules/authz/usePermissions", () => ({
@@ -83,6 +84,7 @@ function debitTxn(overrides: Partial<Transaction> = {}): Transaction {
     occurred_at: "2026-07-18T10:15:00+00:00",
     is_reversal: false,
     created_by: null,
+    external_ref: null,
     ...overrides,
   };
 }
@@ -99,6 +101,7 @@ function creditTxn(overrides: Partial<Transaction> = {}): Transaction {
     occurred_at: "2026-07-19T08:00:00+00:00",
     is_reversal: false,
     created_by: null,
+    external_ref: "SGH3KLM9QT",
     ...overrides,
   };
 }
@@ -175,15 +178,24 @@ function mountScreen() {
  * double-post / 409 / key-custody tests). */
 async function fillEntry(
   user: ReturnType<typeof userEvent.setup>,
-  { amount = "5000.10", channel = "mpesa" }: { amount?: string; channel?: string } = {},
+  {
+    amount = "5000.10",
+    channel = "mpesa",
+    extRef = "SGH3KLM9QT",
+  }: { amount?: string; channel?: string; extRef?: string } = {},
 ) {
   await user.click(await screen.findByRole("button", { name: "+ Post transaction" }));
   const drawer = await screen.findByRole("dialog", { name: "Post transaction" });
-  await user.selectOptions(await within(drawer).findByLabelText("Member"), MEMBER_ID);
+  // #35 item 14: the member resolves by UNIQUE number on blur — no
+  // full member-list select exists in this drawer any more.
+  await user.type(within(drawer).getByLabelText("Member number"), "M-0001");
+  await user.tab();
   // The fresh member read must land before the confirmation can arm.
   await within(drawer).findByText(/Member verified:/);
   await user.type(within(drawer).getByLabelText("Amount (KES)"), amount);
   await user.selectOptions(within(drawer).getByLabelText("Channel"), channel);
+  // #35 item 6: the external receipt reference is REQUIRED.
+  await user.type(within(drawer).getByLabelText("External reference"), extRef);
   return drawer;
 }
 
@@ -216,6 +228,7 @@ beforeEach(() => {
   mocked.runDepositInterest.mockResolvedValue(INTEREST_RUN);
   mockedMembers.fetchMembersPage.mockResolvedValue(page([MEMBER]));
   mockedMembers.fetchMember.mockResolvedValue(MEMBER);
+  mockedMembers.lookupMemberByNo.mockResolvedValue(MEMBER);
 });
 
 afterEach(() => {
@@ -436,6 +449,7 @@ test("DOUBLE-POST impossible from this client: triple-clicked confirmation produ
   expect(mocked.postMoneyWrite.mock.calls[0]?.[2]).toEqual({
     amount: "5000.10",
     channel: "mpesa",
+    external_ref: "SGH3KLM9QT",
   });
 
   release(ACCOUNT_TXN);
@@ -473,7 +487,8 @@ test("STALE-READ DOUBLE-POST PREVENTION: the drawer FRESH-READS the member (stal
   await user.click(within(drawer).getByRole("button", { name: "Cancel" }));
   await user.click(await screen.findByRole("button", { name: "+ Post transaction" }));
   const reopened = await screen.findByRole("dialog", { name: "Post transaction" });
-  await user.selectOptions(await within(reopened).findByLabelText("Member"), MEMBER_ID);
+  await user.type(within(reopened).getByLabelText("Member number"), "M-0001");
+  await user.tab();
   await waitFor(() => expect(mockedMembers.fetchMember).toHaveBeenCalledTimes(2));
 });
 
@@ -544,7 +559,8 @@ test("an EXITED member structurally withdraws the posting affordance — zero wr
 
   await user.click(await screen.findByRole("button", { name: "+ Post transaction" }));
   const drawer = await screen.findByRole("dialog", { name: "Post transaction" });
-  await user.selectOptions(await within(drawer).findByLabelText("Member"), MEMBER_ID);
+  await user.type(within(drawer).getByLabelText("Member number"), "M-0001");
+  await user.tab();
 
   expect(await within(drawer).findByText(/has EXITED/)).toBeInTheDocument();
   const submit = within(drawer).getByRole("button", { name: "Post to ledger…" });
@@ -563,7 +579,8 @@ test("client Zod verdicts render inline BEFORE any write (leading zeros rejected
 
   await user.click(await screen.findByRole("button", { name: "+ Post transaction" }));
   const drawer = await screen.findByRole("dialog", { name: "Post transaction" });
-  await user.selectOptions(await within(drawer).findByLabelText("Member"), MEMBER_ID);
+  await user.type(within(drawer).getByLabelText("Member number"), "M-0001");
+  await user.tab();
 
   // Leading-zero amount, no channel — zero writes.
   await user.type(within(drawer).getByLabelText("Amount (KES)"), "007.10");
@@ -581,6 +598,7 @@ test("client Zod verdicts render inline BEFORE any write (leading zeros rejected
   await user.clear(amountField);
   await user.type(amountField, "7.10");
   await user.selectOptions(within(drawer).getByLabelText("Channel"), "bank");
+  await user.type(within(drawer).getByLabelText("External reference"), "SLIP-88");
   await user.click(await confirmEntry(user, drawer));
 
   expect(
@@ -692,6 +710,10 @@ test("IDENTICAL re-entry after 'Post another' is a NEW intent: the key ROTATES a
   await user.click(within(drawer).getByRole("button", { name: "Post another" }));
   await user.type(within(drawer).getByLabelText("Amount (KES)"), "5000.10");
   await user.selectOptions(within(drawer).getByLabelText("Channel"), "mpesa");
+  // The ref field CLEARED with the spent intent (#35 item 6): the same
+  // physical M-Pesa code must never ride a second posting by default —
+  // the teller types the second receipt's code.
+  await user.type(within(drawer).getByLabelText("External reference"), "SGH3KLM9QU");
   await user.click(await confirmEntry(user, drawer));
 
   expect(await screen.findByText(/Deposit posted · ref MP-1099/)).toBeInTheDocument();
@@ -699,6 +721,7 @@ test("IDENTICAL re-entry after 'Post another' is a NEW intent: the key ROTATES a
   expect(mocked.postMoneyWrite.mock.calls[1]?.[2]).toEqual({
     amount: "5000.10",
     channel: "mpesa",
+    external_ref: "SGH3KLM9QU",
   });
   expect(mocked.postMoneyWrite.mock.calls[1]?.[3]).not.toBe(firstKey);
 });
@@ -825,9 +848,11 @@ test("amount PASTE/IME hygiene (#31 ledger (h5)): a clipboard-grouped figure and
 
   await user.click(await screen.findByRole("button", { name: "+ Post transaction" }));
   const drawer = await screen.findByRole("dialog", { name: "Post transaction" });
-  await user.selectOptions(await within(drawer).findByLabelText("Member"), MEMBER_ID);
+  await user.type(within(drawer).getByLabelText("Member number"), "M-0001");
+  await user.tab();
   await within(drawer).findByText(/Member verified:/);
   await user.selectOptions(within(drawer).getByLabelText("Channel"), "mpesa");
+  await user.type(within(drawer).getByLabelText("External reference"), "SGH3KLM9QT");
   const amount = within(drawer).getByLabelText("Amount (KES)");
 
   // PASTE leg: "5,000.00" — the spreadsheet-grouped clipboard shape.
