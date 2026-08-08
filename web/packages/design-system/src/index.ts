@@ -1,7 +1,7 @@
 /**
  * @genesis/design-system — the ONLY source of visual primitives and tokens
- * for the admin web app (MASTER_PROMPT §2.3). Views must compose these
- * primitives instead of introducing ad-hoc colors/spacing (gate 1.1).
+ * for the admin web app (the house doctrine). Views must compose these
+ * primitives instead of introducing ad-hoc colors/spacing (reuse-first).
  */
 export { colorTokens, cssVar, fontFamily } from "./tokens";
 export type { ColorToken } from "./tokens";
