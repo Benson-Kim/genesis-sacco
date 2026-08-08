@@ -258,12 +258,20 @@ async def list_ledger(
     channel: Channel | None = None,
     direction: Side | None = None,
     ref: Annotated[str | None, Query(max_length=32)] = None,
+    search: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
     date_from: date | None = None,
     date_to: date | None = None,
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> TransactionListResponse:
-    """Ledger listing with the prototype filters (date, ref, member, type, DR/CR, channel)."""
+    """Ledger listing with the prototype filters (date, ref, member, type, DR/CR, channel).
+
+    search (#35 item 13): expand-only declared free-text probe —
+    txn_ref PREFIX, or member match (member_no exact / name prefix)
+    via an EXISTS on members. Bound parameters only; LIKE
+    metacharacters are escaped code-side; keyset order preserved; the
+    0043 idx_txns_ref_prefix serves the ref-prefix branch portably.
+    """
     factory = get_sessionmaker(get_settings().database_url)
     async with tenant_session(factory, ctx.tenant_id) as session:
         items, next_cursor = await txn_service.list_transactions(
@@ -274,6 +282,7 @@ async def list_ledger(
             channel=channel,
             direction=direction,
             ref=ref,
+            search=search,
             date_from=date_from,
             date_to=date_to,
             cursor=cursor,

@@ -354,6 +354,44 @@ def _row_to_txn(row: object) -> TransactionRecord:
     )
 
 
+#: Free-text ledger search predicate (#35 item 13) — module-level so
+#: the EXPLAIN gate (tests/test_txn_search.py) asserts the exact
+#: production fragment (the P13.9 convention). ONE OR of two branches:
+#: (a) txn_ref PREFIX probe — system refs are uppercase by
+#: construction, so the operator text probes uppercased; served
+#: portably by the 0043 text_pattern_ops index idx_txns_ref_prefix
+#: (the 0001 UNIQUE btree serves prefixes only under the C collation);
+#: (b) member match via EXISTS probing members by PRIMARY KEY per
+#: candidate row (id = transactions.member_id) — member_no EXACT
+#: (uppercase domain format) or name PREFIX (case-folded); the PK
+#: probe needs no new index. Every value is a bound parameter; LIKE
+#: metacharacters in the operator text are escaped code-side
+#: (_search_params), so '%' searches match literally nothing instead
+#: of everything. Keyset order and the page cap are UNTOUCHED.
+TXN_SEARCH_CLAUSE = (
+    "(txn_ref LIKE :q_ref ESCAPE '\\' "
+    "OR EXISTS (SELECT 1 FROM members m "
+    "WHERE m.tenant_id = CAST(:tid AS uuid) "
+    "AND m.id = transactions.member_id "
+    "AND (m.member_no = :q_no OR lower(m.name) LIKE :q_name ESCAPE '\\')))"
+)
+
+
+def _search_params(search: str) -> dict[str, object]:
+    """Bound parameters for TXN_SEARCH_CLAUSE (values only — never SQL).
+
+    LIKE metacharacters are escaped so operator text is always a
+    LITERAL probe (falsifiable: unescaped, a '%' search returns every
+    row and the inertness leg fails).
+    """
+    escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return {
+        "q_ref": escaped.upper() + "%",
+        "q_no": search.upper(),
+        "q_name": escaped.lower() + "%",
+    }
+
+
 def _direction_clause(direction: Side, params: dict[str, object]) -> str:
     """SQL predicate for the DR/CR filter — every value a bound parameter.
 
@@ -389,6 +427,7 @@ async def list_transactions(
     channel: Channel | None = None,
     direction: Side | None = None,
     ref: str | None = None,
+    search: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
     cursor: str | None = None,
@@ -419,6 +458,11 @@ async def list_transactions(
     if ref is not None:
         clauses.append("txn_ref = :ref")
         params["ref"] = ref
+    if search is not None and search.strip() != "":
+        # #35 item 13: ref-prefix OR member (member_no exact / name
+        # prefix) — see TXN_SEARCH_CLAUSE for the index derivation.
+        clauses.append(TXN_SEARCH_CLAUSE)
+        params.update(_search_params(search.strip()))
     if date_from is not None:
         clauses.append("occurred_at >= :d_from")
         params["d_from"] = date_from
