@@ -204,7 +204,10 @@ def test_dedupe_is_per_tenant_per_channel_exactly_as_declared() -> None:
         mid_a = await seed_member(tid_a, deposit="0")
         mid_b = await seed_member(tid_b, deposit="0")
         async with api_client() as client:
-            ref = "REC-2026-0808"
+            # Valid on BOTH channels (10 plain alphanumerics — the
+            # deliberate shape overlap the FM-ER7 divergence leg pins):
+            # this leg probes ONLY the dedupe key's width, never shape.
+            ref = "QGH7PLM2ZT"
             one = await client.post(
                 f"/members/{mid_a}/deposits",
                 json={"amount": "100.00", "channel": "mpesa", "external_ref": ref},
