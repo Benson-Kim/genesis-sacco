@@ -1,6 +1,6 @@
 """Shared maker-checker segregation-of-duties guard (reuse-first).
 
-ONE copy of the issue- N1 checker check, hoisted from
+ONE copy of the checker-separation check, hoisted from
 application/corrections.py when the share-transfer maker-checker
 workflow became its second consumer —
 the two workflows must never diverge on the rule:

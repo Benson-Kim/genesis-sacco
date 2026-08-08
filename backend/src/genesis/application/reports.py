@@ -810,7 +810,7 @@ WITH paid AS (
     GROUP BY r.loan_id
 ),
 principal_paid AS (
-    -- Principal attribution WITHOUT join fan-out (!40 review R4):
+    -- Principal attribution WITHOUT join fan-out (review-hardened):
     -- repayments.transaction_id carries NO DB-level UNIQUE (0001
     -- ships only the FK; 0014 only a NON-unique index), so joining
     -- ledger legs to repayments on transaction_id alone would
