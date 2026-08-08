@@ -545,17 +545,23 @@ async def post_dividend_distribution(
     rebate: Decimal,
     actor_id: uuid.UUID | None = None,
     occurred_at: datetime | None = None,
+    credit_account: Account | None = None,
 ) -> PostingResult:
     """Post one member's dividend + rebate payout (DV- ref, P13.11).
 
-    DR expense.dividends / CR member.shares and DR expense.rebates /
-    CR member.deposits — the dividend capitalises into share capital
-    so it compounds into the next financial year's basis (gate 1.5).
-    Runs in the caller's transaction; the P13.11 distribution job owns
-    the atomic unit (claim + posting + balance updates + audit).
-    Payload carries ids and amounts only — never names (gate 1.6).
+    Default (credit_account=None): DR expense.dividends /
+    CR member.shares and DR expense.rebates / CR member.deposits — the
+    dividend capitalises into share capital so it compounds into the
+    next financial year's basis (gate 1.5). Since #31 batch 12 the
+    distribution engine may pass a CODE-OWNED retention destination
+    (member.deposits or member.shares — validated by the domain
+    builder, never caller-supplied) that both member-side credit legs
+    route to instead. Runs in the caller's transaction; the P13.11
+    distribution job owns the atomic unit (claim + posting + balance
+    updates + audit). Payload carries ids and amounts only — never
+    names (gate 1.6).
     """
-    spec = build_dividend_distribution_posting(dividend, rebate)
+    spec = build_dividend_distribution_posting(dividend, rebate, credit_account=credit_account)
     result = await _post(session, tenant_id, member_id, spec, actor_id, occurred_at=occurred_at)
     await enqueue_event(
         session,

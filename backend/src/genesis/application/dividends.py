@@ -36,6 +36,18 @@ Workflow (mirrors the P12 exit machinery, reused not forked):
      period's basis), balances credited, and the audit row written
      with the declaration id and every figure verbatim — ONE batch
      transaction, no partial state (failure modes 3 and 9).
+     Since #31 batch 12 (human-authorized 2026-08-07) the paying scan
+     also snapshots the member's stored dividend_payout preference in
+     the SAME locking statement and routes the member-side credit
+     legs per PAYOUT_CREDIT_ROUTING: 'deposit_account' and
+     'share_capital' retain the whole payout in the mapped account;
+     the external-channel tokens in PAYOUT_FALLBACK_TOKENS ('mpesa',
+     'bank' — integrations unbuilt, issue #10) are NEVER faked and
+     fall back to the as-built default path with the token recorded
+     verbatim in the audit row. A NULL preference keeps the as-built
+     behaviour byte-for-byte. The unclaimed disposition below ignores
+     the preference by design (an exited member's accounts are
+     settled; the payable is the only honest destination).
   4. void_declaration — declared/approved -> rejected escape hatch for
      drifted snapshots; refused once any claim exists (voiding a
      partially distributed declaration would let a re-declaration pay
@@ -156,13 +168,16 @@ from genesis.domain.dividends import (
     entitlement_amount,
     last_completed_financial_year,
 )
-from genesis.domain.members import MemberStatus, MoneyOperation, member_may
+from genesis.domain.ledger import Account
+from genesis.domain.members import DividendPayout, MemberStatus, MoneyOperation, member_may
 from genesis.domain.money import ZERO, to_cents
 from genesis.errors import ConflictError, ForbiddenError, InvalidInputError, NotFoundError
 
 __all__ = [
     "DEFAULT_BATCH_SIZE",
     "DIVIDEND_CONFIG_SQL",
+    "PAYOUT_CREDIT_ROUTING",
+    "PAYOUT_FALLBACK_TOKENS",
     "DeclarationRecord",
     "DeclarationStatus",
     "DeclarationTotals",
@@ -197,6 +212,33 @@ __all__ = [
 
 #: Members processed per batch transaction (the P10/P11 precedent).
 DEFAULT_BATCH_SIZE = 200
+
+#: dividend_payout token -> member-side CREDIT destination (#31 batch
+#: 12, human-authorized on #31 2026-08-07 — the recorded design
+#: decision retiring the batch-8 preference-only fence). Both credit
+#: legs of the member's payout posting route to the mapped retention
+#: account; the DR legs keep their expense classification, so the
+#: legs stay balanced and the declared totals conserve exactly.
+#: CODE-OWNED: keys are the enum, values are ledger accounts — never
+#: caller input (gate 1.6).
+PAYOUT_CREDIT_ROUTING: dict[DividendPayout, Account] = {
+    DividendPayout.DEPOSIT_ACCOUNT: Account.MEMBER_DEPOSITS,
+    DividendPayout.SHARE_CAPITAL: Account.MEMBER_SHARES,
+}
+
+#: Tokens with NO implementable routing in the current ledger model:
+#: external cash channels (M-Pesa B2C integration is issue #10,
+#: unbuilt; no bank disbursement integration exists either — a mass
+#: job auto-posting a cash leg would assert money left the till with
+#: no transfer executed). NEVER faked: these fall back to the as-built
+#: default posting path and the member's preference token is recorded
+#: VERBATIM in the distribution audit row; the gap is tracked on #33.
+#: Together with PAYOUT_CREDIT_ROUTING this set is pinned set-equal to
+#: the DividendPayout enum (falsifiable — a future token forces a
+#: deliberate routing decision here).
+PAYOUT_FALLBACK_TOKENS: frozenset[DividendPayout] = frozenset(
+    {DividendPayout.MPESA, DividendPayout.BANK}
+)
 
 #: Dividend configuration read (v1.1 rule 1): one PK probe of the
 #: one-row-per-tenant settings table, resolved server-side. Explicit
@@ -375,9 +417,10 @@ def members_scan_sql(*, with_after: bool, with_claims: bool, for_update: bool) -
             "AND dd.member_id = m.id) "
         )
     lock = "FOR UPDATE OF m SKIP LOCKED" if for_update else ""
+    cols = "m.id, m.dividend_payout" if for_update else "m.id"
     return (
         # Static fragments chosen in code; all values bound parameters.
-        "SELECT m.id FROM members m "  # noqa: S608
+        f"SELECT {cols} FROM members m "  # noqa: S608
         "WHERE m.tenant_id = CAST(:tid AS uuid) "
         f"AND m.status IN ('active', 'arrears', 'dormant') {after}{anti}"
         f"ORDER BY m.id LIMIT :limit {lock}"
@@ -1034,16 +1077,29 @@ async def _distribute_one(
     *,
     fy: FinancialYear,
     posted_at: datetime,
+    preference: DividendPayout | None,
 ) -> tuple[int, int, Decimal, Decimal]:
     """Pay one LOCKED member; returns (claimed, skipped_claimed, dividend, rebate).
 
     Caller holds the member row lock from the batch scan. Lock order
     below is the P12 chain prefix: deposit account -> share account
-    (both FOR UPDATE); the entitlement is computed under those locks,
-    then claim + posting + balance updates + audit commit atomically
-    with the batch (failure modes 3, 8, 9). A member without one of
-    the accounts simply has a zero basis on that side (the
-    reconstruction anchors on the account row).
+    (both FOR UPDATE, taken unconditionally BEFORE any routing branch
+    — no new lock-graph edges); the entitlement is computed under
+    those locks, then claim + posting + balance updates + audit commit
+    atomically with the batch (failure modes 3, 8, 9). A member
+    without one of the accounts simply has a zero basis on that side
+    (the reconstruction anchors on the account row).
+
+    `preference` is the member's stored dividend_payout token, read by
+    the batch scan in the SAME statement that took the member row lock
+    (#31 batch 12 — consistent snapshot, no TOCTOU window). Routing:
+    PAYOUT_CREDIT_ROUTING tokens send BOTH credit legs (and the one
+    balance update) to the mapped retention account;
+    PAYOUT_FALLBACK_TOKENS (external channels, unbuilt — issue #10)
+    and None keep the as-built default byte-for-byte. When a
+    preference is set, the audit row records the token VERBATIM plus
+    the routing actually applied; a NULL-preference member's audit row
+    stays byte-identical to its pre-batch-12 form.
     """
     deposit_account_id: uuid.UUID | None = None
     share_account_id: uuid.UUID | None = None
@@ -1111,6 +1167,10 @@ async def _distribute_one(
         # A concurrent runner claimed this member between the anti-join
         # scan and the insert; idempotency wins (failure mode 3).
         return 0, 1, ZERO, ZERO
+    # #31 batch 12: the preference token routes the member-side credit
+    # legs. Fallback tokens (external channels, unbuilt) and None keep
+    # routed_account=None — the as-built default path byte-for-byte.
+    routed_account = PAYOUT_CREDIT_ROUTING.get(preference) if preference is not None else None
     posting = await post_dividend_distribution(
         session,
         tenant_id,
@@ -1119,23 +1179,50 @@ async def _distribute_one(
         rebate=entitlement.rebate,
         actor_id=actor_id,
         occurred_at=posted_at,
+        credit_account=routed_account,
     )
-    if entitlement.dividend > ZERO and share_account_id is not None:
-        await _set_balance(
-            session,
-            tenant_id,
-            kind="share",
-            account_id=share_account_id,
-            balance=to_cents(share_balance + entitlement.dividend),
-        )
-    if entitlement.rebate > ZERO and deposit_account_id is not None:
-        await _set_balance(
-            session,
-            tenant_id,
-            kind="deposit",
-            account_id=deposit_account_id,
-            balance=to_cents(deposit_balance + entitlement.rebate),
-        )
+    if routed_account is Account.MEMBER_DEPOSITS:
+        # Whole payout retained in the deposit account (both credit
+        # legs above named member.deposits). Missing-account handling
+        # mirrors the as-built path: the ledger legs are the truth and
+        # the reconstruction anchors on the account row.
+        if entitlement.total > ZERO and deposit_account_id is not None:
+            await _set_balance(
+                session,
+                tenant_id,
+                kind="deposit",
+                account_id=deposit_account_id,
+                balance=to_cents(deposit_balance + entitlement.total),
+            )
+    elif routed_account is Account.MEMBER_SHARES:
+        # Whole payout capitalised into share capital.
+        if entitlement.total > ZERO and share_account_id is not None:
+            await _set_balance(
+                session,
+                tenant_id,
+                kind="share",
+                account_id=share_account_id,
+                balance=to_cents(share_balance + entitlement.total),
+            )
+    else:
+        # As-built default (NULL preference or fallback token):
+        # dividend capitalises into shares, rebate credits deposits.
+        if entitlement.dividend > ZERO and share_account_id is not None:
+            await _set_balance(
+                session,
+                tenant_id,
+                kind="share",
+                account_id=share_account_id,
+                balance=to_cents(share_balance + entitlement.dividend),
+            )
+        if entitlement.rebate > ZERO and deposit_account_id is not None:
+            await _set_balance(
+                session,
+                tenant_id,
+                kind="deposit",
+                account_id=deposit_account_id,
+                balance=to_cents(deposit_balance + entitlement.rebate),
+            )
     await session.execute(
         text(
             "UPDATE dividend_distributions SET transaction_id = CAST(:txn AS uuid) "
@@ -1146,6 +1233,30 @@ async def _distribute_one(
     # Exact figures live here (rule 7): declaration id, snapshot rates
     # and reconstructed bases verbatim, so every shilling posted is
     # reconstructable even after any later config change.
+    audit_after: dict[str, Any] = {
+        "declaration_id": str(snapshot.id),
+        "member_id": str(member_id),
+        "fy_start": fy.start.isoformat(),
+        "fy_end": fy.end.isoformat(),
+        "share_basis": str(entitlement.share_basis),
+        "deposit_basis": str(entitlement.deposit_basis),
+        "dividend_rate_pct": str(snapshot.dividend_rate_pct),
+        "rebate_rate_pct": str(snapshot.rebate_rate_pct),
+        "dividend_amount": str(entitlement.dividend),
+        "rebate_amount": str(entitlement.rebate),
+        "total_amount": str(entitlement.total),
+        "txn_ref": posting.txn_ref,
+    }
+    if preference is not None:
+        # #31 batch 12: the preference token VERBATIM plus the routing
+        # actually applied — 'default' means the honest fallback (the
+        # external channel is unbuilt; the money took the as-built
+        # path). Keys are ABSENT for NULL-preference members so their
+        # audit rows stay byte-identical to the pre-batch-12 form.
+        audit_after["dividend_payout"] = preference.value
+        audit_after["applied_routing"] = (
+            preference.value if routed_account is not None else "default"
+        )
     await record_audit(
         session,
         tenant_id,
@@ -1153,20 +1264,7 @@ async def _distribute_one(
         action="dividend_distribution.post",
         entity="dividend_distributions",
         entity_id=str(claim_id),
-        after={
-            "declaration_id": str(snapshot.id),
-            "member_id": str(member_id),
-            "fy_start": fy.start.isoformat(),
-            "fy_end": fy.end.isoformat(),
-            "share_basis": str(entitlement.share_basis),
-            "deposit_basis": str(entitlement.deposit_basis),
-            "dividend_rate_pct": str(snapshot.dividend_rate_pct),
-            "rebate_rate_pct": str(snapshot.rebate_rate_pct),
-            "dividend_amount": str(entitlement.dividend),
-            "rebate_amount": str(entitlement.rebate),
-            "total_amount": str(entitlement.total),
-            "txn_ref": posting.txn_ref,
-        },
+        after=audit_after,
     )
     return 1, 0, entitlement.dividend, entitlement.rebate
 
@@ -1417,7 +1515,13 @@ async def distribute_dividend(
         skipped_claimed = 0
         dividend_total = ZERO
         rebate_total = ZERO
-        for (member_id_raw,) in rows:
+        for member_id_raw, payout_raw in rows:
+            # Fail-closed resolve against the code-owned enum: a value
+            # outside it is unreachable past the 0039 DB CHECK, so a
+            # ValueError here means catalog-level corruption — the
+            # batch aborts loudly posting nothing, never a silent
+            # misroute (the P13.7/P13.8 precedent).
+            preference = DividendPayout(str(payout_raw)) if payout_raw is not None else None
             one_claimed, one_conflict, dividend, rebate = await _distribute_one(
                 session,
                 tenant_id,
@@ -1426,6 +1530,7 @@ async def distribute_dividend(
                 uuid.UUID(str(member_id_raw)),
                 fy=fy,
                 posted_at=posted_at,
+                preference=preference,
             )
             claimed += one_claimed
             skipped_claimed += one_conflict
