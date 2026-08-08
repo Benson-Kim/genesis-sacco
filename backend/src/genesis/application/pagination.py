@@ -14,9 +14,13 @@ forge keyset positions. Token layout::
     scope = "<tenant uuid>|<endpoint id>"
 
 * ``V`` is the key-version byte (``Settings.cursor_key_version``) —
-  rotation = deploy a new ``Settings.cursor_signing_key`` with a bumped
-  version; tokens minted under the old version fail closed as 400s
-  (acceptable: cursors are short-lived pagination state).
+  rotation (review B13-R10) = deploy the new key/version as the ACTIVE
+  pair and demote the old pair to ``Settings.cursor_signing_key_previous``
+  / ``cursor_key_version_previous``: decode accepts BOTH versions during
+  the deploy window (each verified strictly under its OWN key), encode
+  mints only the active version, and any OLDER version (N-2) fails
+  closed as a 400 (acceptable: cursors are short-lived pagination
+  state). Retire the window by clearing the previous pair.
 * The scope is length-prefixed inside the MAC (no concatenation
   ambiguity) and binds the token to ONE tenant and ONE endpoint — a
   cursor can never be replayed across tenants or endpoints (gate 1.6).
@@ -56,15 +60,30 @@ def assert_cursor_signing_key_configured() -> None:
     An empty or short ``Settings.cursor_signing_key`` is a DEPLOYMENT
     error and must abort startup — never surface at the first decode
     (where it would blame a caller) or, worse, sign every cursor in
-    the fleet with guessable key material. Called by
+    the fleet with guessable key material. The guard covers BOTH keys
+    (review B13-R10): a configured-but-weak PREVIOUS key would quietly
+    keep the whole rotation window verifiable under guessable material,
+    and a version collision would make the window ambiguous. Called by
     ``genesis.api.app.create_app`` before any router is wired.
     """
-    key = get_settings().cursor_signing_key.encode()
+    settings = get_settings()
+    key = settings.cursor_signing_key.encode()
     if len(key) < MIN_CURSOR_KEY_BYTES:
         raise RuntimeError(
             "cursor_signing_key must be configured with at least "
             f"{MIN_CURSOR_KEY_BYTES} bytes of key material"
         )
+    previous = settings.cursor_signing_key_previous.encode()
+    if previous:
+        if len(previous) < MIN_CURSOR_KEY_BYTES:
+            raise RuntimeError(
+                "cursor_signing_key_previous must be configured with at least "
+                f"{MIN_CURSOR_KEY_BYTES} bytes of key material when set"
+            )
+        if settings.cursor_key_version_previous == settings.cursor_key_version:
+            raise RuntimeError(
+                "cursor_key_version_previous must differ from cursor_key_version"
+            )
 
 
 def _cursor_signing_key() -> bytes:
@@ -80,17 +99,37 @@ def _cursor_signing_key() -> bytes:
     return key.encode()
 
 
-def _cursor_tag(version: int, tenant_id: uuid.UUID, endpoint: str, payload: bytes) -> bytes:
+def _accepted_decode_keys() -> dict[int, bytes]:
+    """Key material by version byte (review B13-R10 rotation window).
+
+    Decode accepts the ACTIVE version and, when a previous pair is
+    configured, the PREVIOUS version — each verified strictly under
+    its OWN key. Any other version byte (N-2, garbage) has no entry
+    and fails closed as a sanitized 400. Encode never consults this
+    map: it always mints the active version.
+    """
+    settings = get_settings()
+    keys = {settings.cursor_key_version: _cursor_signing_key()}
+    previous = settings.cursor_signing_key_previous
+    if previous:
+        keys.setdefault(settings.cursor_key_version_previous, previous.encode())
+    return keys
+
+
+def _cursor_tag(
+    key: bytes, version: int, tenant_id: uuid.UUID, endpoint: str, payload: bytes
+) -> bytes:
     scope = f"{tenant_id}|{endpoint}".encode()
     message = bytes([version]) + struct.pack(">I", len(scope)) + scope + payload
-    return hmac.new(_cursor_signing_key(), message, hashlib.sha256).digest()
+    return hmac.new(key, message, hashlib.sha256).digest()
 
 
 def encode_cursor(inner: str, *, tenant_id: uuid.UUID, endpoint: str) -> str:
     """Seal a plaintext keyset position into an opaque signed token."""
     version = get_settings().cursor_key_version
     payload = inner.encode()
-    raw = bytes([version]) + payload + _cursor_tag(version, tenant_id, endpoint, payload)
+    tag = _cursor_tag(_cursor_signing_key(), version, tenant_id, endpoint, payload)
+    raw = bytes([version]) + payload + tag
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
@@ -112,9 +151,10 @@ def decode_cursor(token: str, *, tenant_id: uuid.UUID, endpoint: str, entity: st
     if len(raw) < 1 + _TAG_LEN:
         raise InvalidInputError(f"invalid {entity} cursor")
     version, payload, tag = raw[0], raw[1:-_TAG_LEN], raw[-_TAG_LEN:]
-    if version != get_settings().cursor_key_version:
+    key = _accepted_decode_keys().get(version)
+    if key is None:
         raise InvalidInputError(f"invalid {entity} cursor")
-    if not hmac.compare_digest(tag, _cursor_tag(version, tenant_id, endpoint, payload)):
+    if not hmac.compare_digest(tag, _cursor_tag(key, version, tenant_id, endpoint, payload)):
         raise InvalidInputError(f"invalid {entity} cursor")
     try:
         return payload.decode()

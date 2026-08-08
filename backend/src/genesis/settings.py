@@ -39,16 +39,24 @@ class Settings(BaseSettings):
     # Opaque keyset cursor signing (#31 batch 13 / review finding N4):
     # environment-only HMAC secret (the jwt_signing_key pattern — no
     # literal secrets, gate 1.6) plus the active key-version byte
-    # (1-255). Rotation: deploy a new key WITH a bumped version;
-    # tokens minted under the old version fail closed as sanitized
-    # 400s (cursors are short-lived pagination state).
+    # (1-255). Rotation (review B13-R10, dual-version window): deploy
+    # the NEW key/version as the active pair and demote the old pair
+    # to *_previous — decode accepts BOTH versions during the deploy
+    # window (in-flight cursors keep working); encode mints ONLY the
+    # active version. Retire the window by clearing the previous pair;
+    # any older version (N-2) fails closed as a sanitized 400
+    # (cursors are short-lived pagination state).
     # LENGTH REQUIREMENT (review B13-R5): at least 32 bytes of key
     # material — an HMAC-SHA256 key should be no shorter than the
-    # digest (RFC 2104). Boot FAILS CLOSED on an empty or shorter key
-    # (application.pagination.assert_cursor_signing_key_configured,
+    # digest (RFC 2104). Boot FAILS CLOSED on an empty/short active
+    # key AND on a configured-but-weak previous key or a version
+    # collision (application.pagination.assert_cursor_signing_key_configured,
     # called from api.app.create_app) — never a first-decode surprise.
     cursor_signing_key: str = ""
     cursor_key_version: int = 1
+    # Previous rotation pair: EMPTY key = single-key mode (no window).
+    cursor_signing_key_previous: str = ""
+    cursor_key_version_previous: int = 0
     # DEV-ONLY OTP display (#35 item 11): SMS/email delivery is not
     # built yet, so testers need the OTP on screen. FAIL-CLOSED: off
     # by default; enabling requires an explicit DEV_OTP_DISPLAY env
