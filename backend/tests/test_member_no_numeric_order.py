@@ -49,8 +49,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_helpers import api_client, factory
 from export_helpers import create_branch, seed_actor, seed_member_no
-from genesis.application.guarantees import live_guarantee_params
 from genesis.application.branches import BRANCH_MEMBERS_SCOPE
+from genesis.application.guarantees import live_guarantee_params
 from genesis.application.members import (
     MEMBER_LIST_AGGREGATES_SQL,
     MEMBER_LIST_SQL,

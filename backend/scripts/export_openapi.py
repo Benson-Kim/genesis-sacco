@@ -11,10 +11,21 @@ Usage: python scripts/export_openapi.py <output-path|->
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 from genesis.api.app import create_app
+
+# The #31 batch-13 boot guard (review B13-R5) refuses to construct the
+# app without >=32 bytes of cursor-signing key. This script only
+# RENDERS the OpenAPI contract — no server, no request, no cursor is
+# ever minted or verified, and the rendered spec does not depend on
+# the key's value — so a deterministic render-only placeholder
+# satisfies the guard without weakening it anywhere a request could
+# be served. NOT a secret (gate 1.6: real key material comes from
+# CI/CD variables / the environment in every serving deployment).
+os.environ.setdefault("CURSOR_SIGNING_KEY", "openapi-render-only-placeholder-0123456789")
 
 
 def render_spec() -> str:
