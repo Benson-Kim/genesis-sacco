@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * Post-transaction drawer (P15 module 6 — prototype `txnModal`,
+ * Post-transaction drawer (prototype `txnModal`,
  * adapted to the P11 contract): the teller money writes this batch
  * owns — deposit, withdrawal, share top-up
  * (`POST /members/{id}/deposits | /withdrawals | /share-topups`,
  * transactions:create). Loan repayments ship with the Loan book batch
- * (!59) and fees with the corrections module (P13.15) — the prototype
+ * and fees with the corrections module — the prototype
  * options that map there are deliberately NOT duplicated here.
  *
  * - FRESH MEMBER READ before every write (record class, staleTime 0;
@@ -18,17 +18,17 @@
  *   member number), pending short-circuit + disabled controls,
  *   `retry: 0`, one Idempotency-Key per logical intent. The key
  *   material folds in the fresh member VERSION and a reload epoch
- *   (!60 F3): stable across pure retries of one intent, rotated when
+ *  : stable across pure retries of one intent, rotated when
  *   the kind, member, amount, channel, the reloaded record version OR
  *   an explicit post-409 reload changes the intent.
  * - A 409 (insufficient available balance under the account row lock —
  *   capacity excludes live guarantee pledges — or an exited member)
  *   renders the shared ConflictBanner's explicit reload-and-re-enter
  *   flow: reload refetches the member and the register; the failed
- *   posting is NEVER replayed (!60 F5: informational notice variant +
+ *   posting is NEVER replayed (informational notice variant +
  *   announce()).
  * - MONEY (blocker (a)): the amount is the typed decimal STRING
- *   end-to-end (leading zeros rejected — !60 F6); the response amount
+ *   end-to-end (leading zeros rejected); the response amount
  *   and balance_after are SERVER facts rendered verbatim.
  * - Cash channels ONLY: the P11 contract rejects accrual/internal on
  *   teller writes (require_cash_channel) — the UI never offers them.
@@ -69,7 +69,7 @@ const KIND_EFFECT: Record<MoneyEntryInput["kind"], string> = {
 export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => void }>) {
   const queryClient = useQueryClient();
   const [kind, setKind] = useState("deposit");
-  // #35 item 14: the member is looked up by their UNIQUE number on
+  // The member is looked up by their UNIQUE number on
   // blur — the full member-list select no longer exists here. The
   // lookup resolves ONLY the blurred value; editing the field
   // withdraws the resolution until the next blur.
@@ -77,7 +77,7 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
   const [lookupNo, setLookupNo] = useState("");
   const [amount, setAmount] = useState("");
   const [channel, setChannel] = useState("");
-  // External receipt reference (#35 item 6): required by the server on
+  // External receipt reference: required by the server on
   // both offered channels; cleared per posting so a duplicate ref can
   // never ride a "Post another" flow by accident.
   const [externalRef, setExternalRef] = useState("");
@@ -86,7 +86,7 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
   const [result, setResult] = useState<AccountTxn | null>(null);
   const [resultKind, setResultKind] = useState<MoneyEntryInput["kind"]>("deposit");
   const [notice, setNotice] = useState<string>("");
-  // Freshness component for the idempotency key (!60 F3): bumped on
+  // Freshness component for the idempotency key: bumped on
   // every explicit post-conflict reload, so a re-entered identical
   // entry after a 409 is a NEW intent with a NEW key — never a replay
   // served from the backend idempotency store's pinned first outcome.
@@ -99,7 +99,7 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
   const [intentSeq, setIntentSeq] = useState(0);
   const keySlot = useRef<IdempotencyKeySlot>({ key: null, body: null });
 
-  // Unique-identifier lookup (#35 item 14): the expand-only member_no
+  // Unique-identifier lookup: the expand-only member_no
   // exact-match param on GET /members (DB UNIQUE (tenant_id,
   // member_no)). No status filter: deposits into arrears or dormant
   // accounts are legitimate teller flows; the server rejects exited
@@ -167,10 +167,10 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
   const spent = result !== null;
 
   function reloadAfterConflict() {
-    // Explicit reload flow (!60 F5): refetch the member (their balance
+    // Explicit reload flow: refetch the member (their balance
     // or status moved underneath) and the register; the failed posting
     // is structurally WITHDRAWN — re-entering it is a NEW operator
-    // intent whose key rotates via the reload epoch (!60 F3). NOTHING
+    // intent whose key rotates via the reload epoch. NOTHING
     // is replayed.
     void queryClient.refetchQueries({ queryKey: ["members", "detail", memberId] });
     void queryClient.invalidateQueries({ queryKey: ["transactions", "list"] });
@@ -214,7 +214,7 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
     Object.keys(serverErrors).length > 0;
 
   // Structural withdrawal: the server rejects every teller posting for
-  // an exited member — the form is not offered (gate 1.6).
+  // an exited member — the form is not offered (least disclosure).
   const memberExited = freshMember !== undefined && freshMember.status === "exited";
 
   return (
@@ -224,13 +224,13 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
       closeDisabled={post.isPending}
       // W56-3: a stray overlay click must never discard a half-completed
       // teller posting — dismissal is the explicit ✕ or Escape. (This
-      // module was written before the !62 W56-3 sweep and inherited the
-      // mechanism via the post-!62 main-merge; convention completed here.)
+      // module was written before the focus-dismissal sweep and inherited the
+      // mechanism via a later main-merge; convention completed here.)
       dismissOnOverlay={false}
     >
       {notice !== "" && <Banner>{notice}</Banner>}
 
-      {/* One copy of the 409 reload-and-re-enter flow (gate 1.1). */}
+      {/* One copy of the 409 reload-and-re-enter flow (reuse-first). */}
       <ConflictBanner error={post.error} onReload={reloadAfterConflict} />
       {post.isError && !conflict && !renderedInline && <ErrorBanner error={post.error} />}
 
@@ -314,7 +314,7 @@ export function PostTransactionDrawer({ onClose }: Readonly<{ onClose: () => voi
                   setMemberNoInput(event.target.value);
                   // Editing withdraws any prior resolution: the money
                   // write can only ever target the value the operator
-                  // actually blurred (#35 item 14).
+                  // actually blurred.
                   setLookupNo("");
                 }}
                 onBlur={() => setLookupNo(memberNoInput.trim())}

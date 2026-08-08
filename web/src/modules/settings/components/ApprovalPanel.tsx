@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Approval matrix tab (P15 Settings): committee size/quorum and the
+ * Approval matrix tab: committee size/quorum and the
  * per-authority approval bands (cumulative-ceiling semantics — the
  * band at index i covers amounts above the previous band's ceiling).
  *
