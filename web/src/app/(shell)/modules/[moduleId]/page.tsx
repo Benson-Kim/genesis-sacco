@@ -10,7 +10,7 @@ export function generateStaticParams() {
 
 /**
  * Placeholder route per RBAC module, wrapped in the /me/permissions route
- * guard. The real screens are built in P15 on top of this scaffold.
+ * guard. The real screens are built in on top of this scaffold.
  */
 export default async function ModulePage({
   params,

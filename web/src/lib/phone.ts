@@ -1,5 +1,5 @@
 /**
- * Kenya MSISDN blur-validation mirror (#35 item 1). The SERVER is the
+ * Kenya MSISDN blur-validation mirror (item 1). The SERVER is the
  * truth — backend/src/genesis/domain/members.py normalize_kenya_msisdn
  * normalizes on write and refuses invalid input with a sanitized 422;
  * this mirror exists only so the operator corrects the field
