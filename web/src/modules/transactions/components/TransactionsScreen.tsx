@@ -316,6 +316,7 @@ export function TransactionsScreen() {
               </label>
               <input
                 id="txn-filter-ref"
+                inputMode="search"
                 className={`${styles.input} ${styles.filterControl}`}
                 maxLength={32}
                 value={refDraft}

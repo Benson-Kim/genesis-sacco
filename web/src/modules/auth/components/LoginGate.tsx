@@ -5,7 +5,7 @@
  * password, then verify the 6-digit code. Server enforces attempts/TTL/
  * rate limits (P3); this component only shapes the flow.
  */
-import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { useState, type ClipboardEvent, type FormEvent, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, newIdempotencyKey } from "@genesis/api-client";
@@ -42,6 +42,9 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
   // the server rule; the server stays the truth at the wire). The
   // message shows on blur and clears the moment the value is corrected.
   const [emailBlurError, setEmailBlurError] = useState<string | null>(null);
+  // DEV-ONLY (#35 item 11, REMOVE BEFORE STAGING): the server sends
+  // dev_otp only behind its fail-closed flag; null renders NOTHING.
+  const [devOtp, setDevOtp] = useState<string | null>(null);
 
   function validateEmailBlur(value: string) {
     const ok = signInEmailSchema.safeParse(value.trim()).success;
@@ -50,10 +53,11 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
 
   const request = useMutation({
     mutationFn: requestOtp,
-    onSuccess: () => {
+    onSuccess: (result) => {
       setDigits(Array.from({ length: OTP_LENGTH }, () => ""));
       setStage("verify");
       setFormError(null);
+      setDevOtp(result.devOtp);
     },
     onError: (error) => setFormError(errorMessage(error)),
   });
@@ -106,6 +110,19 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
     if (event.key === "Backspace" && digits[index] === "" && index > 0) {
       document.getElementById(`otp-${index - 1}`)?.focus();
     }
+  }
+
+  // #35 item 12 — sanitized full-code paste: digits are harvested from
+  // the clipboard (non-digits stripped), fanned out from box 1, and
+  // focus lands on the next empty box. A digit-free paste is inert —
+  // hostile clipboard content never enters any box.
+  function onDigitPaste(event: ClipboardEvent<HTMLInputElement>) {
+    event.preventDefault();
+    const pasted = event.clipboardData.getData("text").replace(/\D/g, "").slice(0, OTP_LENGTH);
+    if (pasted === "") return;
+    setDigits(Array.from({ length: OTP_LENGTH }, (_, i) => pasted[i] ?? ""));
+    const focusIndex = Math.min(pasted.length, OTP_LENGTH - 1);
+    document.getElementById(`otp-${focusIndex}`)?.focus();
   }
 
   const brand = (
@@ -164,6 +181,13 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
           <div className={styles.subtitle}>
             Enter the 6-digit code sent to <b>{email}</b>
           </div>
+          {/* DEV-ONLY (#35 item 11): renders ONLY when the server's
+              fail-closed dev flag returned a code. REMOVE BEFORE STAGING. */}
+          {devOtp !== null && (
+            <div className={styles.notice} data-testid="dev-otp-display">
+              Dev mode — OTP for testers: <b>{devOtp}</b>
+            </div>
+          )}
           <div className={styles.otpRow}>
             {digits.map((digit, index) => (
               <input
@@ -176,6 +200,7 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
                 value={digit}
                 onChange={(event) => setDigit(index, event.target.value)}
                 onKeyDown={(event) => onDigitKeyDown(index, event)}
+                onPaste={onDigitPaste}
               />
             ))}
           </div>

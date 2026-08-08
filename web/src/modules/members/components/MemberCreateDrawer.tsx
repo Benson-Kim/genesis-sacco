@@ -137,6 +137,7 @@ export function MemberCreateDrawer({
                         id="member-email"
                         className={styles.input}
                         type="email"
+                        inputMode="email"
                         maxLength={254}
                         value={email}
                         onChange={(event) => setEmail(event.target.value)}

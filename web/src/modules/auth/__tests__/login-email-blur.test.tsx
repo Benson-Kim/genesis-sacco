@@ -60,7 +60,7 @@ test("invalid identifier: message SHOWS on blur with zero wire calls; correction
 
 test("valid email blurs clean and requests the OTP exactly once", async () => {
   const user = userEvent.setup();
-  mocked.requestOtp.mockResolvedValue(undefined as never);
+  mocked.requestOtp.mockResolvedValue({ devOtp: null });
   mountGate();
 
   const email = screen.getByLabelText("Email");
