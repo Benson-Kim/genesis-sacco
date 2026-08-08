@@ -212,8 +212,14 @@ def decode_member_access_token(token: str) -> MemberAuthContext:
     return principal
 
 
-async def request_otp(session: AsyncSession, tenant_id: uuid.UUID, email: str) -> None:
-    """Issue a single-use, 5-minute OTP; never reveals whether the user exists."""
+async def request_otp(session: AsyncSession, tenant_id: uuid.UUID, email: str) -> str | None:
+    """Issue a single-use, 5-minute OTP; never reveals whether the user exists.
+
+    Returns the issued code IN-PROCESS ONLY (None when no challenge was
+    issued): the API layer surfaces it exclusively behind the
+    fail-closed dev_otp_display flag (#35 item 11 — REMOVE before
+    staging) and it is never logged.
+    """
     row = (
         await session.execute(
             text("SELECT id FROM users WHERE email = :email AND status = 'active'"),
@@ -221,7 +227,7 @@ async def request_otp(session: AsyncSession, tenant_id: uuid.UUID, email: str) -
         )
     ).first()
     if row is None:
-        return
+        return None
     user_id = str(row[0])
     challenge_id = uuid.uuid4()
     code = f"{secrets.randbelow(10**OTP_LENGTH):0{OTP_LENGTH}d}"
@@ -244,6 +250,7 @@ async def request_otp(session: AsyncSession, tenant_id: uuid.UUID, email: str) -
         event_type="auth.otp_requested",
         payload={"user_id": user_id, "challenge_id": str(challenge_id), "code": code},
     )
+    return code
 
 
 async def verify_otp(
