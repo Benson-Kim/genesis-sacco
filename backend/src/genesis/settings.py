@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # called from api.app.create_app) — never a first-decode surprise.
     cursor_signing_key: str = ""
     cursor_key_version: int = 1
+    # DEV-ONLY OTP display (#35 item 11): SMS/email delivery is not
+    # built yet, so testers need the OTP on screen. FAIL-CLOSED: off
+    # by default; enabling requires an explicit DEV_OTP_DISPLAY env
+    # value in a dev environment. The OTP is returned in the
+    # /auth/otp/request response ONLY — it is never logged.
+    # REMOVAL NOTE: this flag and its api/auth.py consumer MUST be
+    # removed before staging (tracked on issue #35).
+    dev_otp_display: bool = False
 
 
 @lru_cache

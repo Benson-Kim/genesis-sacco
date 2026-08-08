@@ -20,12 +20,20 @@ function inputProps(spec: KycFieldSpec): Record<string, unknown> {
     case "date":
       return { type: "date" };
     case "email":
-      return { type: "email", maxLength: spec.maxLength };
+      // #35 item 12 inputmode sweep: email keyboard on touch devices.
+      return { type: "email", inputMode: "email" as const, maxLength: spec.maxLength };
     case "int":
       return { inputMode: "numeric" as const, maxLength: 10 };
     case "amount":
       return { inputMode: "decimal" as const, maxLength: 19 };
     default:
+      // #35 item 12: the KYC field specs mirror the backend domain
+      // verbatim (no dedicated phone KIND), so the telephone keyboard
+      // rides on the spec KEY — a rendering hint only, zero schema
+      // change.
+      if (spec.key === "phone") {
+        return { type: "tel", inputMode: "tel" as const, maxLength: spec.maxLength };
+      }
       return { maxLength: spec.maxLength };
   }
 }

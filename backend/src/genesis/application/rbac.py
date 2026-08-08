@@ -219,17 +219,49 @@ async def update_permission(
     can_edit: bool,
     can_approve: bool,
 ) -> ModulePermissions:
-    """Audited permission change under a row lock (gates 1.4, 1.5)."""
-    row = (
+    """Audited permission change under a row lock (gates 1.4, 1.5).
+
+    #35 item 2 (permission-matrix save bug): a missing permission row is
+    NOT an error — RBAC treats it as deny-by-default (has_permission /
+    actor_access read a missing row as all-false), and tenants whose
+    rows predate a later-added Module member (corrections @ P13.15,
+    member_identity @ P14.5) legitimately have such holes. The old
+    update-only path 404ed on them deterministically, which is exactly
+    the user-reported "save failed 3 times". The write now MATERIALIZES
+    the deny-by-default row first (insert-or-skip on the
+    (tenant_id, role_id, module) unique anchor — race-safe: concurrent
+    writers serialize on the re-taken FOR UPDATE) and audits the real
+    transition from the zero map. A truly unknown role stays a 404.
+    """
+    lock_query = text(
+        "SELECT id, can_view, can_create, can_edit, can_approve FROM permissions "
+        "WHERE role_id = CAST(:rid AS uuid) AND module = :module FOR UPDATE"
+    )
+    lock_params = {"rid": str(role_id), "module": module.value}
+    row = (await session.execute(lock_query, lock_params)).first()
+    if row is None:
+        role_exists = (
+            await session.execute(
+                text("SELECT 1 FROM roles WHERE id = CAST(:rid AS uuid)"),
+                {"rid": str(role_id)},
+            )
+        ).first()
+        if role_exists is None:
+            raise NotFoundError("role not found")
         await session.execute(
             text(
-                "SELECT id, can_view, can_create, can_edit, can_approve FROM permissions "
-                "WHERE role_id = CAST(:rid AS uuid) AND module = :module FOR UPDATE"
+                "INSERT INTO permissions (tenant_id, role_id, module, "
+                "can_view, can_create, can_edit, can_approve) VALUES "
+                "(CAST(:tid AS uuid), CAST(:rid AS uuid), :module, "
+                "false, false, false, false) "
+                "ON CONFLICT (tenant_id, role_id, module) DO NOTHING"
             ),
-            {"rid": str(role_id), "module": module.value},
+            {"tid": str(tenant_id), "rid": str(role_id), "module": module.value},
         )
-    ).first()
+        row = (await session.execute(lock_query, lock_params)).first()
     if row is None:
+        # Defensive: the row must exist after materialization; anything
+        # else is refused honestly rather than half-written.
         raise NotFoundError("permission row not found")
     before = {
         "can_view": bool(row[1]),

@@ -34,6 +34,7 @@ from genesis.domain.members import (
     MemberStatus,
     MemberType,
     format_member_no,
+    normalize_kenya_msisdn,
     transition,
 )
 from genesis.errors import ConflictError, InvalidInputError, NotFoundError, UnprocessableError
@@ -43,6 +44,24 @@ from genesis.errors import ConflictError, InvalidInputError, NotFoundError, Unpr
 #: one scope because they share one endpoint and one keyset.
 MEMBERS_LIST_SCOPE = "members.list"
 STATEMENT_SCOPE = "members.statement"
+
+
+def parse_phone(raw: str | None) -> str | None:
+    """Normalize a caller-supplied phone to E.164 storage (#35 item 1).
+
+    None stays None (phone is optional). An invalid value surfaces as
+    422 via UnprocessableError with the sanitized category ONLY — the
+    offending identifier is NEVER echoed or logged (gate 1.6; the
+    parse_dividend_payout precedent, and exactly why this validation
+    lives here rather than in a Pydantic field: FastAPI's structural
+    422 would echo the input back).
+    """
+    if raw is None:
+        return None
+    normalized = normalize_kenya_msisdn(raw)
+    if normalized is None:
+        raise UnprocessableError("invalid phone format")
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -377,6 +396,10 @@ async def create_member(
     "not chosen" state (never a backfilled default).
     """
     payout = parse_dividend_payout(dividend_payout)
+    # E.164 storage normalization on write (#35 item 1): every accepted
+    # spelling stores the same +254… string; invalid input is a
+    # sanitized 422 BEFORE any row is written.
+    phone = parse_phone(phone)
     member_no = await _next_member_no(session, tenant_id)
     member_id = uuid.uuid4()
     try:
@@ -639,7 +662,10 @@ async def update_member(
     payout = parse_dividend_payout(dividend_payout)
     current = await get_member(session, tenant_id, member_id)
     new_name = name if name is not None else current.name
-    new_phone = phone if phone is not None else current.phone
+    # E.164 normalization on write (#35 item 1); an untouched field
+    # keeps its stored value (legacy formats are read-tolerated — the
+    # 0042 backfill migrates them; clearing stays a follow-up feature).
+    new_phone = parse_phone(phone) if phone is not None else current.phone
     new_email = email if email is not None else current.email
     new_payout = payout if payout is not None else current.dividend_payout
     result = cast(

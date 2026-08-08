@@ -30,8 +30,37 @@ from __future__ import annotations
 import calendar
 import datetime
 import enum
+import re
 
 MEMBER_NO_PREFIX = "GP-"
+
+#: Kenya mobile identifiers (#35 item 1). Accepted INPUT formats are
+#: exactly the maintainer-declared four: 07XXXXXXXX / 01XXXXXXXX and
+#: their E.164 twins +2547XXXXXXXX / +2541XXXXXXXX. Storage is ALWAYS
+#: E.164 (+254…) — the canonical form every downstream system accepts.
+_KENYA_MSISDN_LOCAL = re.compile(r"^0([17])(\d{8})$")
+_KENYA_MSISDN_E164 = re.compile(r"^\+254([17])\d{8}$")
+
+
+def normalize_kenya_msisdn(raw: str) -> str | None:
+    """Normalize a Kenya mobile number to E.164, or None when invalid.
+
+    Pure and total: surrounding whitespace is tolerated (a courtesy for
+    hand-typed input), everything else must match one of the four
+    accepted formats EXACTLY — no digit-harvesting from free text, so
+    a typo can never silently become a different number. Every accepted
+    spelling of the same number maps to the SAME E.164 string
+    (falsifiable oracles in tests/test_members_domain.py). The caller
+    decides how a None surfaces (the API layer raises a sanitized 422
+    that never echoes the input — gate 1.6).
+    """
+    value = raw.strip()
+    if _KENYA_MSISDN_E164.match(value):
+        return value
+    match = _KENYA_MSISDN_LOCAL.match(value)
+    if match:
+        return f"+254{match.group(1)}{match.group(2)}"
+    return None
 
 
 class MemberType(enum.StrEnum):
@@ -62,11 +91,18 @@ class DividendPayout(enum.StrEnum):
     (deposit-account credit — the as-built P13.11 distribution leg;
     share top-up — the prototype's SH- affordance).
 
-    REGULATORY/ACCOUNTING FENCE (batch 8): this is a stored PREFERENCE
-    ONLY. The P13.11 dividends distribution engine does NOT consume it
-    — routing money by preference is a separate, separately-authorized
-    batch. tests/test_members_domain.py pins the engine's
-    non-consumption falsifiably.
+    CONSUMED since #31 batch 12 (the batch-8 preference-only fence was
+    retired DELIBERATELY under the maintainer authorization recorded
+    on #31, 2026-08-07): the P13.11 distribution engine routes the
+    member-side credit legs of the payout posting per the code-owned
+    application.dividends.PAYOUT_CREDIT_ROUTING map. The retention
+    destinations are implementable and route; the external cash
+    channels are NOT implementable today (M-Pesa integration is #10,
+    unbuilt) and fall back honestly to the as-built default path with
+    the token recorded verbatim in the distribution audit row. NULL
+    keeps the as-built behaviour byte-for-byte. The routing map is
+    pinned set-equal to this enum falsifiably (a future token forces a
+    deliberate routing decision — see PAYOUT_FALLBACK_TOKENS).
     """
 
     DEPOSIT_ACCOUNT = "deposit_account"
