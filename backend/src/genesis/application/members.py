@@ -518,6 +518,7 @@ async def list_members(
     limit: int = 20,
     status: MemberStatus | None = None,
     member_type: MemberType | None = None,
+    member_no: str | None = None,
 ) -> MemberPage:
     """Keyset-paginated listing in NUMERIC member_no order (gate 1.3).
 
@@ -526,11 +527,18 @@ async def list_members(
     numeric order for the fixed 'GP-' + zero-padded-digits format, and
     the served member_no doubles as a stable cursor. Exactly one
     indexed query per page regardless of table size (the 0041
-    expression index).
+    expression index). The optional member_no EXACT-match probe (#35
+    item 14 — the posting-drawer lookup) rides the 0001 UNIQUE
+    (tenant_id, member_no) key.
     """
     limit = max(1, min(limit, 100))
     clauses, params = _member_list_clauses(
-        tenant_id, cursor=cursor, limit=limit, status=status, member_type=member_type
+        tenant_id,
+        cursor=cursor,
+        limit=limit,
+        status=status,
+        member_type=member_type,
+        member_no=member_no,
     )
     # The {where} slot only ever receives the static clause literals
     # from _member_list_clauses; every value is a bound parameter.
@@ -553,6 +561,7 @@ async def list_members_with_aggregates(
     limit: int = 20,
     status: MemberStatus | None = None,
     member_type: MemberType | None = None,
+    member_no: str | None = None,
 ) -> MemberAggregatesPage:
     """Register page WITH the four advisory aggregates (#31 batch 3 review).
 

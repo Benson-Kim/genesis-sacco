@@ -131,7 +131,7 @@ def test_search_matches_ref_prefix_member_no_exact_and_name_prefix() -> None:
 
 def test_like_metacharacters_are_inert_and_keyset_walk_is_preserved() -> None:
     async def run() -> None:
-        _, token, alice, _ = await _seed_search_tenant()
+        _, token, _alice, _bob = await _seed_search_tenant()
         async with api_client() as client:
             # '%' probes LITERALLY (escaped code-side): nothing matches.
             # Falsifiable: drop the escaping and '%' matches all three.
@@ -182,7 +182,9 @@ def test_search_page_is_index_served_without_seq_scan_or_sort() -> None:
         params: dict[str, object] = {"tid": str(tid), "limit": 21}
         params.update(_search_params("alice"))
         sql = (
-            "SELECT id, txn_ref, member_id, type, amount, channel, occurred_at, "
+            # Static clause literals from production code; every value
+            # is a bound parameter (mirrors list_transactions).
+            "SELECT id, txn_ref, member_id, type, amount, channel, occurred_at, "  # noqa: S608
             "reversal_of_id, created_by, external_ref FROM transactions "
             f"WHERE {' AND '.join(clauses)} "
             "ORDER BY occurred_at DESC, id DESC LIMIT :limit"

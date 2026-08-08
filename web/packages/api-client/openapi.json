@@ -3924,6 +3924,19 @@
           },
           "channel": {
             "$ref": "#/components/schemas/Channel"
+          },
+          "external_ref": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Ref"
           }
         },
         "required": [
@@ -6218,6 +6231,17 @@
             "title": "Direction",
             "type": "string"
           },
+          "external_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Ref"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -6260,7 +6284,8 @@
           "direction",
           "occurred_at",
           "is_reversal",
-          "created_by"
+          "created_by",
+          "external_ref"
         ],
         "title": "TransactionOut",
         "type": "object"
@@ -11074,7 +11099,7 @@
     },
     "/members": {
       "get": {
-        "description": "Keyset member register page (members:view).\n\nOPT-IN aggregates (#31 batch 3 review): with include=aggregates\nevery row carries the same four advisory decimal-string figures as\nthe detail read, computed by ONE set-based statement per page (the\nkeyset page drives, LEFT JOIN LATERAL supplies the probes \u2014 never\na per-row fan-out). Without the parameter the response is\nbyte-identical to the flat register. No rejection path (403, 422)\ncomputes or echoes an amount.",
+        "description": "Keyset member register page (members:view).\n\nOPT-IN aggregates (#31 batch 3 review): with include=aggregates\nevery row carries the same four advisory decimal-string figures as\nthe detail read, computed by ONE set-based statement per page (the\nkeyset page drives, LEFT JOIN LATERAL supplies the probes \u2014 never\na per-row fan-out). Without the parameter the response is\nbyte-identical to the flat register. No rejection path (403, 422)\ncomputes or echoes an amount.\n\nmember_no (#35 item 14 \u2014 the posting-drawer unique-identifier\nlookup): expand-only EXACT-match filter served by the 0001 UNIQUE\n(tenant_id, member_no) key. An unknown number is an EMPTY page,\nnever a 404 \u2014 no existence oracle beyond the members:view grant.",
         "operationId": "list_members_members_get",
         "parameters": [
           {
@@ -11135,6 +11160,24 @@
                 }
               ],
               "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "member_no",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Member No"
             }
           },
           {
@@ -13044,7 +13087,7 @@
     },
     "/transactions": {
       "get": {
-        "description": "Ledger listing with the prototype filters (date, ref, member, type, DR/CR, channel).",
+        "description": "Ledger listing with the prototype filters (date, ref, member, type, DR/CR, channel).\n\nsearch (#35 item 13): expand-only declared free-text probe \u2014\ntxn_ref PREFIX, or member match (member_no exact / name prefix)\nvia an EXISTS on members. Bound parameters only; LIKE\nmetacharacters are escaped code-side; keyset order preserved; the\n0043 idx_txns_ref_prefix serves the ref-prefix branch portably.",
         "operationId": "list_ledger_transactions_get",
         "parameters": [
           {
@@ -13127,6 +13170,24 @@
                 }
               ],
               "title": "Ref"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
             }
           },
           {
