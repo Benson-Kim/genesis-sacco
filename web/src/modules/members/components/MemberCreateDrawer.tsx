@@ -14,6 +14,7 @@ import {
     type Member,
     type MemberCreateInput,
 } from "../schemas";
+import { StepRail } from "./StepRail";
 import styles from "./Members.module.css";
 
 /**
@@ -85,7 +86,7 @@ export function MemberCreateDrawer({
 
     return (
         <Modal
-            title="Register member"
+            title="New member registration"
             onClose={onClose}
             closeDisabled={create.isPending}
             // W56-3: a stray overlay click must never discard a half-completed
@@ -93,6 +94,7 @@ export function MemberCreateDrawer({
             dismissOnOverlay={false}
         >
             <form onSubmit={submit} noValidate>
+                <StepRail current={0} />
                 <Field label="Member type" htmlFor="member-type">
                     <select
                         id="member-type"
