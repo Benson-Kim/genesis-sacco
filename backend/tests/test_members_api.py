@@ -20,6 +20,7 @@ from sqlalchemy import event, text
 from db_helpers import api_client, factory, seed_user, unique_email
 from genesis.application.auth import AuthContext, issue_access_token
 from genesis.application.ledger import post_deposit
+from genesis.application.members import MEMBERS_LIST_SCOPE
 from genesis.application.pagination import encode_cursor
 from genesis.application.rbac import seed_permissions
 from genesis.domain.ledger import Channel
@@ -332,7 +333,7 @@ def test_list_members_keyset_cursor() -> None:
             # of the same keyset position (deterministic encode - this
             # stays an exact-equality oracle).
             assert page1["next_cursor"] == encode_cursor(
-                "GP-0002", tenant_id=tid, endpoint="members.list"
+                "GP-0002", tenant_id=tid, endpoint=MEMBERS_LIST_SCOPE
             )
             second = await client.get(
                 "/members",

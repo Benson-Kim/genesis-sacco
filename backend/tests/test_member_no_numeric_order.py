@@ -50,9 +50,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db_helpers import api_client, factory
 from export_helpers import create_branch, seed_actor, seed_member_no
 from genesis.application.guarantees import live_guarantee_params
+from genesis.application.branches import BRANCH_MEMBERS_SCOPE
 from genesis.application.members import (
     MEMBER_LIST_AGGREGATES_SQL,
     MEMBER_LIST_SQL,
+    MEMBERS_LIST_SCOPE,
     _member_list_clauses,
 )
 from genesis.application.pagination import encode_cursor
@@ -141,8 +143,8 @@ def test_cursor_gp9999_yields_exactly_the_five_digit_successors() -> None:
             # opaque codec (per-endpoint scope). The plaintext keyset
             # and the oracles below are unchanged.
             for path, scope in (
-                ("/members", "members.list"),
-                (f"/branches/{branch_id}/members", "branches.members"),
+                ("/members", MEMBERS_LIST_SCOPE),
+                (f"/branches/{branch_id}/members", BRANCH_MEMBERS_SCOPE),
             ):
                 res = await client.get(
                     path,

@@ -18,13 +18,15 @@ import uuid
 import pytest
 
 from genesis.application import pagination
+from genesis.application.branches import BRANCH_MEMBERS_SCOPE
+from genesis.application.members import MEMBERS_LIST_SCOPE
 from genesis.application.pagination import decode_cursor, encode_cursor
 from genesis.errors import InvalidInputError
 from genesis.settings import get_settings
 
 TENANT = uuid.UUID("6dcd4ce0-6dcd-4ce0-8dcd-4ce06dcd4ce0")
 OTHER_TENANT = uuid.UUID("1b2f8a44-1b2f-4a44-8b2f-8a441b2f8a44")
-ENDPOINT = "members.list"
+ENDPOINT = MEMBERS_LIST_SCOPE  # the real exported scope symbol (B13-R2)
 
 #: Every distinct plaintext keyset tuple shape served on the wire
 #: (the batch-13 inventory): raw member_no (the N1 (length, member_no)
@@ -121,9 +123,9 @@ def test_truncated_valid_token_rejected() -> None:
 
 def test_cross_endpoint_replay_rejected() -> None:
     """FM5: a token minted for one endpoint never opens another."""
-    token = encode_cursor("GP-0042", tenant_id=TENANT, endpoint="members.list")
+    token = encode_cursor("GP-0042", tenant_id=TENANT, endpoint=MEMBERS_LIST_SCOPE)
     with pytest.raises(InvalidInputError, match="invalid roster cursor"):
-        decode_cursor(token, tenant_id=TENANT, endpoint="branches.members", entity="roster")
+        decode_cursor(token, tenant_id=TENANT, endpoint=BRANCH_MEMBERS_SCOPE, entity="roster")
 
 
 def test_cross_tenant_replay_rejected() -> None:
