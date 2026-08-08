@@ -472,6 +472,7 @@ def _member_list_clauses(
     limit: int,
     status: MemberStatus | None,
     member_type: MemberType | None,
+    member_no: str | None = None,
     col: str = "",
 ) -> tuple[list[str], dict[str, object]]:
     """Shared keyset WHERE builder for the members register page.
@@ -480,9 +481,18 @@ def _member_list_clauses(
     bound parameter, so string assembly is injection-safe. `col`
     prefixes the column references (the aggregates variant qualifies
     them with the driving-relation alias).
+
+    member_no (#35 item 14 — the posting-drawer lookup) is an
+    EXACT-match probe served by the 0001 UNIQUE (tenant_id, member_no)
+    key — no new index, no new statement; an unknown number yields an
+    empty page (200, zero rows — no existence oracle beyond what the
+    members:view grant already discloses).
     """
     clauses: list[str] = [f"{col}tenant_id = CAST(:tid AS uuid)"]
     params: dict[str, object] = {"tid": str(tenant_id), "limit": limit + 1}
+    if member_no is not None:
+        clauses.append(f"{col}member_no = :member_no")
+        params["member_no"] = member_no
     if cursor:
         # Senior review N1: the NUMERIC row-value keyset for the fixed
         # 'GP-' + zero-padded-digits format (see MEMBER_LIST_SQL) — a
@@ -558,7 +568,13 @@ async def list_members_with_aggregates(
     """
     limit = max(1, min(limit, 100))
     clauses, params = _member_list_clauses(
-        tenant_id, cursor=cursor, limit=limit, status=status, member_type=member_type, col="m."
+        tenant_id,
+        cursor=cursor,
+        limit=limit,
+        status=status,
+        member_type=member_type,
+        member_no=member_no,
+        col="m.",
     )
     params["loan_active"] = LoanStatus.ACTIVE.value
     params.update(live_guarantee_params())

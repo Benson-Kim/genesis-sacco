@@ -225,6 +225,7 @@ async def list_members(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     status: MemberStatus | None = None,
     member_type: Annotated[MemberType | None, Query(alias="type")] = None,
+    member_no: Annotated[str | None, Query(min_length=1, max_length=32)] = None,
     include: Annotated[Literal["aggregates"] | None, Query()] = None,
 ) -> MemberListDetailResponse | MemberListResponse:
     """Keyset member register page (members:view).
@@ -236,6 +237,11 @@ async def list_members(
     a per-row fan-out). Without the parameter the response is
     byte-identical to the flat register. No rejection path (403, 422)
     computes or echoes an amount.
+
+    member_no (#35 item 14 — the posting-drawer unique-identifier
+    lookup): expand-only EXACT-match filter served by the 0001 UNIQUE
+    (tenant_id, member_no) key. An unknown number is an EMPTY page,
+    never a 404 — no existence oracle beyond the members:view grant.
     """
     factory = get_sessionmaker(get_settings().database_url)
     if include == "aggregates":
@@ -247,6 +253,7 @@ async def list_members(
                 limit=limit,
                 status=status,
                 member_type=member_type,
+                member_no=member_no,
             )
         return MemberListDetailResponse(
             items=[
@@ -266,6 +273,7 @@ async def list_members(
             limit=limit,
             status=status,
             member_type=member_type,
+            member_no=member_no,
         )
     return MemberListResponse(items=[_out(r) for r in page.items], next_cursor=page.next_cursor)
 
