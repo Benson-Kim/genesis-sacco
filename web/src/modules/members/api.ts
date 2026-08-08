@@ -81,6 +81,19 @@ export async function fetchMembersPageWithAggregates(
 
 /** Single member record (used by the applications detail drawer to
  *  resolve the applicant — the P9 list carries member_id only). */
+/** Unique-identifier lookup (#35 item 14 — the posting drawer): the
+ *  expand-only `member_no` EXACT-match param on GET /members, served
+ *  by the DB UNIQUE (tenant_id, member_no). Least disclosure: the
+ *  drawer renders only the resolved name + number; an unknown number
+ *  is an honest null (the server serves an EMPTY page, never a 404). */
+export async function lookupMemberByNo(memberNo: string): Promise<Member | null> {
+    const { data, error, response } = await api.GET("/members", {
+        params: { query: { limit: 1, member_no: memberNo } },
+    });
+    if (error !== undefined || data === undefined) throw toApiError(error, response);
+    return memberPageSchema.parse(data).items[0] ?? null;
+}
+
 export async function fetchMember(memberId: string): Promise<Member> {
     const { data, error, response } = await api.GET("/members/{member_id}", {
         params: { path: { member_id: memberId } },
