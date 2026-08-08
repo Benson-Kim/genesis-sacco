@@ -1519,6 +1519,11 @@ export interface paths {
          *     a per-row fan-out). Without the parameter the response is
          *     byte-identical to the flat register. No rejection path (403, 422)
          *     computes or echoes an amount.
+         *
+         *     member_no (#35 item 14 — the posting-drawer unique-identifier
+         *     lookup): expand-only EXACT-match filter served by the 0001 UNIQUE
+         *     (tenant_id, member_no) key. An unknown number is an EMPTY page,
+         *     never a 404 — no existence oracle beyond the members:view grant.
          */
         get: operations["list_members_members_get"];
         put?: never;
@@ -2123,6 +2128,12 @@ export interface paths {
         /**
          * List Ledger
          * @description Ledger listing with the prototype filters (date, ref, member, type, DR/CR, channel).
+         *
+         *     search (#35 item 13): expand-only declared free-text probe —
+         *     txn_ref PREFIX, or member match (member_no exact / name prefix)
+         *     via an EXISTS on members. Bound parameters only; LIKE
+         *     metacharacters are escaped code-side; keyset order preserved; the
+         *     0043 idx_txns_ref_prefix serves the ref-prefix branch portably.
          */
         get: operations["list_ledger_transactions_get"];
         put?: never;
@@ -3780,6 +3791,8 @@ export interface components {
             /** Amount */
             amount: number | string;
             channel: components["schemas"]["Channel"];
+            /** External Ref */
+            external_ref?: string | null;
         };
         /** MonthlyFlowOut */
         MonthlyFlowOut: {
@@ -4530,6 +4543,8 @@ export interface components {
             created_by: string | null;
             /** Direction */
             direction: string;
+            /** External Ref */
+            external_ref: string | null;
             /** Id */
             id: string;
             /** Is Reversal */
@@ -7404,6 +7419,7 @@ export interface operations {
                 limit?: number;
                 status?: components["schemas"]["MemberStatus"] | null;
                 type?: components["schemas"]["MemberType"] | null;
+                member_no?: string | null;
                 include?: "aggregates" | null;
             };
             header?: never;
@@ -8641,6 +8657,7 @@ export interface operations {
                 channel?: components["schemas"]["Channel"] | null;
                 direction?: components["schemas"]["Side"] | null;
                 ref?: string | null;
+                search?: string | null;
                 date_from?: string | null;
                 date_to?: string | null;
                 cursor?: string | null;

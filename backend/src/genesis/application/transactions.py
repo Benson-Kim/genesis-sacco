@@ -52,7 +52,10 @@ from genesis.errors import (
 #: taken from this mapping (never from user input) before interpolation.
 _ACCOUNT_TABLES = {"deposit": "deposit_accounts", "share": "share_accounts"}
 
-_TXN_COLS = "id, txn_ref, member_id, type, amount, channel, occurred_at, reversal_of_id, created_by"
+_TXN_COLS = (
+    "id, txn_ref, member_id, type, amount, channel, occurred_at, "
+    "reversal_of_id, created_by, external_ref"
+)
 
 #: Cursor scope id (#31 batch 13): signed cursors are bound to this
 #: endpoint and this tenant — no cross-scope replay (gate 1.6).
@@ -84,6 +87,12 @@ class TransactionRecord:
     #: postings and for pre-0036 rows without unambiguous audit history
     #: — attribution is never invented.
     created_by: uuid.UUID | None
+    #: External receipt reference (#35 item 6, migration 0043): the
+    #: operator-entered M-Pesa confirmation code / bank slip ref on
+    #: external-channel teller postings. None is the honest state for
+    #: every system posting and every pre-0043 row — history is never
+    #: backfilled with invented references.
+    external_ref: str | None
 
 
 async def _require_member(
@@ -188,6 +197,7 @@ async def record_deposit(
     *,
     amount: Decimal,
     channel: Channel,
+    external_ref: str | None = None,
 ) -> AccountTxnResult:
     """Post a deposit and credit the account atomically (gates 1.4, 1.5).
 
@@ -211,7 +221,9 @@ async def record_deposit(
     account_id, balance = await _lock_account(
         session, tenant_id, kind="deposit", member_id=member_id
     )
-    posting = await post_deposit(session, tenant_id, member_id, amount, channel, actor_id)
+    posting = await post_deposit(
+        session, tenant_id, member_id, amount, channel, actor_id, external_ref=external_ref
+    )
     balance_after = to_cents(balance + amount)
     await _set_balance(
         session, tenant_id, kind="deposit", account_id=account_id, balance=balance_after
@@ -243,6 +255,7 @@ async def record_withdrawal(
     *,
     amount: Decimal,
     channel: Channel,
+    external_ref: str | None = None,
 ) -> AccountTxnResult:
     """Withdraw under the account row lock; never overdraws (gate 1.4).
 
@@ -267,7 +280,9 @@ async def record_withdrawal(
         raise ConflictError(
             "insufficient available funds: the requested amount exceeds the withdrawable balance"
         )
-    posting = await post_withdrawal(session, tenant_id, member_id, amount, channel, actor_id)
+    posting = await post_withdrawal(
+        session, tenant_id, member_id, amount, channel, actor_id, external_ref=external_ref
+    )
     balance_after = to_cents(balance - amount)
     await _set_balance(
         session, tenant_id, kind="deposit", account_id=account_id, balance=balance_after
@@ -297,6 +312,7 @@ async def record_share_topup(
     *,
     amount: Decimal,
     channel: Channel,
+    external_ref: str | None = None,
 ) -> AccountTxnResult:
     """Post a share top-up and credit the share account atomically.
 
@@ -309,7 +325,9 @@ async def record_share_topup(
         raise InvalidInputError("share top-up amount must be positive")
     await _require_member(session, tenant_id, member_id, operation=MoneyOperation.SHARE_TOPUP)
     account_id, balance = await _lock_account(session, tenant_id, kind="share", member_id=member_id)
-    posting = await post_share_topup(session, tenant_id, member_id, amount, channel, actor_id)
+    posting = await post_share_topup(
+        session, tenant_id, member_id, amount, channel, actor_id, external_ref=external_ref
+    )
     balance_after = to_cents(balance + amount)
     await _set_balance(
         session, tenant_id, kind="share", account_id=account_id, balance=balance_after
@@ -341,7 +359,46 @@ def _row_to_txn(row: object) -> TransactionRecord:
         direction=member_direction(txn_type, is_reversal=is_reversal),
         is_reversal=is_reversal,
         created_by=uuid.UUID(str(row[8])) if row[8] is not None else None,  # type: ignore[index]
+        external_ref=str(row[9]) if row[9] is not None else None,  # type: ignore[index]
     )
+
+
+#: Free-text ledger search predicate (#35 item 13) — module-level so
+#: the EXPLAIN gate (tests/test_txn_search.py) asserts the exact
+#: production fragment (the P13.9 convention). ONE OR of two branches:
+#: (a) txn_ref PREFIX probe — system refs are uppercase by
+#: construction, so the operator text probes uppercased; served
+#: portably by the 0043 text_pattern_ops index idx_txns_ref_prefix
+#: (the 0001 UNIQUE btree serves prefixes only under the C collation);
+#: (b) member match via EXISTS probing members by PRIMARY KEY per
+#: candidate row (id = transactions.member_id) — member_no EXACT
+#: (uppercase domain format) or name PREFIX (case-folded); the PK
+#: probe needs no new index. Every value is a bound parameter; LIKE
+#: metacharacters in the operator text are escaped code-side
+#: (_search_params), so '%' searches match literally nothing instead
+#: of everything. Keyset order and the page cap are UNTOUCHED.
+TXN_SEARCH_CLAUSE = (
+    "(txn_ref LIKE :q_ref ESCAPE '\\' "
+    "OR EXISTS (SELECT 1 FROM members m "
+    "WHERE m.tenant_id = CAST(:tid AS uuid) "
+    "AND m.id = transactions.member_id "
+    "AND (m.member_no = :q_no OR lower(m.name) LIKE :q_name ESCAPE '\\')))"
+)
+
+
+def _search_params(search: str) -> dict[str, object]:
+    """Bound parameters for TXN_SEARCH_CLAUSE (values only — never SQL).
+
+    LIKE metacharacters are escaped so operator text is always a
+    LITERAL probe (falsifiable: unescaped, a '%' search returns every
+    row and the inertness leg fails).
+    """
+    escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return {
+        "q_ref": escaped.upper() + "%",
+        "q_no": search.upper(),
+        "q_name": escaped.lower() + "%",
+    }
 
 
 def _direction_clause(direction: Side, params: dict[str, object]) -> str:
@@ -379,6 +436,7 @@ async def list_transactions(
     channel: Channel | None = None,
     direction: Side | None = None,
     ref: str | None = None,
+    search: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
     cursor: str | None = None,
@@ -409,6 +467,11 @@ async def list_transactions(
     if ref is not None:
         clauses.append("txn_ref = :ref")
         params["ref"] = ref
+    if search is not None and search.strip() != "":
+        # #35 item 13: ref-prefix OR member (member_no exact / name
+        # prefix) — see TXN_SEARCH_CLAUSE for the index derivation.
+        clauses.append(TXN_SEARCH_CLAUSE)
+        params.update(_search_params(search.strip()))
     if date_from is not None:
         clauses.append("occurred_at >= :d_from")
         params["d_from"] = date_from
