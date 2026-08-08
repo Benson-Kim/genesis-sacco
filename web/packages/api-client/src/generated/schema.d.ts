@@ -1036,7 +1036,7 @@ export interface paths {
          *
          *     The quarterly scheduler calls the same service per tenant; this
          *     route exists for operations and catch-up. Each batch commits its
-         *     own short transaction (gate 1.3).
+         *     own short transaction (scalability).
          *
          *     Rate and period are resolved server-side (review finding 2): the
          *     annual rate comes from tenant_settings (409 when unconfigured) and
@@ -1511,7 +1511,7 @@ export interface paths {
          * List Members
          * @description Keyset member register page (members:view).
          *
-         *     OPT-IN aggregates (#31 batch 3 review): with include=aggregates
+         *     OPT-IN aggregates: with include=aggregates
          *     every row carries the same four advisory decimal-string figures as
          *     the detail read, computed by ONE set-based statement per page (the
          *     keyset page drives, LEFT JOIN LATERAL supplies the probes — never
@@ -1519,7 +1519,7 @@ export interface paths {
          *     byte-identical to the flat register. No rejection path (403, 422)
          *     computes or echoes an amount.
          *
-         *     member_no (#35 item 14 — the posting-drawer unique-identifier
+         *     member_no (the posting-drawer unique-identifier
          *     lookup): expand-only EXACT-match filter served by the 0001 UNIQUE
          *     (tenant_id, member_no) key. An unknown number is an EMPTY page,
          *     never a 404 — no existence oracle beyond the members:view grant.
@@ -1549,16 +1549,16 @@ export interface paths {
          *
          *     The nightly cycle (infrastructure/dormancy_worker.py) drives the
          *     same service per tenant; this route exists for operations and
-         *     backfills (the P10/P13.8 /jobs/arrears precedent). Members with no
+         *     backfills (the /jobs/arrears precedent). Members with no
          *     MEMBER-INITIATED ledger activity inside the tenant-configured
          *     window transition Active -> Dormant under their row lock; each
-         *     batch commits its own short transaction (gate 1.3).
+         *     batch commits its own short transaction (scalability).
          *
          *     Configuration (dormancy_period_months) is resolved server-side
          *     from tenant settings only — this body accepts none of it
          *     (extra="forbid"; v1.1 rule 1) — and an unconfigured or corrupt
          *     period REFUSES the run with 409 and zero transitions (fail closed,
-         *     P13.13 FM8; never a silent default).
+         *     never a silent default).
          *
          *     Permission (P4 matrix): members x EDIT — the job rewrites member
          *     status rows, the same power the manual status route carries; no
@@ -1580,7 +1580,7 @@ export interface paths {
         };
         /**
          * Get Member
-         * @description Single-member read with advisory aggregates (#31, members:view).
+         * @description Single-member read with advisory aggregates (members:view).
          *
          *     The existence check runs FIRST: unknown ids (including cross-tenant
          *     ids hidden by RLS) surface 404 before any aggregate is computed, so
@@ -2127,9 +2127,9 @@ export interface paths {
         };
         /**
          * List Ledger
-         * @description Ledger listing with the prototype filters (date, ref, member, type, DR/CR, channel).
+         * @description Ledger listing with filters (date, ref, member, type, DR/CR, channel).
          *
-         *     search (#35 item 13): expand-only declared free-text probe —
+         *     search: expand-only declared free-text probe —
          *     txn_ref PREFIX, or member match (member_no exact / name prefix)
          *     via an EXISTS on members. Bound parameters only; LIKE
          *     metacharacters are escaped code-side; keyset order preserved; the
@@ -2155,14 +2155,14 @@ export interface paths {
          * List Transaction Legs
          * @description The double-entry DR/CR legs of one posting (transactions:view).
          *
-         *     Expand-only read model (#31 ledger (g), audit #30 A3): the
+         *     Expand-only read model: the
          *     append-only ledger_entries truth behind a TransactionOut row, one
          *     item per leg, each amount a canonical decimal string rendered
-         *     verbatim by clients — never summed or netted (P15 blocker (a)).
+         *     verbatim by clients — never summed or netted (no client-side money math).
          *     404-BEFORE-FACTS: the existence probe runs before any leg is read,
          *     so unknown and cross-tenant ids (hidden by RLS) surface 404 with no
          *     account or amount echoed; 403 rejections carry no figures either
-         *     (least disclosure, gate 1.6).
+         *     (least disclosure).
          */
         get: operations["list_transaction_legs_transactions__transaction_id__legs_get"];
         put?: never;
@@ -3322,7 +3322,7 @@ export interface components {
         };
         /**
          * FeeType
-         * @description Code-owned fee vocabulary: each member maps to the P13.7 settings
+         * @description Code-owned fee vocabulary: each member maps to the tenant-settings
          *     key its amount is resolved from (v1.1 rule 1). A caller can only
          *     ever name a type from this enum — never an amount.
          * @enum {string}
@@ -3493,7 +3493,7 @@ export interface components {
         };
         /**
          * LedgerLegOut
-         * @description One DR or CR leg of a posting (#31 ledger (g), audit #30 A3).
+         * @description One DR or CR leg of a posting.
          *
          *     Verbatim ledger_entries facts: the chart-of-accounts key, the side
          *     and the leg amount as a canonical decimal string — one row per leg,
@@ -3588,7 +3588,7 @@ export interface components {
         };
         /**
          * MemberAggregatesOut
-         * @description Advisory financial aggregates on the single-member read (#31).
+         * @description Advisory financial aggregates on the single-member read.
          *
          *     All four figures are canonical decimal strings scaled by the
          *     database (numeric(18,2)); clients render them verbatim and never
