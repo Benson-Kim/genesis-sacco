@@ -871,3 +871,93 @@ test("amount PASTE/IME hygiene (#31 ledger (h5)): a clipboard-grouped figure and
   await within(drawer).findByText(/posted · ref/);
   expect(mocked.postMoneyWrite).toHaveBeenCalledTimes(1);
 });
+
+
+test("#35 item 13 date presets compute EXPLICIT from/to params client-side — the server never sees a preset token; All clears the keys", async () => {
+  // Pin ONLY the clock (Date), keep real timers for react-query.
+  jest.useFakeTimers({
+    now: new Date(2026, 7, 8, 12, 0, 0), // local 2026-08-08
+    doNotFake: [
+      "setTimeout",
+      "setInterval",
+      "clearTimeout",
+      "clearInterval",
+      "queueMicrotask",
+      "setImmediate",
+      "clearImmediate",
+      "performance",
+      "hrtime",
+      "nextTick",
+    ],
+  });
+  try {
+    const user = userEvent.setup();
+    mountScreen();
+    await screen.findByText("KES 8,000.10");
+
+    function lastFilters(): { date_from: string; date_to: string } {
+      const call = mocked.fetchTransactionsPage.mock.calls.at(-1);
+      return call?.[0] as { date_from: string; date_to: string };
+    }
+
+    // Hand-computed oracles for a 2026-08-08 clock:
+    //   Today        => [2026-08-08, 2026-08-08]
+    //   Last 7 days  => [2026-08-02, 2026-08-08]  (8 - 6 = 2)
+    //   Last 30 days => [2026-07-10, 2026-08-08]  (Aug 8 - 29d = Jul 10)
+    await user.click(screen.getByRole("button", { name: "Today" }));
+    await waitFor(() =>
+      expect(lastFilters()).toMatchObject({ date_from: "2026-08-08", date_to: "2026-08-08" }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Last 7 days" }));
+    await waitFor(() =>
+      expect(lastFilters()).toMatchObject({ date_from: "2026-08-02", date_to: "2026-08-08" }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Last 30 days" }));
+    await waitFor(() =>
+      expect(lastFilters()).toMatchObject({ date_from: "2026-07-10", date_to: "2026-08-08" }),
+    );
+
+    // The computed window is VISIBLE in the manual inputs (the operator
+    // can read exactly what was sent — no hidden state).
+    expect(screen.getByLabelText("From date")).toHaveValue("2026-07-10");
+    expect(screen.getByLabelText("To date")).toHaveValue("2026-08-08");
+
+    // All clears the date keys — the default view sends no date filter.
+    await user.click(screen.getByRole("button", { name: "All", pressed: false }));
+    await waitFor(() =>
+      expect(lastFilters()).toMatchObject({ date_from: "", date_to: "" }),
+    );
+
+    // NOTHING preset-shaped ever reached the wire: every call's date
+    // params are either empty or ISO dates (falsifiable: send the
+    // token and this fails).
+    for (const call of mocked.fetchTransactionsPage.mock.calls) {
+      const filters = call[0] as { date_from: string; date_to: string };
+      for (const value of [filters.date_from, filters.date_to]) {
+        expect(value === "" || /^\d{4}-\d{2}-\d{2}$/.test(value)).toBe(true);
+      }
+    }
+
+    // Custom range keeps the manual flow: editing + Apply moves the
+    // pressed state to Custom and applies the typed dates verbatim.
+    await user.click(screen.getByRole("button", { name: "Custom range" }));
+    const fromField = screen.getByLabelText("From date");
+    const toField = screen.getByLabelText("To date");
+    await user.clear(fromField);
+    await user.type(fromField, "2026-06-01");
+    await user.clear(toField);
+    await user.type(toField, "2026-06-30");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() =>
+      expect(lastFilters()).toMatchObject({ date_from: "2026-06-01", date_to: "2026-06-30" }),
+    );
+    expect(screen.getByRole("button", { name: "Custom range" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  } finally {
+    jest.useRealTimers();
+  }
+});
