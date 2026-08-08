@@ -40,6 +40,11 @@
   batch-10 merge claimed 0040 on main (the 0017 precedent; down_revision
   had earlier been re-chained 0038 -> 0039 after !79 merged; same-commit
   refresh per v1.2 rule 11 / spot-check check 5).
+  Migration head 0041 -> 0042 by the issue-#35 small-wins MR:
+  0042_phone_e164_backfill.py (expand-only DATA backfill rewriting
+  local-format Kenya phone rows to E.164 on members/users; no table,
+  constraint, index or RLS change) ships in that MR (same-commit
+  refresh per v1.2 rule 11 / spot-check check 5).
   Traceability: every box cites its module; `c4-spot-check.py` verifies
   every cited module path exists at the authoring SHA.
 -->
@@ -79,7 +84,7 @@ flowchart TB
         IDW["idempotency purge — P13.17c<br/>genesis/infrastructure/idempotency_worker.py"]
     end
 
-    MIG["Migration runner — alembic upgrade head<br/>backend/alembic.ini + backend/migrations/<br/>versions 0001..0041 (head 0041; 0040 batch-10 share-transfer merged; 0041 RENUMBERED from 0040 after the batch-10 claim)"]
+    MIG["Migration runner — alembic upgrade head<br/>backend/alembic.ini + backend/migrations/<br/>versions 0001..0042 (head 0042 phone E.164 backfill; 0041 numeric member_no index; 0040 batch-10 share-transfer)"]
 
     PG[("PostgreSQL 16 — FORCED RLS (ADR-0002)<br/>append-only: ledger_entries + transactions (0004 triggers),<br/>audit_log (0001), repayments (0032), loan_recoveries (0030)<br/>write-once: dividend_declarations (0020), loan_write_offs (0025),<br/>repayment_adjustments (0025/0031), portfolio_month_snapshots (0027),<br/>period rollups (0028)<br/>closed-period posting barrier (0012/0014)<br/>advisory-lock tier: lock-order.md §6")]
     RD[("Redis<br/>rate limiting + readyz")]
@@ -115,7 +120,7 @@ flowchart TB
 | export renderer | `genesis/infrastructure/export_worker.py` → `genesis/application/exports.py` (`run_export_job` L381, claim `CLAIM_SQL` L82) |
 | dormancy worker | `genesis/infrastructure/dormancy_worker.py` (`run_dormancy_cycle` L65 — fail-closed per tenant, per-tenant error isolation per !37) → `genesis/application/dormancy.py` (`run_dormancy_for_tenant` L370) |
 | idempotency purge worker | `genesis/infrastructure/idempotency_worker.py` (`run_worker`) → `genesis/application/idempotency_purge.py` (`purge_expired_idempotency_keys` — shared batch runner, `FOR UPDATE SKIP LOCKED` subquery; P13.17c/DSA-3) |
-| migration runner | `backend/alembic.ini`, `backend/migrations/env.py`, `backend/migrations/versions/0001..0041` — head `0041` (`0041_members_numeric_member_no_index.py`, `down_revision = "0040"` — RENUMBERED from `0040` and re-chained onto `0040_share_transfer_maker_checker.py` after the batch-10 merge claimed `0040` on main, the 0017 precedent; shipped by the issue-#31 batch-7 remediation MR in the same commit as this refresh), verified against `versions/` on this tree (nothing claims `0041` as parent) |
+| migration runner | `backend/alembic.ini`, `backend/migrations/env.py`, `backend/migrations/versions/0001..0042` — head `0042` (`0042_phone_e164_backfill.py`, `down_revision = "0041"` — expand-only data backfill shipped by the issue-#35 small-wins MR in the same commit as this refresh), verified against `versions/` on this tree (nothing claims `0042` as parent) |
 | PostgreSQL 16 | forced RLS per ADR-0002; store properties below |
 | Redis | `genesis/infrastructure/redis_client.py` (`ping_redis` — `/readyz`), `genesis/infrastructure/rate_limit.py` (auth endpoints) |
 

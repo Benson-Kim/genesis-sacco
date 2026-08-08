@@ -71,5 +71,6 @@ test("valid email blurs clean and requests the OTP exactly once", async () => {
   await user.click(screen.getByRole("button", { name: "Send OTP" }));
   await screen.findByLabelText("Digit 1");
   expect(mocked.requestOtp).toHaveBeenCalledTimes(1);
-  expect(mocked.requestOtp).toHaveBeenCalledWith("teller@sacco.co.ke");
+  // mutationFn receives (variables, context) — assert the variable only.
+  expect(mocked.requestOtp.mock.calls[0]?.[0]).toBe("teller@sacco.co.ke");
 });

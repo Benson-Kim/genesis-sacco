@@ -68,6 +68,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from genesis.application.audit import record_audit
+from genesis.application.members import parse_phone
 from genesis.application.outbox import enqueue_event
 from genesis.application.pagination import (
     build_created_id_cursor,
