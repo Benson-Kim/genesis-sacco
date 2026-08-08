@@ -11,8 +11,10 @@ import { useMutation } from "@tanstack/react-query";
 import { ApiError, newIdempotencyKey } from "@genesis/api-client";
 import { Button, Field } from "@genesis/design-system";
 import { requestOtp, verifyOtp } from "../api";
-import { OTP_LENGTH, emailSchema, otpCodeSchema } from "../schemas";
+import { OTP_LENGTH, otpCodeSchema, signInEmailSchema } from "../schemas";
 import styles from "./LoginGate.module.css";
+
+const EMAIL_BLUR_MESSAGE = "Enter your registered email address.";
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -36,6 +38,15 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
   const [email, setEmail] = useState("");
   const [digits, setDigits] = useState<string[]>(Array.from({ length: OTP_LENGTH }, () => ""));
   const [formError, setFormError] = useState<string | null>(null);
+  // #35 item 1 — blur-time identifier validation (courtesy mirror of
+  // the server rule; the server stays the truth at the wire). The
+  // message shows on blur and clears the moment the value is corrected.
+  const [emailBlurError, setEmailBlurError] = useState<string | null>(null);
+
+  function validateEmailBlur(value: string) {
+    const ok = signInEmailSchema.safeParse(value.trim()).success;
+    setEmailBlurError(ok ? null : EMAIL_BLUR_MESSAGE);
+  }
 
   const request = useMutation({
     mutationFn: requestOtp,
@@ -56,9 +67,9 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
   function submitRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (request.isPending) return;
-    const parsed = emailSchema.safeParse(email.trim());
+    const parsed = signInEmailSchema.safeParse(email.trim());
     if (!parsed.success) {
-      setFormError("Enter your registered email address.");
+      setFormError(EMAIL_BLUR_MESSAGE);
       return;
     }
     setFormError(null);
@@ -124,11 +135,22 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
               id="login-email"
               className={styles.input}
               type="email"
+              inputMode="email"
               autoComplete="email"
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                // Clear the blur message the moment the value is corrected.
+                if (emailBlurError !== null) validateEmailBlur(event.target.value);
+              }}
+              onBlur={(event) => validateEmailBlur(event.target.value)}
             />
           </Field>
+          {emailBlurError !== null && (
+            <div className={styles.error} role="alert">
+              {emailBlurError}
+            </div>
+          )}
           {formError !== null && <div className={styles.error}>{formError}</div>}
           <Button variant="primary" type="submit" className={styles.wide} disabled={request.isPending}>
             {request.isPending ? "Sending…" : "Send OTP"}

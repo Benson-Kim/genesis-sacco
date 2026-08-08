@@ -16,3 +16,12 @@ export const otpCodeSchema = z
   .regex(/^\d{6}$/, "Enter all 6 digits");
 
 export const emailSchema = z.string().min(3).max(254);
+
+/**
+ * Sign-in identifier blur mirror (#35 item 1): staff sign in with an
+ * EMAIL (OtpRequestBody, api/auth.py); the blur check is a courtesy
+ * mirror — structural email format on top of the server's 3–254
+ * length rule — so the operator corrects immediately. The server
+ * stays the truth at the wire.
+ */
+export const signInEmailSchema = emailSchema.pipe(z.string().email());
