@@ -34,6 +34,7 @@ import { fmtDateTime, fmtKes } from "@/lib/format";
 import { EMPTY_EXIT_FILTERS, fetchExitsPage, type ExitListFilters } from "../api";
 import { EXIT_STATUSES, EXIT_STATUS_LABELS, type ExitRecord } from "../schemas";
 import { exitStatusPill } from "./pills";
+import { FormField } from "@/modules/forms/FormField";
 import styles from "./Exits.module.css";
 
 // Drawer-level code splitting (speed): drawer chunks load
@@ -135,26 +136,25 @@ export function ExitsScreen() {
     <div>
       <div className={styles.toolbar}>
         <div className={styles.filters}>
-          <div className={styles.filterGroup}>
-            <label className={styles.filterLabel} htmlFor="exit-filter-status">
-              Status
-            </label>
-            <select
-              id="exit-filter-status"
-              className={`${styles.select} ${styles.filterControl}`}
-              value={filters.status}
-              onChange={(event) =>
-                setFilters({ status: event.target.value as ExitListFilters["status"] })
-              }
-            >
-              <option value="">All statuses</option>
-              {EXIT_STATUSES.map((option) => (
-                <option key={option} value={option}>
-                  {EXIT_STATUS_LABELS[option]}
-                </option>
-              ))}
-            </select>
-          </div>
+          <FormField id="exit-filter-status" label="Status">
+            {(control) => (
+              <select
+                {...control}
+                className={`${styles.select} ${styles.filterControl}`}
+                value={filters.status}
+                onChange={(event) =>
+                  setFilters({ status: event.target.value as ExitListFilters["status"] })
+                }
+              >
+                <option value="">All statuses</option>
+                {EXIT_STATUSES.map((option) => (
+                  <option key={option} value={option}>
+                    {EXIT_STATUS_LABELS[option]}
+                  </option>
+                ))}
+              </select>
+            )}
+          </FormField>
         </div>
         <div className={styles.toolbarActions}>
           {mayRequest && (
