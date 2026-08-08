@@ -42,6 +42,13 @@
   nullable external_ref + partial UNIQUE dedupe + the search prefix
   index, no new table);
   diagram 2.C, §3 and §5 updated accordingly (v1.2 rules 11/14).
+  Extended for 0044 by the issue-#35 sign-in-identifier MR, IN THE
+  SAME COMMIT as the migration: alembic head 0043 -> 0044
+  (0044_users_phone_signin_index.py, down_revision = "0043"; one
+  partial index idx_users_phone (tenant_id, phone) WHERE phone IS
+  NOT NULL serving the new phone sign-in lookup — no table, column,
+  constraint or RLS change);
+  diagram 2.A and §3 updated accordingly (v1.2 rules 11/14).
   Derived exclusively from backend/migrations/versions/*.py — every
   entity is a real table from a migration; every edge cites the FK
   that implements it. Falsifiable gate: erd-spot-check.py (§6).
@@ -52,10 +59,10 @@
 
 # Entity-relationship diagram — as-built (P-DIAG.2)
 
-The entire schema at alembic head **0043**: **47 tables** (0035
+The entire schema at alembic head **0044**: **47 tables** (0035
 creates `member_credentials`; 0033/0034/0036/0037/0040/0043 alter
-existing tables and create none; 0038/0041 add indexes only; 0042 is
-a data-only backfill touching no schema object), drawn as
+existing tables and create none; 0038/0041/0044 add indexes only;
+0042 is a data-only backfill touching no schema object), drawn as
 seven subject-area `erDiagram`s (one diagram would not render readably;
 the split follows the module boundaries in the §3 traceability table).
 An entity appearing in more than one diagram (e.g. `members`,
@@ -411,6 +418,7 @@ erDiagram
         uuid tenant_id FK "tenant spine (0001)"
         uuid role_id FK "-> roles.id ON DELETE RESTRICT (0001)"
         text email UK "UNIQUE (tenant_id, email) (0001)"
+        text phone "nullable, stored E.164 since the 0042 backfill; partial idx_users_phone (tenant_id, phone) WHERE phone IS NOT NULL serves the sign-in identifier lookup (0044)"
         uuid branch_id FK "nullable -> branches.id (0016)"
     }
     otp_challenges {
@@ -615,7 +623,7 @@ Both directions of the table↔migration mapping are machine-checked by
 | `tenants` | 0001 | 0003 (`active_tenant_ids()` worker registry fn) | `infrastructure/tenancy.py` seam; no request-path writer |
 | `roles` | 0001 | 0017 (system-role rename-guard trigger) | `application/rbac.py` |
 | `permissions` | 0001 | — | `application/rbac.py` |
-| `users` | 0001 | 0015 (`last_active_at`, keyset idx), 0016 (`branch_id`, idxs) | `application/users.py`, `application/auth.py` |
+| `users` | 0001 | 0015 (`last_active_at`, keyset idx), 0016 (`branch_id`, idxs), 0044 (partial `idx_users_phone` — sign-in identifier phone lookup) | `application/users.py`, `application/auth.py` |
 | `otp_challenges` | 0001 | 0035 (`member_credential_id`, `user_id` goes nullable, `ck_otp_challenges_one_principal` XOR, `idx_otp_credential`) | `application/auth.py`, `application/member_auth.py` |
 | `refresh_tokens` | 0002 | 0035 (`member_credential_id`, `user_id` goes nullable, `ck_refresh_tokens_one_principal` XOR, `idx_refresh_credential`) | `application/auth.py`, `application/member_auth.py` |
 | `members` | 0001 | 0016 (`branch_id`), 0018 (`uq_members_id_type`), 0020 (dividend-scan idx), 0021 (`dormant` status, dormancy-scan idx), 0022 (scan predicate widened, exited-scan idx), 0023 (register keyset idx), 0028 (`uq_members_tenant_id_id` composite-FK anchor) | `application/members.py` (+ `dormancy.py` batch) |

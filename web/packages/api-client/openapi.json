@@ -4084,21 +4084,40 @@
         "type": "object"
       },
       "OtpRequestBody": {
+        "description": "Request a one-time password for a sign-in identifier.",
         "properties": {
           "email": {
-            "maxLength": 254,
-            "minLength": 3,
-            "title": "Email",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 254,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "identifier": {
+            "anyOf": [
+              {
+                "maxLength": 254,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identifier"
           }
         },
-        "required": [
-          "email"
-        ],
         "title": "OtpRequestBody",
         "type": "object"
       },
       "OtpVerifyBody": {
+        "description": "Verify the six-digit one-time password for a sign-in identifier.",
         "properties": {
           "code": {
             "pattern": "^\\d{6}$",
@@ -4106,14 +4125,33 @@
             "type": "string"
           },
           "email": {
-            "maxLength": 254,
-            "minLength": 3,
-            "title": "Email",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 254,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "identifier": {
+            "anyOf": [
+              {
+                "maxLength": 254,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identifier"
           }
         },
         "required": [
-          "email",
           "code"
         ],
         "title": "OtpVerifyBody",
