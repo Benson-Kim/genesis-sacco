@@ -46,6 +46,7 @@ import {
   type WorklistRow,
   type WorklistStatusFilter,
 } from "../schemas";
+import { FormField } from "@/modules/forms/FormField";
 import styles from "./Recovery.module.css";
 
 // Drawer-level code splitting (speed).
@@ -190,27 +191,26 @@ export function RecoveryScreen() {
       <div className={styles.toolbar}>
         <div className={styles.filters}>
           <StatusFilter value={status} onChange={setStatus} />
-          <div className={styles.filterGroup}>
-            <label className={styles.filterLabel} htmlFor="worklist-classification">
-              Classification
-            </label>
-            {/* Labelled select (5 stored labels + All — over the ≤5
-                segment budget): values are the code-owned LoanClass
-                vocabulary verbatim; "" sends NO parameter at all. */}
-            <select
-              id="worklist-classification"
-              className={styles.select}
-              value={classification}
-              onChange={(event) => setClassification(event.target.value as WorklistClass | "")}
-            >
-              <option value="">All classifications</option>
-              {WORKLIST_CLASSES.map((option) => (
-                <option key={option} value={option}>
-                  {LOAN_CLASS_LABELS[option]}
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Labelled select (5 stored labels + All — over the ≤5
+              segment budget): values are the code-owned LoanClass
+              vocabulary verbatim; "" sends NO parameter at all. */}
+          <FormField id="worklist-classification" label="Classification">
+            {(control) => (
+              <select
+                {...control}
+                className={styles.select}
+                value={classification}
+                onChange={(event) => setClassification(event.target.value as WorklistClass | "")}
+              >
+                <option value="">All classifications</option>
+                {WORKLIST_CLASSES.map((option) => (
+                  <option key={option} value={option}>
+                    {LOAN_CLASS_LABELS[option]}
+                  </option>
+                ))}
+              </select>
+            )}
+          </FormField>
         </div>
         {mayOpen && (
           <Button type="button" variant="primary" onClick={() => setDrawer({ mode: "open" })}>
