@@ -37,16 +37,10 @@ export const otpRequestResponseSchema = z.object({
 export const signInEmailSchema = emailSchema.pipe(z.string().email());
 
 /**
- * Kenya msisdn mirror (#35 sign-in identifier round): the four
- * maintainer-declared accepted input formats, byte-identical to the
- * backend rule (domain/members.py — 07XXXXXXXX / 01XXXXXXXX and their
- * E.164 twins +2547XXXXXXXX / +2541XXXXXXXX; oracles mirrored from
- * the backend suite). This is a courtesy MIRROR — the server's single
- * normalizer stays the truth at the wire.
+ * Sign-in identifier classification (#35 sign-in identifier round).
+ * The msisdn VALIDATION mirror is the ONE existing copy in
+ * `@/lib/phone` (normalizeKenyaMsisdn) — never duplicated here.
  */
-export const KENYA_MSISDN_LOCAL = /^0([17])(\d{8})$/;
-export const KENYA_MSISDN_E164 = /^\+254([17])\d{8}$/;
-
 export type SignInIdentifierKind = "email" | "phone";
 
 /**
@@ -59,13 +53,4 @@ export function classifyIdentifier(value: string): SignInIdentifierKind {
   const v = value.trim();
   if (v === "") return "email";
   return /^\+?\d+$/.test(v) ? "phone" : "email";
-}
-
-/** Mirror of the backend normalizer: E.164 string, or null when invalid. */
-export function normalizeKenyaMsisdn(raw: string): string | null {
-  const value = raw.trim();
-  if (KENYA_MSISDN_E164.test(value)) return value;
-  const match = KENYA_MSISDN_LOCAL.exec(value);
-  if (match) return `+254${match[1]}${match[2]}`;
-  return null;
 }

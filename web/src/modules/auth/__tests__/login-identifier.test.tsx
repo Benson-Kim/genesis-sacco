@@ -17,7 +17,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LoginGate } from "../components/LoginGate";
-import { classifyIdentifier, normalizeKenyaMsisdn } from "../schemas";
+import { KENYA_PHONE_MESSAGE, normalizeKenyaMsisdn } from "@/lib/phone";
+import { classifyIdentifier } from "../schemas";
 import * as authApi from "../api";
 
 jest.mock("next/navigation", () => ({
@@ -31,7 +32,7 @@ jest.mock("../api", () => ({
 
 const mocked = jest.mocked(authApi);
 
-const PHONE_MESSAGE = "Enter a valid Kenya mobile number.";
+const PHONE_MESSAGE = KENYA_PHONE_MESSAGE;
 const EMAIL_MESSAGE = "Enter your registered email address.";
 
 function mountGate() {

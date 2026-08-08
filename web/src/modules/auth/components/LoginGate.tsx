@@ -11,18 +11,12 @@ import { useMutation } from "@tanstack/react-query";
 import { ApiError, newIdempotencyKey } from "@genesis/api-client";
 import { Button } from "@genesis/design-system";
 import { FormField } from "@/modules/forms/FormField";
+import { KENYA_PHONE_MESSAGE, normalizeKenyaMsisdn } from "@/lib/phone";
 import { requestOtp, verifyOtp } from "../api";
-import {
-  OTP_LENGTH,
-  classifyIdentifier,
-  normalizeKenyaMsisdn,
-  otpCodeSchema,
-  signInEmailSchema,
-} from "../schemas";
+import { OTP_LENGTH, classifyIdentifier, otpCodeSchema, signInEmailSchema } from "../schemas";
 import styles from "./LoginGate.module.css";
 
 const EMAIL_BLUR_MESSAGE = "Enter your registered email address.";
-const PHONE_BLUR_MESSAGE = "Enter a valid Kenya mobile number.";
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -61,7 +55,7 @@ export function LoginGate({ notice }: Readonly<{ notice?: string }>) {
   /** null when valid; the matching rule's message when not. */
   function identifierMessage(value: string): string | null {
     if (classifyIdentifier(value) === "phone") {
-      return normalizeKenyaMsisdn(value) !== null ? null : PHONE_BLUR_MESSAGE;
+      return normalizeKenyaMsisdn(value) !== null ? null : KENYA_PHONE_MESSAGE;
     }
     return signInEmailSchema.safeParse(value.trim()).success ? null : EMAIL_BLUR_MESSAGE;
   }
