@@ -30,7 +30,7 @@ class OtpIdentifierBody(BaseModel):
     identifier: str | None = Field(default=None, min_length=3, max_length=254)
 
     @model_validator(mode="after")
-    def _exactly_one_identifier(self) -> "OtpIdentifierBody":
+    def _exactly_one_identifier(self) -> OtpIdentifierBody:
         """Reject bodies carrying both fields or neither."""
         if (self.email is None) == (self.identifier is None):
             msg = "provide exactly one of email or identifier"
